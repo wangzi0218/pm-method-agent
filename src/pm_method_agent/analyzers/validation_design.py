@@ -6,8 +6,9 @@ from pm_method_agent.models import AnalyzerFinding, CaseState
 def analyze_validation_design(case_state: CaseState) -> None:
     text = case_state.raw_input.strip()
     case_state.stage = "validation-design"
+    base_text = text.split("\n\n补充信息：", 1)[0].strip()
 
-    hypothesis = f"可先验证这个假设：如果解决“{text}”背后的关键阻塞，核心行为指标会改善。"
+    hypothesis = f"可先验证这个假设：如果解决“{base_text}”背后的关键阻塞，核心行为指标会改善。"
     falsification = "如果现状数据并不支持问题成立，或非产品手段已能低成本解决，这条产品方向就应降级。"
     min_validation = "先收集 3 到 5 个真实案例，再设计最小验证动作。"
 

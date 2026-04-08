@@ -21,6 +21,22 @@ class AnalyzerFinding:
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "AnalyzerFinding":
+        return cls(
+            dimension=str(payload["dimension"]),
+            claim=str(payload["claim"]),
+            claim_type=str(payload["claim_type"]),
+            evidence_level=str(payload["evidence_level"]),
+            evidence=list(payload.get("evidence", [])),
+            unknowns=list(payload.get("unknowns", [])),
+            risk_if_wrong=str(payload["risk_if_wrong"]),
+            suggested_next_action=str(payload["suggested_next_action"]),
+            human_decision_needed=bool(payload.get("human_decision_needed", False)),
+            owner=str(payload.get("owner", "")),
+            finding_id=payload.get("finding_id"),
+        )
+
 
 @dataclass
 class DecisionGate:
@@ -34,6 +50,18 @@ class DecisionGate:
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "DecisionGate":
+        return cls(
+            gate_id=str(payload["gate_id"]),
+            stage=str(payload["stage"]),
+            question=str(payload["question"]),
+            options=list(payload.get("options", [])),
+            recommended_option=str(payload["recommended_option"]),
+            reason=str(payload["reason"]),
+            blocking=bool(payload.get("blocking", False)),
+        )
 
 
 @dataclass
@@ -94,3 +122,27 @@ class CaseState:
             "next_actions": self.next_actions,
             "metadata": self.metadata,
         }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "CaseState":
+        return cls(
+            case_id=str(payload["case_id"]),
+            stage=str(payload["stage"]),
+            raw_input=str(payload["raw_input"]),
+            workflow_state=str(payload.get("workflow_state", "intake")),
+            output_kind=str(payload.get("output_kind", "review-card")),
+            blocking_reason=str(payload.get("blocking_reason", "")),
+            pending_questions=list(payload.get("pending_questions", [])),
+            context_profile=dict(payload.get("context_profile", {})),
+            normalized_summary=str(payload.get("normalized_summary", "")),
+            evidence=list(payload.get("evidence", [])),
+            unknowns=list(payload.get("unknowns", [])),
+            findings=[
+                AnalyzerFinding.from_dict(item) for item in payload.get("findings", [])
+            ],
+            decision_gates=[
+                DecisionGate.from_dict(item) for item in payload.get("decision_gates", [])
+            ],
+            next_actions=list(payload.get("next_actions", [])),
+            metadata=dict(payload.get("metadata", {})),
+        )

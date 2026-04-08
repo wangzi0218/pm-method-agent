@@ -1,7 +1,9 @@
 import unittest
+from tempfile import TemporaryDirectory
 
 from pm_method_agent.orchestrator import run_analysis
 from pm_method_agent.renderers import render_case_state
+from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
 class OrchestratorSmokeTest(unittest.TestCase):
@@ -82,6 +84,48 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("## 先做这几步", rendered)
         self.assertIn("### 场景信息", rendered)
         self.assertIn("### 决策与验证", rendered)
+
+    def test_session_service_can_create_and_load_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+                store=store,
+            )
+            loaded_case = get_case(case_state.case_id, store=store)
+
+        self.assertEqual(loaded_case.case_id, case_state.case_id)
+        self.assertEqual(loaded_case.output_kind, "context-question-card")
+        self.assertEqual(
+            loaded_case.metadata["session_original_input"],
+            "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+        )
+
+    def test_session_service_can_reply_and_continue(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.case_id, case_state.case_id)
+        self.assertEqual(replied_case.context_profile["business_model"], "tob")
+        self.assertEqual(replied_case.context_profile["primary_platform"], "native-app")
+        self.assertIn("前台", replied_case.context_profile["target_user_roles"])
+        self.assertIn("管理者", replied_case.context_profile["target_user_roles"])
+        self.assertGreaterEqual(len(replied_case.metadata["conversation_turns"]), 2)
+        self.assertNotEqual(replied_case.output_kind, "context-question-card")
+        validation_claims = [
+            finding.claim for finding in replied_case.findings if finding.dimension == "validation-design"
+        ]
+        self.assertTrue(validation_claims)
+        self.assertNotIn("补充信息", validation_claims[0])
 
 
 if __name__ == "__main__":

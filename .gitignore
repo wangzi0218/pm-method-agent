@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.pm_method_agent/
 dist/
 build/
 *.egg-info/
