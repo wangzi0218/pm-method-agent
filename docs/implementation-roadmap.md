@@ -82,6 +82,10 @@
 
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)
 
+下一阶段设计可参考：
+
+- [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)
+
 ## 第五阶段：复合升级
 
 只有在前两个阶段稳定之后，才进入这一阶段。
