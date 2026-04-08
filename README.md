@@ -113,10 +113,10 @@
 未来面向用户的交付形态会并行支持：
 
 - 命令行工具
-- 交互网页
 - 主代理 / AI 工具入口
+- 可选网页入口
 
-这三种入口应共用同一套方法内核，而不是维护三套独立逻辑。
+这些入口应共用同一套方法内核，而不是维护多套独立逻辑。当前已经开始补本地 HTTP 服务层，作为 CLI、skill、agent 和未来 MCP/网页入口之间的统一底座。
 
 当前仓库默认仍使用规则解释器来承接多轮回复，但已经补上了 LLM 适配骨架，后续可以按用户环境切换到“用户自带模型”或“托管模型”模式，而不需要重写状态机。
 
@@ -276,6 +276,33 @@ PYTHONPATH=src python3 -m pm_method_agent.cli show case-xxxxxx
 PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 ```
 
+启动本地 HTTP 服务：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli serve --host 127.0.0.1 --port 8000
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+创建案例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/cases \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+    "context_profile": {
+      "business_model": "tob",
+      "primary_platform": "mobile-web",
+      "target_user_roles": ["前台", "诊所管理者"]
+    }
+  }'
+```
+
 这组命令当前仍是验证版，但已经代表了后续网页和 agent 入口会共用的底层会话模型。
 
 如果你希望让“回复解释”这一步优先使用兼容 OpenAI 格式的模型服务，可以先配置：
@@ -319,6 +346,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例与验证方式
 - [docs/output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)：默认输出风格与审查卡结构
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：里程碑、实现阶段和后续发展计划
+- [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)：本地 HTTP 服务层、接口定义和与 MCP 的关系
 - [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：LLM 适配层、解释器注入点和未来接入方式
 - [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：首次公开前的提交流程与版本建议
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：GitHub 首次公开发布的标准
@@ -337,6 +365,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一组最基础的 smoke tests
 - 一套可直接复制执行的体验用例
 - 一层可扩展的 LLM 适配骨架与回复解释器接口
+- 一层最小可运行的本地 HTTP 服务
 
 ## 后续形态
 
@@ -345,10 +374,10 @@ export PMMA_LLM_MODEL=deepseek-chat
 更合理的演进方式是：
 
 - 当前阶段：CLI 用于验证方法内核
-- 下一阶段：继续完善多轮会话状态机与解释器接入
-- 后续阶段：同时提供网页入口、agent 入口和托管服务能力
+- 下一阶段：继续完善本地服务层、状态机与解释器接入
+- 后续阶段：优先提供 skill / agent 入口，再按需要补网页和托管服务能力
 
-如果未来提供网页形态，底层会补一层服务接口或 API，用来承接会话状态、阶段推进和结果读取。
+如果未来提供网页或 AI 原生入口，底层都会复用这层服务接口来承接会话状态、阶段推进和结果读取。
 
 ## License
 

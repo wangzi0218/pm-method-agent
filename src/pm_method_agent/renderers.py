@@ -102,8 +102,8 @@ def render_case_state(case_state: CaseState, output_format: str = "markdown") ->
     return _render_markdown(case_state)
 
 
-def render_case_history(case_state: CaseState, output_format: str = "markdown") -> str:
-    history_payload = {
+def build_case_history_payload(case_state: CaseState) -> dict:
+    return {
         "case_id": case_state.case_id,
         "workflow_state": case_state.workflow_state,
         "stage": case_state.stage,
@@ -115,6 +115,10 @@ def render_case_history(case_state: CaseState, output_format: str = "markdown") 
         "last_gate_choice": case_state.metadata.get("last_gate_choice"),
         "last_reply_parser": case_state.metadata.get("last_reply_parser"),
     }
+
+
+def render_case_history(case_state: CaseState, output_format: str = "markdown") -> str:
+    history_payload = build_case_history_payload(case_state)
     if output_format == "json":
         return json.dumps(history_payload, ensure_ascii=False, indent=2)
     if output_format != "markdown":

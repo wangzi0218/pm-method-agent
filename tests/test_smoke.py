@@ -5,6 +5,7 @@ import unittest
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from pm_method_agent.http_service import PMMethodHTTPService
 from pm_method_agent.llm_adapter import (
     LLMMessage,
     LLMRequest,
@@ -343,6 +344,44 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("新用户", replied_case.context_profile["target_user_roles"])
         self.assertEqual(replied_case.metadata["last_reply_parser"], "llm")
         self.assertEqual(len(adapter.requests), 1)
+
+    def test_http_service_can_create_reply_and_load_history(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            create_response = service.handle(
+                method="POST",
+                path="/cases",
+                body=(
+                    '{"input":"前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",'
+                    '"context_profile":{"business_model":"tob","primary_platform":"mobile-web",'
+                    '"target_user_roles":["前台","诊所管理者"]}}'
+                ).encode("utf-8"),
+            )
+            case_id = str(create_response.payload["case"]["case_id"])
+            reply_response = service.handle(
+                method="POST",
+                path=f"/cases/{case_id}/reply",
+                body='{"reply":"现在前台是手动翻表提醒，最近两周漏了 6 次。"}'.encode("utf-8"),
+            )
+            history_response = service.handle(
+                method="GET",
+                path=f"/cases/{case_id}/history",
+            )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(reply_response.status_code, 200)
+        self.assertEqual(history_response.status_code, 200)
+        self.assertIn("rendered_card", create_response.payload)
+        self.assertIn("history", history_response.payload)
+        self.assertIn("rendered_history", history_response.payload)
+        self.assertEqual(history_response.payload["case_id"], case_id)
+
+    def test_http_service_returns_not_found_for_missing_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(method="GET", path="/cases/case-missing")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(

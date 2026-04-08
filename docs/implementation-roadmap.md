@@ -61,8 +61,9 @@
 建议交付形态：
 
 - 命令行工具
+- 本地 HTTP 服务
 - 主代理入口
-- 轻量网页界面
+- 可选网页界面
 - 内部或对外 API
 
 完成标志：
@@ -75,9 +76,10 @@
 
 1. 先补服务层和会话承接能力
 2. 再补 LLM 适配层和解释器注入点
-3. 再做主代理入口
-4. 再做交互网页
-5. 最后视需要开放 API
+3. 再补本地 HTTP 服务
+4. 再做主代理 / skill 入口
+5. 再按需要补交互网页
+6. 最后视需要开放 API 或 MCP 接入层
 
 发布前检查可参考：
 
@@ -85,6 +87,7 @@
 
 下一阶段设计可参考：
 
+- [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)
 - [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)
 - [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)
 

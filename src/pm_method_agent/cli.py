@@ -5,6 +5,7 @@ import json
 import sys
 from typing import List, Optional
 
+from pm_method_agent.http_service import run_http_server
 from pm_method_agent.orchestrator import run_analysis_with_context
 from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
@@ -118,6 +119,10 @@ def build_session_parser() -> argparse.ArgumentParser:
     history_parser = subparsers.add_parser("history", help="查看当前会话的历史和状态变化。")
     history_parser.add_argument("case_id", help="会话案例编号。")
 
+    serve_parser = subparsers.add_parser("serve", help="启动本地 HTTP 服务。")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="监听地址。默认 127.0.0.1。")
+    serve_parser.add_argument("--port", type=int, default=8000, help="监听端口。默认 8000。")
+
     return parser
 
 
@@ -165,6 +170,9 @@ def _run_session_command(argv: List[str]) -> int:
             )
         elif args.command == "show":
             case_state = get_case(case_id=args.case_id, store=store)
+        elif args.command == "serve":
+            run_http_server(host=args.host, port=args.port, store_dir=args.store_dir)
+            return 0
         else:
             case_state = get_case(case_id=args.case_id, store=store)
     except FileNotFoundError as exc:
@@ -236,7 +244,7 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show", "history"}
+    session_commands = {"start", "reply", "show", "history", "serve"}
     index = 0
     while index < len(args_list):
         token = args_list[index]
