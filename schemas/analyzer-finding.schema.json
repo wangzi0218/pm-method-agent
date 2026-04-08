@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pm-method-agent.dev/schemas/analyzer-finding.schema.json",
+  "title": "AnalyzerFinding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dimension",
+    "claim",
+    "claim_type",
+    "evidence_level",
+    "evidence",
+    "unknowns",
+    "risk_if_wrong",
+    "suggested_next_action"
+  ],
+  "properties": {
+    "finding_id": {
+      "type": "string"
+    },
+    "dimension": {
+      "type": "string",
+      "enum": [
+        "problem-framing",
+        "root-cause-and-alternatives",
+        "decision-challenge",
+        "validation-design"
+      ]
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "claim_type": {
+      "type": "string",
+      "enum": [
+        "fact",
+        "inference",
+        "challenge",
+        "option",
+        "missing-information"
+      ]
+    },
+    "evidence_level": {
+      "type": "string",
+      "enum": [
+        "none",
+        "weak",
+        "medium",
+        "strong"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risk_if_wrong": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "suggested_next_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "human_decision_needed": {
+      "type": "boolean",
+      "default": false
+    },
+    "owner": {
+      "type": "string"
+    }
+  }
+}

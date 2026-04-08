@@ -1,0 +1,227 @@
+{
+  "case_id": "req-clinic-reminder-001",
+  "stage": "validation-design",
+  "workflow_state": "done",
+  "output_kind": "review-card",
+  "blocking_reason": "",
+  "pending_questions": [],
+  "raw_input": "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+  "context_profile": {
+    "business_model": "tob",
+    "primary_platform": "mobile-web",
+    "product_domain": "医疗服务平台",
+    "target_user_roles": [
+      "前台",
+      "诊所管理者"
+    ]
+  },
+  "normalized_summary": "输入已经带出方案，建议先把问题本身收拢。",
+  "evidence": [
+    "输入中直接出现了明显的方案词汇，说明当前表达偏方案导向。",
+    "当前原始输入已经提供了一个待分析的问题场景。",
+    "已经提供了部分产品与场景基础信息，可以减少错误语境下的判断。"
+  ],
+  "unknowns": [
+    "当前流程是怎么运行的",
+    "问题发生的频率和影响范围",
+    "当前是否已有替代方案或绕路方式",
+    "不同关键角色的目标和约束是否一致",
+    "是否真有明确时间窗口",
+    "是否存在更低成本的非产品解法",
+    "当前的基线数据是多少",
+    "验证周期多长才足够判断"
+  ],
+  "findings": [
+    {
+      "finding_id": "F-001",
+      "dimension": "problem-framing",
+      "claim": "当前输入已经带出方案，问题本身还没有单独说清。",
+      "claim_type": "inference",
+      "evidence_level": "weak",
+      "evidence": [
+        "输入里已经出现功能或界面层表达。",
+        "现状问题链路还没有展开。"
+      ],
+      "unknowns": [
+        "现象层到底发生了什么",
+        "为什么现在会发生"
+      ],
+      "risk_if_wrong": "high",
+      "suggested_next_action": "先改写成“现象 / 解释 / 方案假设”三层。",
+      "human_decision_needed": false,
+      "owner": "problem-framing"
+    },
+    {
+      "finding_id": "F-002",
+      "dimension": "problem-framing",
+      "claim": "已能看到部分角色，但目标和责任边界还不清。",
+      "claim_type": "inference",
+      "evidence_level": "weak",
+      "evidence": [
+        "输入中显式或隐式提到了：前台/操作人员、患者。"
+      ],
+      "unknowns": [
+        "谁是提出需求的人",
+        "谁是实际使用的人",
+        "谁承担最终业务结果"
+      ],
+      "risk_if_wrong": "medium",
+      "suggested_next_action": "补充角色关系，并区分提出者、使用者和结果责任人。",
+      "human_decision_needed": false,
+      "owner": "problem-framing"
+    },
+    {
+      "finding_id": "F-003",
+      "dimension": "decision-challenge",
+      "claim": "现在做的理由还不够清。",
+      "claim_type": "challenge",
+      "evidence_level": "weak",
+      "evidence": [
+        "当前没有明确时间窗口或机会成本说明。"
+      ],
+      "unknowns": [
+        "如果晚三个月做，会损失什么",
+        "当前机会成本是什么"
+      ],
+      "risk_if_wrong": "high",
+      "suggested_next_action": "补充为什么现在做，以及延后会损失什么。",
+      "human_decision_needed": false,
+      "owner": "decision-challenge"
+    },
+    {
+      "finding_id": "F-004",
+      "dimension": "decision-challenge",
+      "claim": "还不能证明一定要做产品，流程、培训、管理等路径也要一起比较。",
+      "claim_type": "challenge",
+      "evidence_level": "weak",
+      "evidence": [
+        "当前还没有排除流程、培训或管理等路径。"
+      ],
+      "unknowns": [
+        "不改产品能否先解决 60%",
+        "不同解法的实施成本和响应速度差异"
+      ],
+      "risk_if_wrong": "high",
+      "suggested_next_action": "把产品和非产品路径放在一起做一轮粗比较。",
+      "human_decision_needed": false,
+      "owner": "decision-challenge"
+    },
+    {
+      "finding_id": "F-005",
+      "dimension": "decision-challenge",
+      "claim": "这是企业产品场景，价值判断还要看组织流程、权限链和角色关系。",
+      "claim_type": "fact",
+      "evidence_level": "medium",
+      "evidence": [
+        "场景基础信息中已标记当前产品属于企业产品。"
+      ],
+      "unknowns": [
+        "采购方、使用方、管理方是否一致"
+      ],
+      "risk_if_wrong": "medium",
+      "suggested_next_action": "补看组织侧收益、执行成本和责任分配影响。",
+      "human_decision_needed": false,
+      "owner": "decision-challenge"
+    },
+    {
+      "finding_id": "F-006",
+      "dimension": "decision-challenge",
+      "claim": "当前不是桌面端，后面评估还要把展示空间和操作打断成本算进去。",
+      "claim_type": "fact",
+      "evidence_level": "medium",
+      "evidence": [
+        "场景基础信息中已标记当前主要平台为非桌面端。"
+      ],
+      "unknowns": [
+        "当前关键操作是否适合在受限屏幕中完成"
+      ],
+      "risk_if_wrong": "medium",
+      "suggested_next_action": "后面评估时，把信息密度、流程长度和中断成本一起看。",
+      "human_decision_needed": false,
+      "owner": "decision-challenge"
+    },
+    {
+      "finding_id": "F-007",
+      "dimension": "validation-design",
+      "claim": "可先验证这个假设：如果解决“前台希望增加一个预约前提醒弹窗，避免漏提醒患者。”背后的关键阻塞，核心行为指标会改善。",
+      "claim_type": "option",
+      "evidence_level": "weak",
+      "evidence": [
+        "这个假设目前主要来自输入本身，客观材料还不够。"
+      ],
+      "unknowns": [
+        "当前基线指标是什么",
+        "最小验证动作要观察什么变化"
+      ],
+      "risk_if_wrong": "medium",
+      "suggested_next_action": "先收集 3 到 5 个真实案例，再设计最小验证动作。",
+      "human_decision_needed": false,
+      "owner": "validation-design"
+    },
+    {
+      "finding_id": "F-008",
+      "dimension": "validation-design",
+      "claim": "进入方案前，先把成功指标、护栏指标和停止条件定下来。",
+      "claim_type": "challenge",
+      "evidence_level": "medium",
+      "evidence": [
+        "如果没有事前约定的判断标准，后面就很难判断值不值得继续投。"
+      ],
+      "unknowns": [
+        "成功指标是什么",
+        "失败或停止条件是什么"
+      ],
+      "risk_if_wrong": "high",
+      "suggested_next_action": "至少先补 1 个成功指标、1 个护栏指标和 1 个停止条件。",
+      "human_decision_needed": false,
+      "owner": "validation-design"
+    }
+  ],
+  "decision_gates": [
+    {
+      "gate_id": "G-001",
+      "stage": "problem-definition",
+      "question": "问题是否已经定义清楚，可以进入方案讨论？",
+      "options": [
+        "continue-to-solution",
+        "collect-more-evidence",
+        "defer"
+      ],
+      "recommended_option": "collect-more-evidence",
+      "reason": "输入里已经混入方案，现状证据也还不够。",
+      "blocking": true
+    },
+    {
+      "gate_id": "G-002",
+      "stage": "decision-challenge",
+      "question": "基于现有信息，当前值得投入产品能力吗？",
+      "options": [
+        "productize-now",
+        "try-non-product-first",
+        "defer"
+      ],
+      "recommended_option": "productize-now",
+      "reason": "基础场景信息已经具备，当前也没有更优的非产品路径信号，可以继续验证。",
+      "blocking": false
+    }
+  ],
+  "next_actions": [
+    "把当前输入拆成现象、解释、方案假设三层。",
+    "补充现状流程、失败案例和现有替代做法。",
+    "标出核心角色，以及他们的目标差异。",
+    "补充为什么现在做，并和机会成本一起看。",
+    "列出产品、流程、培训、运营四类路径，先做粗比较。",
+    "先收集 3 到 5 个真实案例，再设计最小验证动作。",
+    "把需求改写成可证伪假设，并写清什么证据会推翻它。",
+    "补充成功指标、护栏指标和停止条件。"
+  ],
+  "metadata": {
+    "selected_modes": [
+      "problem-framing",
+      "decision-challenge",
+      "validation-design"
+    ],
+    "source": "example",
+    "version": "v2"
+  }
+}

@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+from typing import Dict, List, Optional
+
+from pm_method_agent.analyzers import (
+    analyze_decision_challenge,
+    analyze_problem_framing,
+    analyze_validation_design,
+)
+from pm_method_agent.models import CaseState
+
+
+MODE_TO_STAGE = {
+    "problem-framing": "problem-definition",
+    "decision-challenge": "decision-challenge",
+    "validation-design": "validation-design",
+}
+
+REQUIRED_CONTEXT_QUESTIONS = {
+    "business_model": "当前产品属于企业产品、消费者产品还是内部产品？",
+    "primary_platform": "当前主要使用平台是桌面端、移动端、小程序还是多端？",
+    "target_user_roles": "谁提出需求、谁使用产品、谁承担最终结果？",
+}
+
+
+def run_analysis(
+    raw_input: str,
+    mode: str = "auto",
+    case_id: str = "case-001",
+    show_case_id: bool = False,
+) -> CaseState:
+    return run_analysis_with_context(
+        raw_input=raw_input,
+        mode=mode,
+        case_id=case_id,
+        context_profile=None,
+        show_case_id=show_case_id,
+    )
+
+
+def _run_analysis(
+    raw_input: str,
+    mode: str,
+    case_id: str,
+    context_profile: Optional[Dict[str, object]],
+    show_case_id: bool,
+) -> CaseState:
+    if mode.strip().lower() == "auto":
+        return _run_agent_flow(
+            raw_input=raw_input,
+            case_id=case_id,
+            context_profile=context_profile,
+            show_case_id=show_case_id,
+        )
+
+    selected_modes = _resolve_modes(mode)
+    case_state = CaseState(
+        case_id=case_id,
+        stage=MODE_TO_STAGE[selected_modes[0]],
+        raw_input=raw_input.strip(),
+        workflow_state=MODE_TO_STAGE[selected_modes[0]],
+        output_kind="review-card",
+        context_profile=context_profile or {},
+        metadata={"selected_modes": selected_modes, "show_case_id": show_case_id},
+    )
+
+    for selected_mode in selected_modes:
+        if selected_mode == "problem-framing":
+            analyze_problem_framing(case_state)
+        elif selected_mode == "decision-challenge":
+            analyze_decision_challenge(case_state)
+        elif selected_mode == "validation-design":
+            analyze_validation_design(case_state)
+
+    return case_state
+
+
+def _run_agent_flow(
+    raw_input: str,
+    case_id: str,
+    context_profile: Optional[Dict[str, object]],
+    show_case_id: bool,
+) -> CaseState:
+    normalized_input = raw_input.strip()
+    case_state = CaseState(
+        case_id=case_id,
+        stage="intake",
+        workflow_state="intake",
+        output_kind="review-card",
+        raw_input=normalized_input,
+        context_profile=context_profile or {},
+        metadata={"selected_modes": [], "show_case_id": show_case_id},
+    )
+
+    if _should_request_context_before_analysis(case_state):
+        return _build_context_alignment_card(case_state)
+
+    case_state.workflow_state = "problem-definition"
+    analyze_problem_framing(case_state)
+    case_state.metadata["selected_modes"].append("problem-framing")
+    if _should_block_after_problem_definition(case_state):
+        return _build_problem_block_card(case_state)
+
+    case_state.workflow_state = "decision-challenge"
+    analyze_decision_challenge(case_state)
+    case_state.metadata["selected_modes"].append("decision-challenge")
+    if _should_block_after_decision_challenge(case_state):
+        return _build_decision_gate_card(case_state)
+
+    case_state.workflow_state = "validation-design"
+    analyze_validation_design(case_state)
+    case_state.metadata["selected_modes"].append("validation-design")
+    case_state.workflow_state = "done"
+    case_state.output_kind = "review-card"
+    case_state.metadata["next_stage"] = "已完成当前轮次分析"
+    return case_state
+
+
+def run_analysis_with_context(
+    raw_input: str,
+    mode: str = "auto",
+    case_id: str = "case-001",
+    context_profile: Optional[Dict[str, object]] = None,
+    show_case_id: bool = False,
+) -> CaseState:
+    return _run_analysis(raw_input, mode, case_id, context_profile, show_case_id)
+
+
+def _resolve_modes(mode: str) -> List[str]:
+    normalized = mode.strip().lower()
+    if normalized == "auto":
+        return [
+            "problem-framing",
+            "decision-challenge",
+            "validation-design",
+        ]
+    if normalized not in MODE_TO_STAGE:
+        raise ValueError(
+            "Unsupported mode. Use one of: auto, problem-framing, decision-challenge, validation-design."
+        )
+    return [normalized]
+
+
+def _missing_context_questions(case_state: CaseState) -> List[str]:
+    context_profile = case_state.context_profile
+    questions: List[str] = []
+    if not context_profile.get("business_model"):
+        questions.append(REQUIRED_CONTEXT_QUESTIONS["business_model"])
+    if not context_profile.get("primary_platform"):
+        questions.append(REQUIRED_CONTEXT_QUESTIONS["primary_platform"])
+    if not context_profile.get("target_user_roles"):
+        questions.append(REQUIRED_CONTEXT_QUESTIONS["target_user_roles"])
+    return questions
+
+
+def _should_request_context_before_analysis(case_state: CaseState) -> bool:
+    missing_questions = _missing_context_questions(case_state)
+    if not missing_questions:
+        return False
+    return len(missing_questions) >= 2 or len(case_state.raw_input.strip()) < 20
+
+
+def _build_context_alignment_card(case_state: CaseState) -> CaseState:
+    pending_questions = _missing_context_questions(case_state)[:3]
+    case_state.stage = "context-alignment"
+    case_state.workflow_state = "blocked"
+    case_state.output_kind = "context-question-card"
+    case_state.blocking_reason = "场景信息还不够，继续往下判断容易跑偏。"
+    case_state.pending_questions = pending_questions
+    case_state.normalized_summary = "先补几项场景信息，再继续往下看会更稳。"
+    case_state.extend_next_actions(
+        [
+            "先补充产品类型、主要平台和关键用户角色。",
+            "补完这几项后，再进入问题定义审查。",
+        ]
+    )
+    case_state.metadata["next_stage"] = "problem-definition"
+    return case_state
+
+
+def _should_block_after_problem_definition(case_state: CaseState) -> bool:
+    if len(case_state.raw_input.strip()) < 20:
+        return True
+    for finding in case_state.findings:
+        if finding.dimension == "problem-framing" and finding.claim_type == "missing-information":
+            return True
+    return False
+
+
+def _build_problem_block_card(case_state: CaseState) -> CaseState:
+    case_state.workflow_state = "blocked"
+    case_state.output_kind = "stage-block-card"
+    case_state.blocking_reason = "问题还没有定义稳，现在往下做方案，容易把错的问题做对。"
+    case_state.metadata["next_stage"] = "problem-definition"
+    return case_state
+
+
+def _should_block_after_decision_challenge(case_state: CaseState) -> bool:
+    for gate in case_state.decision_gates:
+        if gate.stage == "decision-challenge" and gate.blocking:
+            return True
+    return False
+
+
+def _build_decision_gate_card(case_state: CaseState) -> CaseState:
+    case_state.workflow_state = "blocked"
+    case_state.output_kind = "decision-gate-card"
+    case_state.blocking_reason = "这一轮先把要不要继续产品化定下来，再进入验证设计。"
+    case_state.metadata["next_stage"] = "decision-challenge"
+    return case_state

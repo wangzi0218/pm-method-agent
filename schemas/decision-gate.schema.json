@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pm-method-agent.dev/schemas/decision-gate.schema.json",
+  "title": "DecisionGate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "gate_id",
+    "stage",
+    "question",
+    "options",
+    "recommended_option",
+    "reason",
+    "blocking"
+  ],
+  "properties": {
+    "gate_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "problem-definition",
+        "decision-challenge",
+        "validation-design"
+      ]
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommended_option": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "blocking": {
+      "type": "boolean"
+    }
+  }
+}

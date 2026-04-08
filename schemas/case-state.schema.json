@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pm-method-agent.dev/schemas/case-state.schema.json",
+  "title": "CaseState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "stage",
+    "workflow_state",
+    "output_kind",
+    "raw_input",
+    "normalized_summary",
+    "evidence",
+    "unknowns",
+    "findings",
+    "decision_gates",
+    "next_actions"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_state": {
+      "type": "string",
+      "enum": [
+        "intake",
+        "blocked",
+        "done",
+        "context-alignment",
+        "problem-definition",
+        "decision-challenge",
+        "validation-design",
+        "deferred"
+      ]
+    },
+    "output_kind": {
+      "type": "string",
+      "enum": [
+        "review-card",
+        "context-question-card",
+        "stage-block-card",
+        "decision-gate-card"
+      ]
+    },
+    "blocking_reason": {
+      "type": "string"
+    },
+    "pending_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "context_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "business_model": {
+          "type": "string",
+          "enum": [
+            "tob",
+            "toc",
+            "internal"
+          ]
+        },
+        "primary_platform": {
+          "type": "string",
+          "enum": [
+            "pc",
+            "mobile-web",
+            "native-app",
+            "mini-program",
+            "multi-platform"
+          ]
+        },
+        "distribution_channel": {
+          "type": "string"
+        },
+        "product_domain": {
+          "type": "string"
+        },
+        "target_user_roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "context-alignment",
+        "problem-definition",
+        "decision-challenge",
+        "validation-design",
+        "done",
+        "deferred"
+      ]
+    },
+    "raw_input": {
+      "type": "string",
+      "minLength": 1
+    },
+    "normalized_summary": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "./analyzer-finding.schema.json"
+      }
+    },
+    "decision_gates": {
+      "type": "array",
+      "items": {
+        "$ref": "./decision-gate.schema.json"
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      }
+    }
+  }
+}
