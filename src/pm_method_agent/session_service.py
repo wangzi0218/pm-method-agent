@@ -8,6 +8,11 @@ from uuid import uuid4
 
 from pm_method_agent.models import CaseState
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis_with_context
+from pm_method_agent.reply_interpreter import (
+    ReplyAnalysis,
+    ReplyInterpreter,
+    build_reply_interpreter_from_env,
+)
 
 
 SESSION_STORE_DIRNAME = ".pm_method_agent/cases"
@@ -22,6 +27,7 @@ SESSION_RESOLVED_GATES_KEY = "resolved_gates"
 SESSION_LATEST_REPLY_KEY = "latest_user_reply"
 SESSION_LAST_RESUME_STAGE_KEY = "last_resume_stage"
 SESSION_LAST_GATE_CHOICE_KEY = "last_gate_choice"
+SESSION_LAST_REPLY_PARSER_KEY = "last_reply_parser"
 
 NOTE_BUCKET_KEYS = [
     "context_notes",
@@ -93,6 +99,7 @@ def create_case(
     case_state.metadata[SESSION_LATEST_REPLY_KEY] = ""
     case_state.metadata[SESSION_LAST_RESUME_STAGE_KEY] = "context-alignment"
     case_state.metadata[SESSION_LAST_GATE_CHOICE_KEY] = None
+    case_state.metadata[SESSION_LAST_REPLY_PARSER_KEY] = None
     case_state.metadata["show_case_id"] = True
     active_store.save(case_state)
     return case_state
@@ -103,17 +110,22 @@ def reply_to_case(
     reply_text: str,
     context_profile_updates: Optional[Dict[str, object]] = None,
     store: Optional[LocalCaseStore] = None,
+    reply_interpreter: Optional[ReplyInterpreter] = None,
 ) -> CaseState:
     active_store = store or default_store()
     previous_case = active_store.load(case_id)
     original_input = str(previous_case.metadata.get(SESSION_INPUT_KEY, previous_case.raw_input))
     previous_notes = list(previous_case.metadata.get(SESSION_NOTES_KEY, []))
     updated_notes = previous_notes + [reply_text.strip()]
-    reply_analysis = _analyze_reply(reply_text)
+    active_reply_interpreter = reply_interpreter or build_reply_interpreter_from_env()
+    reply_analysis = active_reply_interpreter.analyze_reply(
+        reply_text,
+        previous_case=previous_case,
+    )
 
     merged_context = _merge_context_profile(
         previous_case.context_profile,
-        reply_analysis["context_updates"],
+        reply_analysis.context_updates,
     )
     if context_profile_updates:
         merged_context = _merge_context_profile(merged_context, context_profile_updates)
@@ -150,13 +162,20 @@ def reply_to_case(
 
     resolved_gates = list(previous_case.metadata.get(SESSION_RESOLVED_GATES_KEY, []))
     for gate in previous_case.decision_gates:
-        if gate.blocking:
+        if gate.blocking and reply_analysis.inferred_gate_choice:
             resolved_gates.append(
                 {
                     "gate_id": gate.gate_id,
                     "stage": gate.stage,
-                    "user_choice": reply_analysis.get("inferred_gate_choice"),
+                    "user_choice": reply_analysis.inferred_gate_choice,
+                    "recommended_option": gate.recommended_option,
+                    "resolution_kind": _resolve_gate_resolution_kind(
+                        gate.recommended_option,
+                        reply_analysis.inferred_gate_choice,
+                    ),
                     "reply_text": reply_text.strip(),
+                    "workflow_state_after": next_case.workflow_state,
+                    "next_stage_after": next_case.metadata.get("next_stage"),
                 }
             )
 
@@ -174,6 +193,7 @@ def reply_to_case(
                 "to_workflow_state": next_case.workflow_state,
                 "trigger": "user-reply",
                 "resume_stage": resume_stage,
+                "gate_choice": reply_analysis.inferred_gate_choice,
             }
         )
 
@@ -187,7 +207,8 @@ def reply_to_case(
     next_case.metadata[SESSION_RESOLVED_GATES_KEY] = resolved_gates
     next_case.metadata[SESSION_LATEST_REPLY_KEY] = reply_text.strip()
     next_case.metadata[SESSION_LAST_RESUME_STAGE_KEY] = resume_stage
-    next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.get("inferred_gate_choice")
+    next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.inferred_gate_choice
+    next_case.metadata[SESSION_LAST_REPLY_PARSER_KEY] = reply_analysis.parser_name
     next_case.metadata["show_case_id"] = True
     active_store.save(next_case)
     return next_case
@@ -220,53 +241,18 @@ def _compose_session_input(original_input: str, note_buckets: Dict[str, list[str
     return f"{original_input.strip()}\n\n" + "\n\n".join(sections)
 
 
-def _analyze_reply(reply_text: str) -> Dict[str, object]:
-    text = reply_text.strip()
-    extracted: Dict[str, object] = {}
-    lowered = text.lower()
-    if any(keyword in text.lower() for keyword in ["tob", "企业产品"]):
-        extracted["business_model"] = "tob"
-    elif any(keyword in text.lower() for keyword in ["toc", "消费者产品"]):
-        extracted["business_model"] = "toc"
-    elif "内部产品" in text or "internal" in text.lower():
-        extracted["business_model"] = "internal"
-
-    if any(keyword in text for keyword in ["桌面端", "pc"]):
-        extracted["primary_platform"] = "pc"
-    elif any(keyword in text for keyword in ["移动网页", "mobile web", "h5"]):
-        extracted["primary_platform"] = "mobile-web"
-    elif any(keyword in text for keyword in ["原生应用", "app", "移动端"]):
-        extracted["primary_platform"] = "native-app"
-    elif any(keyword in text for keyword in ["小程序"]):
-        extracted["primary_platform"] = "mini-program"
-    elif any(keyword in text for keyword in ["多端"]):
-        extracted["primary_platform"] = "multi-platform"
-
-    inferred_roles = []
-    for role in ["前台", "管理者", "管理员", "运营", "新用户", "患者", "审批专员", "部门负责人"]:
-        if role in text and role not in inferred_roles:
-            inferred_roles.append(role)
-    if inferred_roles:
-        extracted["target_user_roles"] = inferred_roles
-    categories = _classify_reply_categories(text, extracted)
-    return {
-        "context_updates": extracted,
-        "categories": categories,
-        "inferred_gate_choice": _infer_gate_choice(lowered),
-    }
-
-
 def _generate_case_id() -> str:
     return f"case-{uuid4().hex[:8]}"
 
 
-def _resolve_resume_stage(previous_case: CaseState, reply_analysis: Dict[str, object]) -> str:
+def _resolve_resume_stage(previous_case: CaseState, reply_analysis: ReplyAnalysis) -> str:
     if previous_case.output_kind == "context-question-card":
         return "context-alignment"
     if previous_case.output_kind == "stage-block-card":
-        return "problem-definition"
+        next_stage = str(previous_case.metadata.get("next_stage", "") or "").strip()
+        return next_stage or "problem-definition"
     if previous_case.output_kind == "decision-gate-card":
-        inferred_gate_choice = reply_analysis.get("inferred_gate_choice")
+        inferred_gate_choice = reply_analysis.inferred_gate_choice
         if inferred_gate_choice == "productize-now" and not _has_blocking_gate(previous_case, "problem-definition"):
             return "validation-design"
         return "decision-challenge"
@@ -280,10 +266,25 @@ def _build_next_case_from_reply(
     rerun_input: str,
     merged_context: Dict[str, object],
     resume_stage: str,
-    reply_analysis: Dict[str, object],
+    reply_analysis: ReplyAnalysis,
 ) -> CaseState:
-    inferred_gate_choice = reply_analysis.get("inferred_gate_choice")
+    inferred_gate_choice = reply_analysis.inferred_gate_choice
     if previous_case.output_kind == "decision-gate-card":
+        if not inferred_gate_choice:
+            return _build_gate_outcome_case(
+                previous_case=previous_case,
+                rerun_input=rerun_input,
+                merged_context=merged_context,
+                summary="当前还没有识别到你对这个决策关口的明确选择。",
+                blocking_reason="需要先明确这一关口的选择，系统才能决定是否继续推进。",
+                workflow_state="blocked",
+                output_kind="decision-gate-card",
+                next_stage="decision-challenge",
+                next_actions=[
+                    "请直接回答：进入产品化阶段、优先评估非产品路径，或暂缓。",
+                    "如果你已经做过取舍，也可以补一句原因，系统会继续承接。",
+                ],
+            )
         if inferred_gate_choice == "defer":
             return _build_gate_outcome_case(
                 previous_case=previous_case,
@@ -293,6 +294,7 @@ def _build_next_case_from_reply(
                 blocking_reason="当前已按你的选择暂缓，后续可在条件变化后重新启动分析。",
                 workflow_state="deferred",
                 output_kind="stage-block-card",
+                next_stage="decision-challenge",
                 next_actions=[
                     "记录本轮暂缓原因和重新开启条件。",
                     "后续如果出现新证据，再重新进入当前案例。",
@@ -307,6 +309,7 @@ def _build_next_case_from_reply(
                 blocking_reason="当前已转向非产品路径验证，建议先完成流程、培训或管理方案试行。",
                 workflow_state="blocked",
                 output_kind="stage-block-card",
+                next_stage="decision-challenge",
                 next_actions=[
                     "先列出流程、培训、管理三类可试路径。",
                     "为非产品路径补一个最小试行周期和观察指标。",
@@ -329,6 +332,7 @@ def _build_gate_outcome_case(
     blocking_reason: str,
     workflow_state: str,
     output_kind: str,
+    next_stage: str,
     next_actions: list[str],
 ) -> CaseState:
     case_state = CaseState.from_dict(previous_case.to_dict())
@@ -340,7 +344,7 @@ def _build_gate_outcome_case(
     case_state.blocking_reason = blocking_reason
     case_state.next_actions = next_actions
     case_state.metadata["selected_modes"] = ["decision-challenge"]
-    case_state.metadata["next_stage"] = "decision-challenge"
+    case_state.metadata["next_stage"] = next_stage
     return case_state
 
 
@@ -350,7 +354,7 @@ def _empty_note_buckets() -> Dict[str, list[str]]:
 
 def _merge_note_buckets(
     previous_buckets: object,
-    reply_analysis: Dict[str, object],
+    reply_analysis: ReplyAnalysis,
     reply_text: str,
 ) -> Dict[str, list[str]]:
     merged = _empty_note_buckets()
@@ -365,7 +369,7 @@ def _merge_note_buckets(
         "constraint": "constraint_notes",
         "other": "other_notes",
     }
-    target_buckets = [bucket_mapping[category] for category in reply_analysis["categories"]]
+    target_buckets = [bucket_mapping[category] for category in reply_analysis.categories]
     if not target_buckets:
         target_buckets = ["other_notes"]
 
@@ -394,48 +398,11 @@ def _merge_context_profile(
     return merged
 
 
-def _classify_reply_categories(text: str, context_updates: Dict[str, object]) -> list[str]:
-    categories = []
-    if context_updates or any(keyword in text for keyword in ["角色", "用户", "产品", "平台", "面向"]):
-        categories.append("context")
-    if any(
-        keyword in text
-        for keyword in ["现在", "目前", "最近", "两周", "高峰期", "流程", "漏", "案例", "数据", "基线", "发生"]
-    ) or any(character.isdigit() for character in text):
-        categories.append("evidence")
-    if any(keyword in text for keyword in ["继续产品化", "继续做", "暂缓", "先不做", "优先", "还是继续", "先试"]):
-        categories.append("decision")
-    if any(keyword in text for keyword in ["合规", "预算", "周期", "资源", "设备", "权限", "上线", "本周", "本月"]):
-        categories.append("constraint")
-    if not categories:
-        categories.append("other")
-    return categories
-
-
-def _infer_gate_choice(lowered_text: str) -> Optional[str]:
-    if any(keyword in lowered_text for keyword in ["暂缓", "先不做", "defer"]):
-        return "defer"
-    if any(
-        keyword in lowered_text
-        for keyword in [
-            "不急着继续产品化",
-            "先试流程",
-            "先试培训",
-            "先试非产品",
-            "先走流程",
-            "先走培训",
-            "先试",
-            "流程优先",
-            "培训优先",
-        ]
-    ):
-        return "try-non-product-first"
-    if any(keyword in lowered_text for keyword in ["继续产品化", "继续做", "还是继续", "继续推进", "productize"]):
-        return "productize-now"
-    if any(keyword in lowered_text for keyword in ["先试流程", "先试培训", "非产品", "流程提醒", "培训", "try non product"]):
-        return "try-non-product-first"
-    return None
-
-
 def _has_blocking_gate(case_state: CaseState, stage: str) -> bool:
     return any(gate.stage == stage and gate.blocking for gate in case_state.decision_gates)
+
+
+def _resolve_gate_resolution_kind(recommended_option: str, user_choice: str) -> str:
+    if user_choice == recommended_option:
+        return "accepted-recommendation"
+    return "overrode-recommendation"

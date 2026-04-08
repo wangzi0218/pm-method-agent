@@ -118,6 +118,16 @@
 
 这三种入口应共用同一套方法内核，而不是维护三套独立逻辑。
 
+当前仓库默认仍使用规则解释器来承接多轮回复，但已经补上了 LLM 适配骨架，后续可以按用户环境切换到“用户自带模型”或“托管模型”模式，而不需要重写状态机。
+
+当前推荐优先使用 OpenAI-compatible 配置方式，也就是只需要：
+
+- `base_url`
+- `api_key`
+- `model`
+
+这样可以更自然地接入各种兼容 OpenAI 格式的模型服务。
+
 ## 适用场景
 
 - 需求刚被提出，但问题定义仍然模糊
@@ -268,6 +278,24 @@ PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 
 这组命令当前仍是验证版，但已经代表了后续网页和 agent 入口会共用的底层会话模型。
 
+如果你希望让“回复解释”这一步优先使用兼容 OpenAI 格式的模型服务，可以先配置：
+
+```bash
+export PMMA_LLM_ENABLED=1
+export PMMA_LLM_BASE_URL=https://api.deepseek.com
+export PMMA_LLM_API_KEY=your-api-key
+export PMMA_LLM_MODEL=deepseek-chat
+```
+
+配置后，再继续执行 `reply`，系统会优先使用 LLM 解释器；如果配置不完整，则会自动回退到规则解释器。
+
+当前多轮承接已经支持：
+
+- 根据卡片类型恢复到正确阶段，而不是总从头重跑
+- 记录关口选择，并影响后续状态推进
+- 对“暂缓”“先试非产品路径”“继续产品化”做不同分支处理
+- 在需要时保持关口阻塞，而不是误判为已完成
+
 ## 体验建议
 
 如果你想判断当前方法内核是否已经站得住，不建议只跑一个例子。
@@ -291,6 +319,7 @@ PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 - [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例与验证方式
 - [docs/output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)：默认输出风格与审查卡结构
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：里程碑、实现阶段和后续发展计划
+- [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：LLM 适配层、解释器注入点和未来接入方式
 - [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：首次公开前的提交流程与版本建议
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：GitHub 首次公开发布的标准
 - [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)：多轮会话与服务层设计
@@ -307,6 +336,7 @@ PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 - 一套可复用的数据结构定义、审查卡风格约束与示例案例
 - 一组最基础的 smoke tests
 - 一套可直接复制执行的体验用例
+- 一层可扩展的 LLM 适配骨架与回复解释器接口
 
 ## 后续形态
 
@@ -315,8 +345,8 @@ PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 更合理的演进方式是：
 
 - 当前阶段：CLI 用于验证方法内核
-- 下一阶段：增加多轮会话能力与服务层
-- 后续阶段：同时提供网页入口和 agent 入口
+- 下一阶段：继续完善多轮会话状态机与解释器接入
+- 后续阶段：同时提供网页入口、agent 入口和托管服务能力
 
 如果未来提供网页形态，底层会补一层服务接口或 API，用来承接会话状态、阶段推进和结果读取。
 

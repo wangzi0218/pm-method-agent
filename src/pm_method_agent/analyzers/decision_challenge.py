@@ -5,6 +5,18 @@ from pm_method_agent.models import AnalyzerFinding, CaseState, DecisionGate
 
 URGENT_HINTS = ["马上", "尽快", "紧急", "本月", "本季度", "立刻"]
 ORG_HINTS = ["培训", "流程", "规范", "SOP", "激励", "考核", "权限"]
+NON_PRODUCT_ATTEMPT_HINTS = [
+    "已经试过",
+    "已试过",
+    "试过培训",
+    "试过流程",
+    "试过提醒",
+    "流程提醒",
+    "培训提醒",
+    "效果不稳定",
+    "效果回落",
+    "没有稳定解决",
+]
 
 
 def analyze_decision_challenge(case_state: CaseState) -> None:
@@ -13,6 +25,7 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
     case_state.stage = "decision-challenge"
     has_min_context = bool(context_profile.get("business_model")) and bool(context_profile.get("primary_platform"))
     has_org_hint = any(keyword in text for keyword in ORG_HINTS)
+    non_product_already_tried = any(keyword in text for keyword in NON_PRODUCT_ATTEMPT_HINTS)
 
     why_now_level = "weak"
     why_now_claim = "现在做的理由还不够清。"
@@ -40,24 +53,36 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
     )
 
     non_product_level = "weak"
+    non_product_claim = "还不能证明一定要做产品，流程、培训、管理等路径也要一起比较。"
     non_product_evidence = ["当前还没有排除流程、培训或管理等路径。"]
-    if has_org_hint:
+    non_product_unknowns = [
+        "不改产品能否先解决 60%",
+        "不同解法的实施成本和响应速度差异",
+    ]
+    non_product_action = "把产品和非产品路径放在一起做一轮粗比较。"
+    if non_product_already_tried:
+        non_product_level = "medium"
+        non_product_claim = "已有信号表明非产品路径被尝试过，但还要确认失败原因和覆盖范围。"
+        non_product_evidence = ["输入中已经出现“已试过流程、培训或提醒，但效果不稳定”的线索。"]
+        non_product_unknowns = [
+            "已经试过哪些非产品路径",
+            "为什么这些路径没有稳定解决问题",
+        ]
+        non_product_action = "补看已尝试路径的覆盖范围、持续性和失败原因。"
+    elif has_org_hint:
         non_product_level = "medium"
         non_product_evidence = ["输入中已经出现流程、规范或权限相关线索。"]
 
     case_state.add_finding(
         AnalyzerFinding(
             dimension="decision-challenge",
-            claim="还不能证明一定要做产品，流程、培训、管理等路径也要一起比较。",
+            claim=non_product_claim,
             claim_type="challenge",
             evidence_level=non_product_level,
             evidence=non_product_evidence,
-            unknowns=[
-                "不改产品能否先解决 60%",
-                "不同解法的实施成本和响应速度差异",
-            ],
+            unknowns=non_product_unknowns,
             risk_if_wrong="high",
-            suggested_next_action="把产品和非产品路径放在一起做一轮粗比较。",
+            suggested_next_action=non_product_action,
             owner="decision-challenge",
         )
     )
@@ -100,9 +125,30 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
     case_state.extend_next_actions(
         [
             "补充为什么现在做，并和机会成本一起看。",
-            "列出产品、流程、培训、运营四类路径，先做粗比较。",
+            (
+                "补看已尝试非产品路径的覆盖范围和失败原因。"
+                if non_product_already_tried
+                else "列出产品、流程、培训、运营四类路径，先做粗比较。"
+            ),
         ]
     )
+
+    if not has_min_context:
+        recommended_option = "try-non-product-first"
+        gate_reason = "基础场景信息还不够，先不要直接进入产品化。"
+        gate_blocking = True
+    elif non_product_already_tried:
+        recommended_option = "productize-now"
+        gate_reason = "已有信号表明非产品路径已经试过且效果不稳，可以继续进入验证设计。"
+        gate_blocking = False
+    elif has_org_hint:
+        recommended_option = "try-non-product-first"
+        gate_reason = "当前更像组织流程类问题，先看非产品路径更稳。"
+        gate_blocking = True
+    else:
+        recommended_option = "productize-now"
+        gate_reason = "基础场景信息已经具备，当前也没有更优的非产品路径信号，可以继续验证。"
+        gate_blocking = False
 
     case_state.add_gate(
         DecisionGate(
@@ -110,12 +156,8 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
             stage="decision-challenge",
             question="基于现有信息，当前值得投入产品能力吗？",
             options=["productize-now", "try-non-product-first", "defer"],
-            recommended_option="try-non-product-first" if has_org_hint or not has_min_context else "productize-now",
-            reason=(
-                "现在做的理由和解法比较都还不够，先看非产品路径更稳。"
-                if has_org_hint or not has_min_context
-                else "基础场景信息已经具备，当前也没有更优的非产品路径信号，可以继续验证。"
-            ),
-            blocking=has_org_hint or not has_min_context,
+            recommended_option=recommended_option,
+            reason=gate_reason,
+            blocking=gate_blocking,
         )
     )

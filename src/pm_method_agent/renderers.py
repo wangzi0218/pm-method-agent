@@ -11,6 +11,7 @@ STAGE_LABELS = {
     "problem-definition": "问题定义",
     "decision-challenge": "决策挑战",
     "validation-design": "验证设计",
+    "blocked": "已阻塞",
     "done": "已完成",
     "deferred": "已暂缓",
 }
@@ -73,6 +74,11 @@ OPTION_LABELS = {
     "try-non-product-first": "优先评估非产品路径",
 }
 
+RESOLUTION_KIND_LABELS = {
+    "accepted-recommendation": "采纳建议",
+    "overrode-recommendation": "覆盖建议",
+}
+
 OUTPUT_KIND_LABELS = {
     "review-card": "审查卡",
     "context-question-card": "场景补充卡",
@@ -107,6 +113,7 @@ def render_case_history(case_state: CaseState, output_format: str = "markdown") 
         "resolved_gates": case_state.metadata.get("resolved_gates", []),
         "last_resume_stage": case_state.metadata.get("last_resume_stage"),
         "last_gate_choice": case_state.metadata.get("last_gate_choice"),
+        "last_reply_parser": case_state.metadata.get("last_reply_parser"),
     }
     if output_format == "json":
         return json.dumps(history_payload, ensure_ascii=False, indent=2)
@@ -187,6 +194,8 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append(
             f"- 最近关口选择：`{OPTION_LABELS.get(history_payload['last_gate_choice'], history_payload['last_gate_choice'])}`"
         )
+    if history_payload.get("last_reply_parser"):
+        lines.append(f"- 最近解释方式：`{history_payload['last_reply_parser']}`")
     lines.append("")
 
     lines.append("## 会话回合")
@@ -198,9 +207,16 @@ def _render_history_markdown(history_payload: dict) -> str:
 
     lines.append("## 阶段变更")
     for item in history_payload.get("stage_history", []):
+        from_stage = _label_for(STAGE_LABELS, str(item.get("from_stage")))
+        to_stage = _label_for(STAGE_LABELS, str(item.get("to_stage")))
+        resume_stage = _label_for(STAGE_LABELS, str(item.get("resume_stage", "-")))
+        gate_choice = item.get("gate_choice")
+        gate_note = ""
+        if gate_choice:
+            gate_note = f"，选择={OPTION_LABELS.get(gate_choice, gate_choice)}"
         lines.append(
-            f"- {item.get('from_stage')} -> {item.get('to_stage')} "
-            f"(触发={item.get('trigger', 'unknown')}，恢复点={item.get('resume_stage', '-')})"
+            f"- {from_stage} -> {to_stage} "
+            f"(触发={item.get('trigger', 'unknown')}，恢复点={resume_stage}{gate_note})"
         )
     if not history_payload.get("stage_history"):
         lines.append("- 暂无")
@@ -217,7 +233,11 @@ def _render_history_markdown(history_payload: dict) -> str:
     for item in history_payload.get("resolved_gates", []):
         choice = item.get("user_choice")
         choice_label = OPTION_LABELS.get(choice, choice or "未识别")
-        lines.append(f"- {item.get('gate_id')} / {item.get('stage')} / 选择={choice_label}")
+        resolution_kind = item.get("resolution_kind")
+        resolution_label = RESOLUTION_KIND_LABELS.get(resolution_kind, resolution_kind or "未标记")
+        lines.append(
+            f"- {item.get('gate_id')} / {item.get('stage')} / 选择={choice_label} / 处理={resolution_label}"
+        )
     if not history_payload.get("resolved_gates"):
         lines.append("- 暂无")
     return "\n".join(lines)

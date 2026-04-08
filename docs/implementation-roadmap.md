@@ -74,9 +74,10 @@
 建议这一阶段按顺序推进：
 
 1. 先补服务层和会话承接能力
-2. 再做主代理入口
-3. 再做交互网页
-4. 最后视需要开放 API
+2. 再补 LLM 适配层和解释器注入点
+3. 再做主代理入口
+4. 再做交互网页
+5. 最后视需要开放 API
 
 发布前检查可参考：
 
@@ -85,6 +86,7 @@
 下一阶段设计可参考：
 
 - [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)
+- [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)
 
 ## 第五阶段：复合升级
 
