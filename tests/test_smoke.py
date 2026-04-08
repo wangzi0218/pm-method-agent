@@ -1,7 +1,7 @@
 import unittest
 from tempfile import TemporaryDirectory
 
-from pm_method_agent.orchestrator import run_analysis
+from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis
 from pm_method_agent.renderers import render_case_state
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
@@ -121,11 +121,51 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("管理者", replied_case.context_profile["target_user_roles"])
         self.assertGreaterEqual(len(replied_case.metadata["conversation_turns"]), 2)
         self.assertNotEqual(replied_case.output_kind, "context-question-card")
+        self.assertGreaterEqual(len(replied_case.metadata["answered_questions"]), 1)
+        self.assertEqual(
+            replied_case.metadata["latest_user_reply"],
+            "这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
+        )
         validation_claims = [
             finding.claim for finding in replied_case.findings if finding.dimension == "validation-design"
         ]
         self.assertTrue(validation_claims)
         self.assertNotIn("补充信息", validation_claims[0])
+
+    def test_session_service_tracks_resolved_blocking_gate(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="我们已经试过培训和流程提醒，效果不稳定，还是继续产品化。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "decision-gate-card")
+        self.assertGreaterEqual(len(replied_case.metadata["resolved_gates"]), 1)
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "decision-challenge")
+
+    def test_continue_analysis_with_context_can_resume_from_decision_challenge(self) -> None:
+        case_state = continue_analysis_with_context(
+            raw_input="我们需要优化权限配置流程，避免前台误操作。",
+            start_stage="decision-challenge",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "pc",
+                "target_user_roles": ["前台", "管理员"],
+            },
+        )
+        self.assertEqual(case_state.metadata["selected_modes"], ["decision-challenge"])
+        self.assertEqual(case_state.output_kind, "decision-gate-card")
 
 
 if __name__ == "__main__":

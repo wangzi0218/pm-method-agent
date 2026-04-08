@@ -91,29 +91,7 @@ def _run_agent_flow(
         context_profile=context_profile or {},
         metadata={"selected_modes": [], "show_case_id": show_case_id},
     )
-
-    if _should_request_context_before_analysis(case_state):
-        return _build_context_alignment_card(case_state)
-
-    case_state.workflow_state = "problem-definition"
-    analyze_problem_framing(case_state)
-    case_state.metadata["selected_modes"].append("problem-framing")
-    if _should_block_after_problem_definition(case_state):
-        return _build_problem_block_card(case_state)
-
-    case_state.workflow_state = "decision-challenge"
-    analyze_decision_challenge(case_state)
-    case_state.metadata["selected_modes"].append("decision-challenge")
-    if _should_block_after_decision_challenge(case_state):
-        return _build_decision_gate_card(case_state)
-
-    case_state.workflow_state = "validation-design"
-    analyze_validation_design(case_state)
-    case_state.metadata["selected_modes"].append("validation-design")
-    case_state.workflow_state = "done"
-    case_state.output_kind = "review-card"
-    case_state.metadata["next_stage"] = "已完成当前轮次分析"
-    return case_state
+    return _continue_agent_flow(case_state, "context-alignment")
 
 
 def run_analysis_with_context(
@@ -124,6 +102,37 @@ def run_analysis_with_context(
     show_case_id: bool = False,
 ) -> CaseState:
     return _run_analysis(raw_input, mode, case_id, context_profile, show_case_id)
+
+
+def continue_analysis_with_context(
+    raw_input: str,
+    start_stage: str,
+    case_id: str = "case-001",
+    context_profile: Optional[Dict[str, object]] = None,
+    show_case_id: bool = False,
+) -> CaseState:
+    normalized_start_stage = start_stage.strip().lower()
+    if normalized_start_stage not in {
+        "context-alignment",
+        "problem-definition",
+        "decision-challenge",
+        "validation-design",
+    }:
+        raise ValueError(
+            "Unsupported start_stage. Use one of: context-alignment, problem-definition, "
+            "decision-challenge, validation-design."
+        )
+
+    case_state = CaseState(
+        case_id=case_id,
+        stage=normalized_start_stage,
+        workflow_state=normalized_start_stage,
+        output_kind="review-card",
+        raw_input=raw_input.strip(),
+        context_profile=context_profile or {},
+        metadata={"selected_modes": [], "show_case_id": show_case_id},
+    )
+    return _continue_agent_flow(case_state, normalized_start_stage)
 
 
 def _resolve_modes(mode: str) -> List[str]:
@@ -139,6 +148,40 @@ def _resolve_modes(mode: str) -> List[str]:
             "Unsupported mode. Use one of: auto, problem-framing, decision-challenge, validation-design."
         )
     return [normalized]
+
+
+def _continue_agent_flow(case_state: CaseState, start_stage: str) -> CaseState:
+    if start_stage == "context-alignment":
+        if _should_request_context_before_analysis(case_state):
+            return _build_context_alignment_card(case_state)
+        start_stage = "problem-definition"
+
+    if start_stage == "problem-definition":
+        case_state.workflow_state = "problem-definition"
+        analyze_problem_framing(case_state)
+        case_state.metadata["selected_modes"].append("problem-framing")
+        if _should_block_after_problem_definition(case_state):
+            return _build_problem_block_card(case_state)
+        start_stage = "decision-challenge"
+
+    if start_stage == "decision-challenge":
+        case_state.workflow_state = "decision-challenge"
+        analyze_decision_challenge(case_state)
+        case_state.metadata["selected_modes"].append("decision-challenge")
+        if _should_block_after_decision_challenge(case_state):
+            return _build_decision_gate_card(case_state)
+        start_stage = "validation-design"
+
+    if start_stage == "validation-design":
+        case_state.workflow_state = "validation-design"
+        analyze_validation_design(case_state)
+        case_state.metadata["selected_modes"].append("validation-design")
+        case_state.workflow_state = "done"
+        case_state.output_kind = "review-card"
+        case_state.metadata["next_stage"] = "已完成当前轮次分析"
+        return case_state
+
+    return case_state
 
 
 def _missing_context_questions(case_state: CaseState) -> List[str]:

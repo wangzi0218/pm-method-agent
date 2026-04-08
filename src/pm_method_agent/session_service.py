@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from uuid import uuid4
 
 from pm_method_agent.models import CaseState
-from pm_method_agent.orchestrator import run_analysis_with_context
+from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis_with_context
 
 
 SESSION_STORE_DIRNAME = ".pm_method_agent/cases"
@@ -16,6 +16,10 @@ SESSION_INPUT_KEY = "session_original_input"
 SESSION_NOTES_KEY = "session_notes"
 SESSION_TURNS_KEY = "conversation_turns"
 SESSION_STAGE_HISTORY_KEY = "stage_history"
+SESSION_ANSWERED_QUESTIONS_KEY = "answered_questions"
+SESSION_RESOLVED_GATES_KEY = "resolved_gates"
+SESSION_LATEST_REPLY_KEY = "latest_user_reply"
+SESSION_LAST_RESUME_STAGE_KEY = "last_resume_stage"
 
 
 @dataclass
@@ -73,6 +77,10 @@ def create_case(
         }
     ]
     case_state.metadata[SESSION_STAGE_HISTORY_KEY] = []
+    case_state.metadata[SESSION_ANSWERED_QUESTIONS_KEY] = []
+    case_state.metadata[SESSION_RESOLVED_GATES_KEY] = []
+    case_state.metadata[SESSION_LATEST_REPLY_KEY] = ""
+    case_state.metadata[SESSION_LAST_RESUME_STAGE_KEY] = "context-alignment"
     case_state.metadata["show_case_id"] = True
     active_store.save(case_state)
     return case_state
@@ -96,9 +104,10 @@ def reply_to_case(
         merged_context.update(context_profile_updates)
 
     rerun_input = _compose_session_input(original_input, updated_notes)
-    next_case = run_analysis_with_context(
+    resume_stage = _resolve_resume_stage(previous_case)
+    next_case = continue_analysis_with_context(
         raw_input=rerun_input,
-        mode=str(previous_case.metadata.get(SESSION_MODE_KEY, "auto")),
+        start_stage=resume_stage,
         case_id=case_id,
         context_profile=merged_context,
         show_case_id=True,
@@ -114,6 +123,22 @@ def reply_to_case(
         }
     )
 
+    answered_questions = list(previous_case.metadata.get(SESSION_ANSWERED_QUESTIONS_KEY, []))
+    for question in previous_case.pending_questions:
+        if question not in answered_questions:
+            answered_questions.append(question)
+
+    resolved_gates = list(previous_case.metadata.get(SESSION_RESOLVED_GATES_KEY, []))
+    for gate in previous_case.decision_gates:
+        if gate.blocking:
+            resolved_gates.append(
+                {
+                    "gate_id": gate.gate_id,
+                    "stage": gate.stage,
+                    "reply_text": reply_text.strip(),
+                }
+            )
+
     stage_history = list(previous_case.metadata.get(SESSION_STAGE_HISTORY_KEY, []))
     if (
         previous_case.stage != next_case.stage
@@ -127,6 +152,7 @@ def reply_to_case(
                 "from_workflow_state": previous_case.workflow_state,
                 "to_workflow_state": next_case.workflow_state,
                 "trigger": "user-reply",
+                "resume_stage": resume_stage,
             }
         )
 
@@ -135,6 +161,10 @@ def reply_to_case(
     next_case.metadata[SESSION_NOTES_KEY] = updated_notes
     next_case.metadata[SESSION_TURNS_KEY] = turns
     next_case.metadata[SESSION_STAGE_HISTORY_KEY] = stage_history
+    next_case.metadata[SESSION_ANSWERED_QUESTIONS_KEY] = answered_questions
+    next_case.metadata[SESSION_RESOLVED_GATES_KEY] = resolved_gates
+    next_case.metadata[SESSION_LATEST_REPLY_KEY] = reply_text.strip()
+    next_case.metadata[SESSION_LAST_RESUME_STAGE_KEY] = resume_stage
     next_case.metadata["show_case_id"] = True
     active_store.save(next_case)
     return next_case
@@ -186,3 +216,15 @@ def _extract_context_from_reply(reply_text: str) -> Dict[str, object]:
 
 def _generate_case_id() -> str:
     return f"case-{uuid4().hex[:8]}"
+
+
+def _resolve_resume_stage(previous_case: CaseState) -> str:
+    if previous_case.output_kind == "context-question-card":
+        return "context-alignment"
+    if previous_case.output_kind == "stage-block-card":
+        return "problem-definition"
+    if previous_case.output_kind == "decision-gate-card":
+        return "decision-challenge"
+    if previous_case.workflow_state == "done":
+        return "problem-definition"
+    return previous_case.stage
