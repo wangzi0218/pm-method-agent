@@ -122,6 +122,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(len(replied_case.metadata["conversation_turns"]), 2)
         self.assertNotEqual(replied_case.output_kind, "context-question-card")
         self.assertGreaterEqual(len(replied_case.metadata["answered_questions"]), 1)
+        self.assertIn(
+            "这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
+            replied_case.metadata["session_note_buckets"]["context_notes"],
+        )
         self.assertEqual(
             replied_case.metadata["latest_user_reply"],
             "这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
@@ -153,6 +157,11 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(case_state.output_kind, "decision-gate-card")
         self.assertGreaterEqual(len(replied_case.metadata["resolved_gates"]), 1)
         self.assertEqual(replied_case.metadata["last_resume_stage"], "decision-challenge")
+        self.assertEqual(replied_case.metadata["resolved_gates"][-1]["user_choice"], "productize-now")
+        self.assertIn(
+            "我们已经试过培训和流程提醒，效果不稳定，还是继续产品化。",
+            replied_case.metadata["session_note_buckets"]["decision_notes"],
+        )
 
     def test_continue_analysis_with_context_can_resume_from_decision_challenge(self) -> None:
         case_state = continue_analysis_with_context(
