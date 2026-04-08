@@ -21,6 +21,7 @@ SESSION_ANSWERED_QUESTIONS_KEY = "answered_questions"
 SESSION_RESOLVED_GATES_KEY = "resolved_gates"
 SESSION_LATEST_REPLY_KEY = "latest_user_reply"
 SESSION_LAST_RESUME_STAGE_KEY = "last_resume_stage"
+SESSION_LAST_GATE_CHOICE_KEY = "last_gate_choice"
 
 NOTE_BUCKET_KEYS = [
     "context_notes",
@@ -91,6 +92,7 @@ def create_case(
     case_state.metadata[SESSION_RESOLVED_GATES_KEY] = []
     case_state.metadata[SESSION_LATEST_REPLY_KEY] = ""
     case_state.metadata[SESSION_LAST_RESUME_STAGE_KEY] = "context-alignment"
+    case_state.metadata[SESSION_LAST_GATE_CHOICE_KEY] = None
     case_state.metadata["show_case_id"] = True
     active_store.save(case_state)
     return case_state
@@ -122,13 +124,13 @@ def reply_to_case(
         reply_text.strip(),
     )
     rerun_input = _compose_session_input(original_input, note_buckets)
-    resume_stage = _resolve_resume_stage(previous_case)
-    next_case = continue_analysis_with_context(
-        raw_input=rerun_input,
-        start_stage=resume_stage,
-        case_id=case_id,
-        context_profile=merged_context,
-        show_case_id=True,
+    resume_stage = _resolve_resume_stage(previous_case, reply_analysis)
+    next_case = _build_next_case_from_reply(
+        previous_case=previous_case,
+        rerun_input=rerun_input,
+        merged_context=merged_context,
+        resume_stage=resume_stage,
+        reply_analysis=reply_analysis,
     )
 
     turns = list(previous_case.metadata.get(SESSION_TURNS_KEY, []))
@@ -185,6 +187,7 @@ def reply_to_case(
     next_case.metadata[SESSION_RESOLVED_GATES_KEY] = resolved_gates
     next_case.metadata[SESSION_LATEST_REPLY_KEY] = reply_text.strip()
     next_case.metadata[SESSION_LAST_RESUME_STAGE_KEY] = resume_stage
+    next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.get("inferred_gate_choice")
     next_case.metadata["show_case_id"] = True
     active_store.save(next_case)
     return next_case
@@ -257,16 +260,88 @@ def _generate_case_id() -> str:
     return f"case-{uuid4().hex[:8]}"
 
 
-def _resolve_resume_stage(previous_case: CaseState) -> str:
+def _resolve_resume_stage(previous_case: CaseState, reply_analysis: Dict[str, object]) -> str:
     if previous_case.output_kind == "context-question-card":
         return "context-alignment"
     if previous_case.output_kind == "stage-block-card":
         return "problem-definition"
     if previous_case.output_kind == "decision-gate-card":
+        inferred_gate_choice = reply_analysis.get("inferred_gate_choice")
+        if inferred_gate_choice == "productize-now" and not _has_blocking_gate(previous_case, "problem-definition"):
+            return "validation-design"
         return "decision-challenge"
     if previous_case.workflow_state == "done":
         return "problem-definition"
     return previous_case.stage
+
+
+def _build_next_case_from_reply(
+    previous_case: CaseState,
+    rerun_input: str,
+    merged_context: Dict[str, object],
+    resume_stage: str,
+    reply_analysis: Dict[str, object],
+) -> CaseState:
+    inferred_gate_choice = reply_analysis.get("inferred_gate_choice")
+    if previous_case.output_kind == "decision-gate-card":
+        if inferred_gate_choice == "defer":
+            return _build_gate_outcome_case(
+                previous_case=previous_case,
+                rerun_input=rerun_input,
+                merged_context=merged_context,
+                summary="已记录本轮选择：当前暂缓，不继续推进产品化。",
+                blocking_reason="当前已按你的选择暂缓，后续可在条件变化后重新启动分析。",
+                workflow_state="deferred",
+                output_kind="stage-block-card",
+                next_actions=[
+                    "记录本轮暂缓原因和重新开启条件。",
+                    "后续如果出现新证据，再重新进入当前案例。",
+                ],
+            )
+        if inferred_gate_choice == "try-non-product-first":
+            return _build_gate_outcome_case(
+                previous_case=previous_case,
+                rerun_input=rerun_input,
+                merged_context=merged_context,
+                summary="已记录本轮选择：先评估非产品路径，再决定是否继续产品化。",
+                blocking_reason="当前已转向非产品路径验证，建议先完成流程、培训或管理方案试行。",
+                workflow_state="blocked",
+                output_kind="stage-block-card",
+                next_actions=[
+                    "先列出流程、培训、管理三类可试路径。",
+                    "为非产品路径补一个最小试行周期和观察指标。",
+                ],
+            )
+    return continue_analysis_with_context(
+        raw_input=rerun_input,
+        start_stage=resume_stage,
+        case_id=previous_case.case_id,
+        context_profile=merged_context,
+        show_case_id=True,
+    )
+
+
+def _build_gate_outcome_case(
+    previous_case: CaseState,
+    rerun_input: str,
+    merged_context: Dict[str, object],
+    summary: str,
+    blocking_reason: str,
+    workflow_state: str,
+    output_kind: str,
+    next_actions: list[str],
+) -> CaseState:
+    case_state = CaseState.from_dict(previous_case.to_dict())
+    case_state.raw_input = rerun_input
+    case_state.context_profile = merged_context
+    case_state.workflow_state = workflow_state
+    case_state.output_kind = output_kind
+    case_state.normalized_summary = summary
+    case_state.blocking_reason = blocking_reason
+    case_state.next_actions = next_actions
+    case_state.metadata["selected_modes"] = ["decision-challenge"]
+    case_state.metadata["next_stage"] = "decision-challenge"
+    return case_state
 
 
 def _empty_note_buckets() -> Dict[str, list[str]]:
@@ -340,8 +415,27 @@ def _classify_reply_categories(text: str, context_updates: Dict[str, object]) ->
 def _infer_gate_choice(lowered_text: str) -> Optional[str]:
     if any(keyword in lowered_text for keyword in ["暂缓", "先不做", "defer"]):
         return "defer"
+    if any(
+        keyword in lowered_text
+        for keyword in [
+            "不急着继续产品化",
+            "先试流程",
+            "先试培训",
+            "先试非产品",
+            "先走流程",
+            "先走培训",
+            "先试",
+            "流程优先",
+            "培训优先",
+        ]
+    ):
+        return "try-non-product-first"
     if any(keyword in lowered_text for keyword in ["继续产品化", "继续做", "还是继续", "继续推进", "productize"]):
         return "productize-now"
     if any(keyword in lowered_text for keyword in ["先试流程", "先试培训", "非产品", "流程提醒", "培训", "try non product"]):
         return "try-non-product-first"
     return None
+
+
+def _has_blocking_gate(case_state: CaseState, stage: str) -> bool:
+    return any(gate.stage == stage and gate.blocking for gate in case_state.decision_gates)

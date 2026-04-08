@@ -6,7 +6,7 @@ import sys
 from typing import List, Optional
 
 from pm_method_agent.orchestrator import run_analysis_with_context
-from pm_method_agent.renderers import render_case_state
+from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
@@ -115,6 +115,9 @@ def build_session_parser() -> argparse.ArgumentParser:
     show_parser = subparsers.add_parser("show", help="查看当前会话的最新卡片。")
     show_parser.add_argument("case_id", help="会话案例编号。")
 
+    history_parser = subparsers.add_parser("history", help="查看当前会话的历史和状态变化。")
+    history_parser.add_argument("case_id", help="会话案例编号。")
+
     return parser
 
 
@@ -160,13 +163,18 @@ def _run_session_command(argv: List[str]) -> int:
                 context_profile_updates=_build_context_profile(args),
                 store=store,
             )
+        elif args.command == "show":
+            case_state = get_case(case_id=args.case_id, store=store)
         else:
             case_state = get_case(case_id=args.case_id, store=store)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
-    print(render_case_state(case_state, output_format=args.format))
+    if args.command == "history":
+        print(render_case_history(case_state, output_format=args.format))
+    else:
+        print(render_case_state(case_state, output_format=args.format))
     return 0
 
 
@@ -228,7 +236,7 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show"}
+    session_commands = {"start", "reply", "show", "history"}
     index = 0
     while index < len(args_list):
         token = args_list[index]

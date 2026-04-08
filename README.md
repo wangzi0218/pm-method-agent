@@ -184,7 +184,13 @@ PYTHONPATH=src python3 -m pm_method_agent.cli \
 python3 -m pip install -e .
 ```
 
-如果本机 `pip` 版本较旧，`editable install` 可能失败。优先处理方式是：
+安装成功后，可以直接使用：
+
+```bash
+pm-method-agent "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。"
+```
+
+如果本机 `pip` 版本较旧，建议先升级，再安装：
 
 ```bash
 python3 -m pip install --upgrade pip
@@ -194,12 +200,6 @@ python3 -m pip install --upgrade pip
 
 ```bash
 PYTHONPATH=src python3 -m pm_method_agent.cli "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。"
-```
-
-安装成功后，可以这样运行：
-
-```bash
-pm-method-agent "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。"
 ```
 
 带场景信息运行：
@@ -258,6 +258,12 @@ PYTHONPATH=src python3 -m pm_method_agent.cli reply case-xxxxxx \
 
 ```bash
 PYTHONPATH=src python3 -m pm_method_agent.cli show case-xxxxxx
+```
+
+查看会话历史：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 ```
 
 这组命令当前仍是验证版，但已经代表了后续网页和 agent 入口会共用的底层会话模型。

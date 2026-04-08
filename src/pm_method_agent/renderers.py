@@ -96,6 +96,25 @@ def render_case_state(case_state: CaseState, output_format: str = "markdown") ->
     return _render_markdown(case_state)
 
 
+def render_case_history(case_state: CaseState, output_format: str = "markdown") -> str:
+    history_payload = {
+        "case_id": case_state.case_id,
+        "workflow_state": case_state.workflow_state,
+        "stage": case_state.stage,
+        "conversation_turns": case_state.metadata.get("conversation_turns", []),
+        "stage_history": case_state.metadata.get("stage_history", []),
+        "answered_questions": case_state.metadata.get("answered_questions", []),
+        "resolved_gates": case_state.metadata.get("resolved_gates", []),
+        "last_resume_stage": case_state.metadata.get("last_resume_stage"),
+        "last_gate_choice": case_state.metadata.get("last_gate_choice"),
+    }
+    if output_format == "json":
+        return json.dumps(history_payload, ensure_ascii=False, indent=2)
+    if output_format != "markdown":
+        raise ValueError("Unsupported format. Use 'markdown' or 'json'.")
+    return _render_history_markdown(history_payload)
+
+
 def _render_markdown(case_state: CaseState) -> str:
     if case_state.output_kind == "context-question-card":
         return _render_context_question_card(case_state)
@@ -150,6 +169,57 @@ def _render_markdown(case_state: CaseState) -> str:
         lines.append(f"- {action}")
     lines.append("")
     _append_unknowns(lines, case_state)
+    return "\n".join(lines)
+
+
+def _render_history_markdown(history_payload: dict) -> str:
+    lines: List[str] = []
+    lines.append("# PM Method Agent 会话历史")
+    lines.append("")
+    lines.append(f"- 案例编号：`{history_payload['case_id']}`")
+    lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, history_payload['stage'])}`")
+    lines.append(f"- 当前状态：`{_label_for(STAGE_LABELS, history_payload['workflow_state'])}`")
+    if history_payload.get("last_resume_stage"):
+        lines.append(
+            f"- 最近恢复阶段：`{_label_for(STAGE_LABELS, str(history_payload['last_resume_stage']))}`"
+        )
+    if history_payload.get("last_gate_choice"):
+        lines.append(
+            f"- 最近关口选择：`{OPTION_LABELS.get(history_payload['last_gate_choice'], history_payload['last_gate_choice'])}`"
+        )
+    lines.append("")
+
+    lines.append("## 会话回合")
+    for turn in history_payload.get("conversation_turns", []):
+        lines.append(f"- [{turn.get('turn_kind', 'turn')}] {turn.get('role', 'unknown')}：{turn.get('content', '')}")
+    if not history_payload.get("conversation_turns"):
+        lines.append("- 暂无")
+    lines.append("")
+
+    lines.append("## 阶段变更")
+    for item in history_payload.get("stage_history", []):
+        lines.append(
+            f"- {item.get('from_stage')} -> {item.get('to_stage')} "
+            f"(触发={item.get('trigger', 'unknown')}，恢复点={item.get('resume_stage', '-')})"
+        )
+    if not history_payload.get("stage_history"):
+        lines.append("- 暂无")
+    lines.append("")
+
+    lines.append("## 已回答问题")
+    for item in history_payload.get("answered_questions", []):
+        lines.append(f"- {item}")
+    if not history_payload.get("answered_questions"):
+        lines.append("- 暂无")
+    lines.append("")
+
+    lines.append("## 已处理关口")
+    for item in history_payload.get("resolved_gates", []):
+        choice = item.get("user_choice")
+        choice_label = OPTION_LABELS.get(choice, choice or "未识别")
+        lines.append(f"- {item.get('gate_id')} / {item.get('stage')} / 选择={choice_label}")
+    if not history_payload.get("resolved_gates"):
+        lines.append("- 暂无")
     return "\n".join(lines)
 
 

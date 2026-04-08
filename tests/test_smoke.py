@@ -1,8 +1,11 @@
+import os
+import subprocess
+import sys
 import unittest
 from tempfile import TemporaryDirectory
 
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis
-from pm_method_agent.renderers import render_case_state
+from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
@@ -134,7 +137,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             finding.claim for finding in replied_case.findings if finding.dimension == "validation-design"
         ]
         self.assertTrue(validation_claims)
-        self.assertNotIn("补充信息", validation_claims[0])
+        self.assertNotIn("补充场景信息", validation_claims[0])
 
     def test_session_service_tracks_resolved_blocking_gate(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -175,6 +178,61 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
         self.assertEqual(case_state.metadata["selected_modes"], ["decision-challenge"])
         self.assertEqual(case_state.output_kind, "decision-gate-card")
+
+    def test_session_service_can_respect_non_product_choice(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="先试流程和培训，不急着继续产品化。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "try-non-product-first")
+        self.assertEqual(replied_case.workflow_state, "blocked")
+
+    def test_render_case_history_exposes_session_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
+                store=store,
+            )
+            rendered = render_case_history(replied_case)
+
+        self.assertIn("## 会话回合", rendered)
+        self.assertIn("## 已回答问题", rendered)
+        self.assertIn("最近恢复阶段", rendered)
+
+    def test_module_entrypoint_can_render_help(self) -> None:
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "src"
+        result = subprocess.run(
+            [sys.executable, "-m", "pm_method_agent", "--help"],
+            cwd=".",
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("pm-method-agent", result.stdout)
 
 
 if __name__ == "__main__":

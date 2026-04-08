@@ -6,7 +6,18 @@ from pm_method_agent.models import AnalyzerFinding, CaseState
 def analyze_validation_design(case_state: CaseState) -> None:
     text = case_state.raw_input.strip()
     case_state.stage = "validation-design"
-    base_text = text.split("\n\n补充信息：", 1)[0].strip()
+    base_text = text
+    for marker in [
+        "\n\n补充场景信息：",
+        "\n\n补充现状证据：",
+        "\n\n补充决策表达：",
+        "\n\n补充限制条件：",
+        "\n\n其他补充：",
+        "\n\n补充信息：",
+    ]:
+        if marker in base_text:
+            base_text = base_text.split(marker, 1)[0].strip()
+            break
 
     hypothesis = f"可先验证这个假设：如果解决“{base_text}”背后的关键阻塞，核心行为指标会改善。"
     falsification = "如果现状数据并不支持问题成立，或非产品手段已能低成本解决，这条产品方向就应降级。"
