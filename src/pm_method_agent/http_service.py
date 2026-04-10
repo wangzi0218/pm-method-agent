@@ -7,6 +7,7 @@ from typing import Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
+from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
     default_project_profile_store,
@@ -21,6 +22,7 @@ from pm_method_agent.renderers import (
     render_workspace_overview,
 )
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
+from pm_method_agent.runtime_policy import load_runtime_policy, runtime_policy_to_dict
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 from pm_method_agent.workspace_service import (
     activate_workspace_case,
@@ -45,6 +47,7 @@ class PMMethodHTTPService:
         self._store = default_store(store_dir)
         self._project_profile_store = default_project_profile_store(store_dir)
         self._workspace_store = default_workspace_store(store_dir)
+        self._runtime_policy = load_runtime_policy(base_dir=store_dir)
         self._agent_shell = PMMethodAgentShell(base_dir=store_dir)
 
     def handle(self, method: str, path: str, body: Optional[bytes] = None) -> HTTPResponse:
@@ -54,6 +57,25 @@ class PMMethodHTTPService:
 
             if method == "GET" and normalized_path == "/health":
                 return HTTPResponse(200, {"status": "ok", "llm_runtime": get_llm_runtime_status()})
+
+            if method == "GET" and normalized_path == "/runtime/policy":
+                return HTTPResponse(200, {"runtime_policy": runtime_policy_to_dict(self._runtime_policy)})
+
+            if method == "POST" and normalized_path == "/runtime/policy/evaluate":
+                payload = _parse_json_body(body)
+                decision = evaluate_operation_enforcement(
+                    self._runtime_policy,
+                    action_name=str(payload.get("action_name", "")).strip(),
+                    command_args=_ensure_string_list(payload.get("command_args")),
+                    write_paths=_ensure_string_list(payload.get("write_paths")),
+                )
+                return HTTPResponse(
+                    200,
+                    {
+                        "decision": decision.to_dict(),
+                        "runtime_policy": runtime_policy_to_dict(self._runtime_policy),
+                    },
+                )
 
             if method == "POST" and normalized_path == "/project-profiles":
                 payload = _parse_json_body(body)

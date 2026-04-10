@@ -30,6 +30,7 @@ class RuntimePolicy:
 class RuntimePolicyViolation:
     terminal_state: str
     reason: str
+    violation_kind: str = "blocked"
     intent: str = ""
     action_name: str = ""
     command_preview: str = ""
@@ -67,6 +68,25 @@ def load_runtime_policy(base_dir: Optional[str] = None) -> RuntimePolicy:
     )
 
 
+def runtime_policy_to_dict(policy: RuntimePolicy) -> dict:
+    return {
+        "base_dir": policy.base_dir,
+        "blocked_intents": list(policy.blocked_intents),
+        "blocked_actions": list(policy.blocked_actions),
+        "approval_required_actions": list(policy.approval_required_actions),
+        "command_allowlist_prefixes": list(policy.command_allowlist_prefixes),
+        "blocked_command_patterns": list(policy.blocked_command_patterns),
+        "approval_required_command_patterns": list(policy.approval_required_command_patterns),
+        "allowed_write_roots": list(policy.allowed_write_roots),
+        "blocked_write_paths": list(policy.blocked_write_paths),
+        "approval_required_write_paths": list(policy.approval_required_write_paths),
+        "allow_new_cases": policy.allow_new_cases,
+        "allow_case_switching": policy.allow_case_switching,
+        "allow_project_profile_updates": policy.allow_project_profile_updates,
+        "sources": list(policy.sources),
+    }
+
+
 def check_runtime_policy(
     policy: RuntimePolicy,
     *,
@@ -76,24 +96,28 @@ def check_runtime_policy(
         return RuntimePolicyViolation(
             terminal_state="cancelled",
             reason="当前项目规则里，这类操作被禁用了。",
+            violation_kind="blocked",
             intent=intent,
         )
     if intent == "new-case" and not policy.allow_new_cases:
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason="当前项目规则要求先在现有案例里继续，不允许直接新建案例。",
+            violation_kind="blocked",
             intent=intent,
         )
     if intent == "switch-case" and not policy.allow_case_switching:
         return RuntimePolicyViolation(
             terminal_state="cancelled",
             reason="当前项目规则不允许在这里切换案例。",
+            violation_kind="blocked",
             intent=intent,
         )
     if intent == "project-background" and not policy.allow_project_profile_updates:
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason="当前项目规则不允许直接改写项目背景。",
+            violation_kind="blocked",
             intent=intent,
         )
     return None
@@ -108,12 +132,14 @@ def check_runtime_action_policy(
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason=f"当前项目规则不允许执行这个动作：{action_name}。",
+            violation_kind="blocked",
             action_name=action_name,
         )
     if _matches_policy_items(action_name, policy.approval_required_actions):
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason=f"这个动作在当前项目规则里需要先人工确认：{action_name}。",
+            violation_kind="approval-required",
             action_name=action_name,
         )
     return None
@@ -132,12 +158,14 @@ def check_runtime_command_policy(
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason=f"当前项目规则不允许执行这个命令：{command_preview}。",
+            violation_kind="blocked",
             command_preview=command_preview,
         )
     if _matches_command_patterns(normalized_args, policy.approval_required_command_patterns):
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason=f"这个命令在当前项目规则里需要先人工确认：{command_preview}。",
+            violation_kind="approval-required",
             command_preview=command_preview,
         )
     if policy.command_allowlist_prefixes and not _matches_command_prefixes(
@@ -147,6 +175,7 @@ def check_runtime_command_policy(
         return RuntimePolicyViolation(
             terminal_state="blocked",
             reason=f"当前项目规则不允许执行这个命令：{command_preview}。",
+            violation_kind="blocked",
             command_preview=command_preview,
         )
     return None
@@ -163,6 +192,7 @@ def check_runtime_write_policy(
             return RuntimePolicyViolation(
                 terminal_state="blocked",
                 reason=f"当前项目规则不允许写入这个路径：{normalized_path}。",
+                violation_kind="blocked",
                 write_path=normalized_path,
             )
         if _matches_path_patterns(
@@ -173,6 +203,7 @@ def check_runtime_write_policy(
             return RuntimePolicyViolation(
                 terminal_state="blocked",
                 reason=f"这个路径在当前项目规则里需要先人工确认：{normalized_path}。",
+                violation_kind="approval-required",
                 write_path=normalized_path,
             )
         if policy.allowed_write_roots and not _is_under_allowed_roots(
@@ -182,6 +213,7 @@ def check_runtime_write_policy(
             return RuntimePolicyViolation(
                 terminal_state="blocked",
                 reason=f"当前项目规则不允许写入这个路径：{normalized_path}。",
+                violation_kind="blocked",
                 write_path=normalized_path,
             )
     return None

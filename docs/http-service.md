@@ -52,6 +52,30 @@
 - 检查服务是否可用
 - 查看当前是否启用了 LLM 运行时
 
+### `GET /runtime/policy`
+
+用途：
+
+- 读取当前运行时策略的有效值
+- 给网页壳、调试工具或本地 agent 展示当前硬约束
+
+### `POST /runtime/policy/evaluate`
+
+用途：
+
+- 在真正执行前，统一评估动作、命令和写入路径是否允许继续
+- 给未来 hook、网页壳或本地执行器复用同一套前置校验结果
+
+示例请求体：
+
+```json
+{
+  "action_name": "project-profile-service.update-or-create",
+  "command_args": ["git", "status"],
+  "write_paths": ["src/pm_method_agent/runtime_policy.py"]
+}
+```
+
 ### `POST /cases`
 
 用途：
@@ -178,6 +202,11 @@
 - `project_profile`
 - `message`
 
+对于运行时策略校验接口，还会返回：
+
+- `decision`
+- `runtime_policy`
+
 这样做的原因是：
 
 - 结构化数据方便后续不同入口消费
@@ -194,6 +223,7 @@
 - `show-history`
 - `show-workspace`
 - `switch-case`
+- `policy-blocked`
 
 ## 当前推荐接入方式
 

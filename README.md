@@ -461,6 +461,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)：本地 HTTP 服务层、接口定义和与 MCP 的关系
 - [docs/interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)：用户触发、持续互动、记忆层与主动建议设计
 - [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：LLM 适配层、解释器注入点和未来接入方式
+- [docs/operation-enforcement.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/operation-enforcement.md)：统一的动作、命令和写入路径前置校验层
 - [docs/prompt-layering.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/prompt-layering.md)：Prompt 分层、优先级和项目级追加规则的最小实现
 - [docs/rule-layering.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/rule-layering.md)：规则分层、规则来源、目录作用域和规则加载器的设计
 - [docs/runtime-policy.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/runtime-policy.md)：规则从“被看见”到“被执行”的最小硬约束层
@@ -492,6 +493,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一层最小可运行的规则加载器，用来吸收用户本地、仓库级、目录级和结构化策略规则
 - 一层最小可运行的 runtime policy，用来把部分规则变成真正的运行时硬约束，并开始覆盖内部动作级执行关口
 - 一层更通用的命令与写入范围策略骨架，为后续 hook enforcement 和外部执行器接入做准备
+- 一层统一的 operation enforcement，用来把动作、命令和写入路径校验收敛成同一套前置判断结果
 
 ## 后续形态
 

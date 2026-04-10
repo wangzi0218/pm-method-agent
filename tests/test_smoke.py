@@ -23,6 +23,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleConfig,
 )
 from pm_method_agent.models import CaseState
+from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis, run_analysis_with_context
 from pm_method_agent.pre_framing import LLMPreFramingGenerator, build_pre_framing_result
 from pm_method_agent.prompting import build_prompt_composition
@@ -1087,6 +1088,43 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIsNotNone(outside)
         self.assertIn("README.md", outside.reason)
 
+    def test_operation_enforcement_can_return_unified_decision(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                            "command_allowlist_prefixes": ["git status"],
+                            "allowed_write_roots": ["src"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        allowed = evaluate_operation_enforcement(
+            policy,
+            action_name="renderer.case-state",
+            command_args=["git", "status"],
+            write_paths=["src/pm_method_agent/runtime_policy.py"],
+        )
+        blocked = evaluate_operation_enforcement(
+            policy,
+            action_name="project-profile-service.update-or-create",
+            command_args=["git", "status"],
+        )
+
+        self.assertTrue(allowed.allowed)
+        self.assertEqual([item.decision for item in allowed.checks], ["allowed", "allowed", "allowed"])
+        self.assertFalse(blocked.allowed)
+        self.assertEqual(blocked.violation_kind, "approval-required")
+        self.assertEqual(blocked.checks[0].check_type, "action")
+
     def test_cli_rules_command_can_render_effective_rule_layers(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1364,6 +1402,45 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("llm_runtime", response.payload)
+
+    def test_http_service_can_expose_runtime_policy_and_enforcement_decision(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                            "command_allowlist_prefixes": ["git status"],
+                            "allowed_write_roots": ["src"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            policy_response = service.handle(method="GET", path="/runtime/policy")
+            evaluate_response = service.handle(
+                method="POST",
+                path="/runtime/policy/evaluate",
+                body=json.dumps(
+                    {
+                        "action_name": "project-profile-service.update-or-create",
+                        "command_args": ["git", "status"],
+                        "write_paths": ["src/pm_method_agent/runtime_policy.py"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(policy_response.status_code, 200)
+        self.assertIn("runtime_policy", policy_response.payload)
+        self.assertEqual(evaluate_response.status_code, 200)
+        self.assertFalse(evaluate_response.payload["decision"]["allowed"])
+        self.assertEqual(evaluate_response.payload["decision"]["violation_kind"], "approval-required")
+        self.assertEqual(evaluate_response.payload["decision"]["checks"][0]["check_type"], "action")
 
     def test_http_service_can_manage_project_profile(self) -> None:
         with TemporaryDirectory() as tmpdir:

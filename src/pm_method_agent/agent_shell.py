@@ -5,6 +5,7 @@ import re
 from typing import Callable, Optional, TypeVar
 
 from pm_method_agent.models import CaseState, ProjectProfile, RuntimeSession, WorkspaceState
+from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
     default_project_profile_store,
@@ -17,7 +18,6 @@ from pm_method_agent.reply_interpreter import ReplyAnalysis, build_reply_interpr
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_policy import (
     RuntimePolicyViolation,
-    check_runtime_action_policy,
     check_runtime_policy,
     load_runtime_policy,
 )
@@ -512,18 +512,23 @@ class PMMethodAgentShell:
             tool_name=tool_name,
             request_payload=request_payload,
         )
-        violation = check_runtime_action_policy(self._runtime_policy, action_name=action_name)
-        if violation is not None:
+        decision = evaluate_operation_enforcement(
+            self._runtime_policy,
+            action_name=action_name,
+        )
+        if not decision.allowed and decision.violation is not None:
             fail_tool_call(
                 runtime_session,
                 call_id=str(entry["call_id"]),
                 error={
                     "type": "RuntimePolicyBlocked",
-                    "reason": violation.reason,
+                    "reason": decision.reason,
                     "action_name": action_name,
+                    "violation_kind": decision.violation_kind,
+                    "enforcement": decision.to_dict(),
                 },
             )
-            raise RuntimePolicyBlockedError(violation)
+            raise RuntimePolicyBlockedError(decision.violation)
         try:
             result = operation()
         except Exception as exc:
