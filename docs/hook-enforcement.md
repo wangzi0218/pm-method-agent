@@ -59,6 +59,7 @@
 这一层目前已经接到：
 
 - `agent shell` 的 `_run_ledger_step`
+- `LocalCommandExecutor` 的命令执行前
 
 所以现在一个内部动作如果被规则挡下，运行时里会先出现：
 
@@ -77,5 +78,5 @@
 
 1. 支持更多可注册的内建 hook
 2. 给 hook 结果补来源信息与命中规则说明
-3. 把 hook 接到 HTTP 执行器或本地命令执行器
+3. 把 hook 接到更多真实工具执行器
 4. 为 sub-agent 运行补父子 hook 传播

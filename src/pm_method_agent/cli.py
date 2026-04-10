@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from pm_method_agent.http_service import run_http_server
+from pm_method_agent.command_executor import LocalCommandExecutor
 from pm_method_agent.orchestrator import run_analysis_with_context
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.renderers import (
@@ -161,6 +162,33 @@ def build_session_parser() -> argparse.ArgumentParser:
         help="同时输出拼装后的 prompt 预览。",
     )
 
+    command_parser = subparsers.add_parser("command", help="通过统一执行壳运行本地命令并经过 hook 校验。")
+    command_parser.add_argument(
+        "--format",
+        default="markdown",
+        choices=["markdown", "json"],
+        help="输出格式。默认 markdown。",
+    )
+    command_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+    command_parser.add_argument("--cwd", help="命令执行目录。默认当前仓库根目录。")
+    command_parser.add_argument(
+        "--write-path",
+        action="append",
+        default=[],
+        help="预期写入路径，可重复传入，用于运行前校验。",
+    )
+    command_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=15.0,
+        help="命令超时时间，默认 15 秒。",
+    )
+    command_parser.add_argument(
+        "command_args",
+        nargs=argparse.REMAINDER,
+        help="要执行的命令参数。建议在子命令后用 -- 开始。",
+    )
+
     return parser
 
 
@@ -192,6 +220,7 @@ def _run_session_command(argv: List[str]) -> int:
     store = default_store(args.store_dir)
     workspace_store = default_workspace_store(args.store_dir)
     agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
+    command_executor = LocalCommandExecutor(base_dir=args.store_dir)
 
     try:
         if args.command == "start":
@@ -311,6 +340,37 @@ def _run_session_command(argv: List[str]) -> int:
                 )
             )
             return 0
+        elif args.command == "command":
+            command_args = list(args.command_args)
+            if command_args and command_args[0] == "--":
+                command_args = command_args[1:]
+            if not command_args:
+                raise ValueError("Missing command args.")
+            result = command_executor.execute(
+                command_args=command_args,
+                workspace_id=args.workspace_id,
+                cwd=args.cwd,
+                write_paths=list(args.write_path),
+                timeout_seconds=args.timeout_seconds,
+            )
+            if args.format == "json":
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(f"动作：{result.action}")
+                print(f"命令：{' '.join(result.command_args)}")
+                print(f"终止语义：{result.terminal_state}")
+                if result.reason:
+                    print(f"原因：{result.reason}")
+                print(f"退出码：{result.exit_code}")
+                if result.stdout:
+                    print("")
+                    print("## stdout")
+                    print(result.stdout.rstrip())
+                if result.stderr:
+                    print("")
+                    print("## stderr")
+                    print(result.stderr.rstrip())
+            return 0
         else:
             case_state = get_case(case_id=args.case_id, store=store)
     except FileNotFoundError as exc:
@@ -382,7 +442,7 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent", "rules"}
+    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent", "rules", "command"}
     index = 0
     while index < len(args_list):
         token = args_list[index]

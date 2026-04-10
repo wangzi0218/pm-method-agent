@@ -452,6 +452,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)：最小 agent 外壳、工作区状态和统一入口运行时
 - [docs/advanced-agent-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/advanced-agent-runtime.md)：更完整的 agent runtime 设计，包括 query loop、终止语义、prompt 治理和 sub-agent 编排
 - [docs/brainstorm-integration.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/brainstorm-integration.md)：如何把 brainstorm 作为前置思考层融合进主代理，而不退化成普通聊天
+- [docs/command-executor.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/command-executor.md)：本地命令执行壳、hook 接入点和运行时结果语义
 - [docs/context-profile.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/context-profile.md)：场景和产品基础信息的定义方式
 - [docs/contracts.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/contracts.md)：案例状态、结论项、决策关口和证据分级契约
 - [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例与验证方式
@@ -496,6 +497,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一层更通用的命令与写入范围策略骨架，为后续 hook enforcement 和外部执行器接入做准备
 - 一层统一的 operation enforcement，用来把动作、命令和写入路径校验收敛成同一套前置判断结果
 - 一层最小 hook enforcement，用来把前置判断真正挂进运行时事件和恢复闭环
+- 一层最小本地命令执行壳，用来把 hook、策略和执行账本接到真实执行入口
 
 ## 后续形态
 

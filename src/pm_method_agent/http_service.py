@@ -7,6 +7,7 @@ from typing import Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
+from pm_method_agent.command_executor import LocalCommandExecutor
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -49,6 +50,7 @@ class PMMethodHTTPService:
         self._workspace_store = default_workspace_store(store_dir)
         self._runtime_policy = load_runtime_policy(base_dir=store_dir)
         self._agent_shell = PMMethodAgentShell(base_dir=store_dir)
+        self._command_executor = LocalCommandExecutor(base_dir=store_dir)
 
     def handle(self, method: str, path: str, body: Optional[bytes] = None) -> HTTPResponse:
         try:
@@ -76,6 +78,17 @@ class PMMethodHTTPService:
                         "runtime_policy": runtime_policy_to_dict(self._runtime_policy),
                     },
                 )
+
+            if method == "POST" and normalized_path == "/runtime/commands/execute":
+                payload = _parse_json_body(body)
+                result = self._command_executor.execute(
+                    command_args=_ensure_string_list(payload.get("command_args")),
+                    workspace_id=_optional_string(payload.get("workspace_id")) or "default",
+                    cwd=_optional_string(payload.get("cwd")),
+                    write_paths=_ensure_string_list(payload.get("write_paths")),
+                    timeout_seconds=_ensure_float(payload.get("timeout_seconds"), default=15.0),
+                )
+                return HTTPResponse(200, {"result": result.to_dict()})
 
             if method == "POST" and normalized_path == "/project-profiles":
                 payload = _parse_json_body(body)
@@ -284,6 +297,12 @@ def _build_case_response_payload(case_state) -> JsonDict:
         "case": case_state.to_dict(),
         "rendered_card": render_case_state(case_state),
     }
+
+
+def _ensure_float(value: object, *, default: float) -> float:
+    if value is None or value == "":
+        return default
+    return float(value)
 
 
 def _build_agent_response_payload(response) -> JsonDict:

@@ -14,6 +14,7 @@ os.environ.setdefault("PMMA_DISABLE_ENV_AUTOLOAD", "1")
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.case_copywriter import LLMCaseCopywriter, apply_case_copywriting, build_case_copywriter_from_env
 from pm_method_agent.cli import main
+from pm_method_agent.command_executor import LocalCommandExecutor
 from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
 from pm_method_agent.http_service import PMMethodHTTPService
 from pm_method_agent.llm_adapter import (
@@ -1496,6 +1497,120 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertFalse(evaluate_response.payload["decision"]["allowed"])
         self.assertEqual(evaluate_response.payload["decision"]["violation_kind"], "approval-required")
         self.assertEqual(evaluate_response.payload["decision"]["checks"][0]["check_type"], "action")
+
+    def test_local_command_executor_can_run_allowed_command(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "command_allowlist_prefixes": [f"{sys.executable} -c"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            executor = LocalCommandExecutor(base_dir=tmpdir)
+            result = executor.execute(
+                command_args=[sys.executable, "-c", "print('pmma-ok')"],
+                workspace_id="cmd-demo",
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.action, "command-executed")
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("pmma-ok", result.stdout)
+        self.assertEqual(result.runtime_session.last_terminal_event["terminal_state"], "completed")
+
+    def test_local_command_executor_can_be_blocked_by_hook_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_command_patterns": [f"{sys.executable} *"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            executor = LocalCommandExecutor(base_dir=tmpdir)
+            result = executor.execute(
+                command_args=[sys.executable, "-c", "print('pmma-blocked')"],
+                workspace_id="cmd-demo",
+            )
+
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.action, "command-blocked")
+        self.assertEqual(result.terminal_state, "blocked")
+        self.assertIn(sys.executable, result.reason)
+        event_types = [item["event_type"] for item in result.runtime_session.event_log]
+        self.assertIn("hook-call-requested", event_types)
+        self.assertNotIn("tool-call-requested", event_types)
+
+    def test_local_command_executor_can_record_failed_command(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "command_allowlist_prefixes": [f"{sys.executable} -c"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            executor = LocalCommandExecutor(base_dir=tmpdir)
+            result = executor.execute(
+                command_args=[sys.executable, "-c", "import sys; sys.exit(3)"],
+                workspace_id="cmd-demo",
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.action, "command-failed")
+        self.assertEqual(result.exit_code, 3)
+        self.assertEqual(result.runtime_session.last_terminal_event["terminal_state"], "failed")
+
+    def test_http_service_can_execute_local_command(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "command_allowlist_prefixes": [f"{sys.executable} -c"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/runtime/commands/execute",
+                body=json.dumps(
+                    {
+                        "workspace_id": "cmd-http",
+                        "command_args": [sys.executable, "-c", "print('via-http')"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.payload["result"]["action"], "command-executed")
+        self.assertIn("via-http", response.payload["result"]["stdout"])
 
     def test_http_service_can_manage_project_profile(self) -> None:
         with TemporaryDirectory() as tmpdir:

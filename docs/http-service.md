@@ -76,6 +76,25 @@
 }
 ```
 
+### `POST /runtime/commands/execute`
+
+用途：
+
+- 通过统一执行壳运行本地命令
+- 在真正执行前先经过 hook 与运行时策略校验
+- 给 CLI、网页壳或未来本地 agent 提供一致的命令执行底座
+
+示例请求体：
+
+```json
+{
+  "workspace_id": "demo",
+  "command_args": ["python3", "-c", "print('hello')"],
+  "write_paths": ["src/pm_method_agent/runtime_policy.py"],
+  "timeout_seconds": 15
+}
+```
+
 ### `POST /cases`
 
 用途：
@@ -206,6 +225,10 @@
 
 - `decision`
 - `runtime_policy`
+
+对于本地命令执行接口，还会返回：
+
+- `result`
 
 这样做的原因是：
 
