@@ -38,6 +38,7 @@
 
 - `blocked_intents`
 - `blocked_actions`
+- `approval_required_actions`
 - `allow_new_cases`
 - `allow_case_switching`
 - `allow_project_profile_updates`
@@ -52,16 +53,26 @@
 
 当前 agent shell 在识别出用户意图后，会先经过 runtime policy 检查。
 
+除此之外，当前关键执行步骤在真正落到内部动作前，也会再经过一层动作级检查。
+
 如果命中硬规则：
 
 - 不继续执行主线动作
 - 返回一张简短的“规则阻塞卡”
 - 把终止语义写入 runtime session
+- 把被拦下来的内部动作写回执行账本，保证账本闭环
 
 当前已经能区分两类典型结果：
 
 - `blocked`
 - `cancelled`
+
+当前动作级策略已经开始生效的典型位置包括：
+
+- `session-service.create-case`
+- `session-service.reply-to-case`
+- `project-profile-service.update-or-create`
+- `renderer.case-state`
 
 ## 示例
 
@@ -71,6 +82,8 @@
 {
   "runtime_policy": {
     "blocked_intents": ["switch-case"],
+    "blocked_actions": ["session-service.create-case"],
+    "approval_required_actions": ["project-profile-service.*"],
     "allow_new_cases": false,
     "allow_project_profile_updates": false
   }
@@ -80,6 +93,8 @@
 这表示：
 
 - 不允许切换案例
+- 不允许直接执行 `session-service.create-case`
+- 所有 `project-profile-service.*` 动作都需要先人工确认
 - 不允许直接新建案例
 - 不允许直接更新项目背景
 
@@ -111,7 +126,7 @@
 - 文件路径写入限制
 - sub-agent 生命周期约束
 
-也就是说，当前只是先把“agent 入口级硬约束”站住了。
+也就是说，当前已经站住了“入口级 + 内部动作级”的最小硬约束，但还没有进到更通用的工具执行和 hook enforcement。
 
 ## 和 prompt 的关系
 
@@ -140,6 +155,6 @@ runtime policy 负责：
 
 1. 目录级运行时策略
 2. 强制测试和验证纪律
-3. 危险动作审批策略
+3. 命令、路径和写入范围策略
 4. hook enforcement 层
 5. sub-agent 的父子规则传播

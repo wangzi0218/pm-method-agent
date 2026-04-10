@@ -49,7 +49,7 @@ from pm_method_agent.reply_interpreter import (
 )
 from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
-from pm_method_agent.runtime_policy import load_runtime_policy
+from pm_method_agent.runtime_policy import check_runtime_action_policy, load_runtime_policy
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
@@ -960,6 +960,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
                     {
                         "runtime_policy": {
                             "blocked_intents": ["switch-case"],
+                            "blocked_actions": ["session-service.create-case"],
+                            "approval_required_actions": ["project-profile-service.*"],
                             "allow_new_cases": False,
                             "allow_project_profile_updates": False,
                         }
@@ -971,8 +973,38 @@ class OrchestratorSmokeTest(unittest.TestCase):
             policy = load_runtime_policy(base_dir=tmpdir)
 
         self.assertEqual(policy.blocked_intents, ["switch-case"])
+        self.assertEqual(policy.blocked_actions, ["session-service.create-case"])
+        self.assertEqual(policy.approval_required_actions, ["project-profile-service.*"])
         self.assertFalse(policy.allow_new_cases)
         self.assertFalse(policy.allow_project_profile_updates)
+
+    def test_runtime_action_policy_can_match_exact_and_wildcard_patterns(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_actions": ["session-service.create-case"],
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        blocked = check_runtime_action_policy(policy, action_name="session-service.create-case")
+        approval = check_runtime_action_policy(policy, action_name="project-profile-service.update-or-create")
+        allowed = check_runtime_action_policy(policy, action_name="renderer.case-state")
+
+        self.assertIsNotNone(blocked)
+        self.assertEqual(blocked.action_name, "session-service.create-case")
+        self.assertIsNotNone(approval)
+        self.assertIn("需要先人工确认", approval.reason)
+        self.assertIsNone(allowed)
 
     def test_cli_rules_command_can_render_effective_rule_layers(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -988,6 +1020,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
                         "behavior_rules": ["先看清上下文再动手"],
                         "runtime_policy": {
                             "blocked_intents": ["switch-case"],
+                            "approval_required_actions": ["project-profile-service.*"],
                             "allow_new_cases": False,
                         },
                     },
@@ -1006,6 +1039,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("先看清上下文再动手", rendered)
         self.assertIn("允许新建案例：否", rendered)
         self.assertIn("`switch-case`", rendered)
+        self.assertIn("`project-profile-service.*`", rendered)
         self.assertIn("[身份描述]", rendered)
 
     def test_agent_shell_can_block_new_case_by_runtime_policy(self) -> None:
@@ -1068,6 +1102,64 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(response.action, "policy-blocked")
         self.assertIn("被禁用了", response.message)
         self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "cancelled")
+
+    def test_agent_shell_can_block_internal_action_by_runtime_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_actions": ["session-service.create-case"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "policy-blocked")
+        self.assertIn("session-service.create-case", response.message)
+        self.assertIn("当前动作", response.rendered_card)
+        self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "blocked")
+        self.assertGreaterEqual(len(response.runtime_session.execution_ledger), 2)
+        self.assertEqual(response.runtime_session.execution_ledger[1]["status"], "failed")
+        self.assertEqual(
+            response.runtime_session.execution_ledger[1]["error"]["action_name"],
+            "session-service.create-case",
+        )
+
+    def test_agent_shell_can_require_approval_for_internal_action_by_runtime_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "当前这个项目属于 ToB 的 HIS 产品，主要通过网页端使用，前台在操作，店长会看结果。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "policy-blocked")
+        self.assertIn("需要先人工确认", response.message)
+        self.assertIn("project-profile-service.update-or-create", response.rendered_card)
+        self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "blocked")
 
     def test_llm_case_copywriter_can_soften_stiff_phrases(self) -> None:
         adapter = StubLLMAdapter(

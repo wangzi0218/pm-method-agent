@@ -15,7 +15,12 @@ from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.renderers import render_workspace_overview
 from pm_method_agent.reply_interpreter import ReplyAnalysis, build_reply_interpreter_from_env
 from pm_method_agent.runtime_config import ensure_local_env_loaded
-from pm_method_agent.runtime_policy import check_runtime_policy, load_runtime_policy
+from pm_method_agent.runtime_policy import (
+    RuntimePolicyViolation,
+    check_runtime_action_policy,
+    check_runtime_policy,
+    load_runtime_policy,
+)
 from pm_method_agent.runtime_session_service import (
     complete_runtime_query,
     complete_tool_call,
@@ -51,6 +56,12 @@ class AgentShellResponse:
     rendered_history: str = ""
 
 
+class RuntimePolicyBlockedError(Exception):
+    def __init__(self, violation: RuntimePolicyViolation) -> None:
+        super().__init__(violation.reason)
+        self.violation = violation
+
+
 class PMMethodAgentShell:
     def __init__(self, base_dir: Optional[str] = None) -> None:
         ensure_local_env_loaded(base_dir)
@@ -80,6 +91,7 @@ class PMMethodAgentShell:
             reply_analysis = self._run_ledger_step(
                 runtime_session,
                 tool_name="reply-interpreter",
+                action_name="reply-interpreter.analyze-reply",
                 request_payload={"message": normalized_message},
                 operation=lambda: self._reply_interpreter.analyze_reply(
                     normalized_message,
@@ -113,6 +125,7 @@ class PMMethodAgentShell:
                 recent_cases = self._run_ledger_step(
                     runtime_session,
                     tool_name="workspace-service",
+                    action_name="workspace-service.load-recent-cases",
                     request_payload={"action": "load-recent-cases", "workspace_id": workspace.workspace_id},
                     operation=lambda: self._load_recent_cases(workspace),
                     result_ref_builder=lambda result: f"recent-cases:{len(result)}",
@@ -125,6 +138,7 @@ class PMMethodAgentShell:
                     rendered_card=self._run_ledger_step(
                         runtime_session,
                         tool_name="renderer",
+                        action_name="renderer.workspace-overview",
                         request_payload={"card": "workspace-overview"},
                         operation=lambda: render_workspace_overview(workspace, recent_cases),
                         result_ref_builder=lambda _: "rendered:workspace-overview",
@@ -136,6 +150,7 @@ class PMMethodAgentShell:
                 target_case = self._run_ledger_step(
                     runtime_session,
                     tool_name="workspace-service",
+                    action_name="workspace-service.resolve-switch-case",
                     request_payload={"action": "resolve-switch-case", "workspace_id": workspace.workspace_id},
                     operation=lambda: self._resolve_switch_target(normalized_message, workspace),
                     result_ref_builder=lambda result: f"case:{result.case_id}" if result is not None else "case:not-found",
@@ -144,6 +159,7 @@ class PMMethodAgentShell:
                     recent_cases = self._run_ledger_step(
                         runtime_session,
                         tool_name="workspace-service",
+                        action_name="workspace-service.load-recent-cases",
                         request_payload={"action": "load-recent-cases", "workspace_id": workspace.workspace_id},
                         operation=lambda: self._load_recent_cases(workspace),
                         result_ref_builder=lambda result: f"recent-cases:{len(result)}",
@@ -156,6 +172,7 @@ class PMMethodAgentShell:
                         rendered_card=self._run_ledger_step(
                             runtime_session,
                             tool_name="renderer",
+                            action_name="renderer.workspace-overview",
                             request_payload={"card": "workspace-overview"},
                             operation=lambda: render_workspace_overview(workspace, recent_cases),
                             result_ref_builder=lambda _: "rendered:workspace-overview",
@@ -173,6 +190,7 @@ class PMMethodAgentShell:
                     rendered_card=self._run_ledger_step(
                         runtime_session,
                         tool_name="renderer",
+                        action_name="renderer.case-state",
                         request_payload={"card": "case-state", "case_id": target_case.case_id},
                         operation=lambda: render_case_state(target_case),
                         result_ref_builder=lambda _: f"rendered:case:{target_case.case_id}",
@@ -184,6 +202,7 @@ class PMMethodAgentShell:
                 project_profile = self._run_ledger_step(
                     runtime_session,
                     tool_name="project-profile-service",
+                    action_name="project-profile-service.update-or-create",
                     request_payload={"action": "update-or-create", "workspace_id": workspace.workspace_id},
                     operation=lambda: self._update_or_create_project_profile(
                         workspace=workspace,
@@ -196,6 +215,7 @@ class PMMethodAgentShell:
                 case_state = self._run_ledger_step(
                     runtime_session,
                     tool_name="session-service",
+                    action_name="session-service.continue-active-case-with-project-profile",
                     request_payload={"action": "continue-active-case-with-project-profile"},
                     operation=lambda: self._continue_active_case_with_project_profile(
                         workspace=workspace,
@@ -222,6 +242,7 @@ class PMMethodAgentShell:
                         self._run_ledger_step(
                             runtime_session,
                             tool_name="renderer",
+                            action_name="renderer.background-follow-up",
                             request_payload={"card": "background-follow-up", "case_id": case_state.case_id},
                             operation=lambda: _render_project_background_follow_up(case_state),
                             result_ref_builder=lambda _: f"rendered:background-follow-up:{case_state.case_id}",
@@ -236,6 +257,7 @@ class PMMethodAgentShell:
                 case_state = self._run_ledger_step(
                     runtime_session,
                     tool_name="session-service",
+                    action_name="session-service.load-case",
                     request_payload={"action": "load-case", "case_id": workspace.active_case_id},
                     operation=lambda: get_case(workspace.active_case_id, store=self._case_store),
                     result_ref_builder=lambda result: f"case:{result.case_id}",
@@ -249,6 +271,7 @@ class PMMethodAgentShell:
                     rendered_history=self._run_ledger_step(
                         runtime_session,
                         tool_name="renderer",
+                        action_name="renderer.case-history",
                         request_payload={"card": "case-history", "case_id": case_state.case_id},
                         operation=lambda: render_case_history(case_state),
                         result_ref_builder=lambda _: f"rendered:history:{case_state.case_id}",
@@ -260,6 +283,7 @@ class PMMethodAgentShell:
                 case_state = self._run_ledger_step(
                     runtime_session,
                     tool_name="session-service",
+                    action_name="session-service.load-case",
                     request_payload={"action": "load-case", "case_id": workspace.active_case_id},
                     operation=lambda: get_case(workspace.active_case_id, store=self._case_store),
                     result_ref_builder=lambda result: f"case:{result.case_id}",
@@ -273,6 +297,7 @@ class PMMethodAgentShell:
                     rendered_card=self._run_ledger_step(
                         runtime_session,
                         tool_name="renderer",
+                        action_name="renderer.case-state",
                         request_payload={"card": "case-state", "case_id": case_state.case_id},
                         operation=lambda: render_case_state(case_state),
                         result_ref_builder=lambda _: f"rendered:case:{case_state.case_id}",
@@ -284,6 +309,7 @@ class PMMethodAgentShell:
                 case_state = self._run_ledger_step(
                     runtime_session,
                     tool_name="session-service",
+                    action_name="session-service.reply-to-case",
                     request_payload={"action": "reply-to-case", "case_id": workspace.active_case_id},
                     operation=lambda: reply_to_case(
                         case_id=workspace.active_case_id,
@@ -303,6 +329,7 @@ class PMMethodAgentShell:
                     rendered_card=self._run_ledger_step(
                         runtime_session,
                         tool_name="renderer",
+                        action_name="renderer.case-state",
                         request_payload={"card": "case-state", "case_id": case_state.case_id},
                         operation=lambda: render_case_state(case_state),
                         result_ref_builder=lambda _: f"rendered:case:{case_state.case_id}",
@@ -313,6 +340,7 @@ class PMMethodAgentShell:
             case_state = self._run_ledger_step(
                 runtime_session,
                 tool_name="session-service",
+                action_name="session-service.create-case",
                 request_payload={"action": "create-case", "workspace_id": workspace.workspace_id},
                 operation=lambda: create_case(
                     raw_input=normalized_message,
@@ -332,12 +360,26 @@ class PMMethodAgentShell:
                 rendered_card=self._run_ledger_step(
                     runtime_session,
                     tool_name="renderer",
+                    action_name="renderer.case-state",
                     request_payload={"card": "case-state", "case_id": case_state.case_id},
                     operation=lambda: render_case_state(case_state),
                     result_ref_builder=lambda _: f"rendered:case:{case_state.case_id}",
                 ),
             )
             return self._finalize_response(response)
+        except RuntimePolicyBlockedError as exc:
+            response = AgentShellResponse(
+                action="policy-blocked",
+                message=exc.violation.reason,
+                workspace=workspace,
+                runtime_session=runtime_session,
+                rendered_card=_render_runtime_policy_block(
+                    intent=exc.violation.intent,
+                    action_name=exc.violation.action_name,
+                    reason=exc.violation.reason,
+                ),
+            )
+            return self._finalize_response(response, forced_terminal_state=exc.violation.terminal_state)
         except Exception as exc:
             fail_runtime_query(
                 runtime_session,
@@ -460,6 +502,7 @@ class PMMethodAgentShell:
         runtime_session: RuntimeSession,
         *,
         tool_name: str,
+        action_name: str,
         request_payload: Optional[dict[str, object]],
         operation: Callable[[], T],
         result_ref_builder: Callable[[T], str],
@@ -469,6 +512,18 @@ class PMMethodAgentShell:
             tool_name=tool_name,
             request_payload=request_payload,
         )
+        violation = check_runtime_action_policy(self._runtime_policy, action_name=action_name)
+        if violation is not None:
+            fail_tool_call(
+                runtime_session,
+                call_id=str(entry["call_id"]),
+                error={
+                    "type": "RuntimePolicyBlocked",
+                    "reason": violation.reason,
+                    "action_name": action_name,
+                },
+            )
+            raise RuntimePolicyBlockedError(violation)
         try:
             result = operation()
         except Exception as exc:
@@ -755,18 +810,18 @@ def _resolve_runtime_resume_from(action: str, case_state: Optional[CaseState]) -
     return last_resume_stage or case_state.stage
 
 
-def _render_runtime_policy_block(*, intent: str, reason: str) -> str:
-    return "\n".join(
-        [
-            "# PM Method Agent 规则阻塞卡",
-            "",
-            "## 当前判断",
-            "这一步先不继续执行。",
-            "",
-            "## 原因",
-            reason,
-            "",
-            "## 当前意图",
-            f"- `{intent}`",
-        ]
-    )
+def _render_runtime_policy_block(*, intent: str = "", action_name: str = "", reason: str) -> str:
+    lines = [
+        "# PM Method Agent 规则阻塞卡",
+        "",
+        "## 当前判断",
+        "这一步先不继续执行。",
+        "",
+        "## 原因",
+        reason,
+    ]
+    if intent:
+        lines.extend(["", "## 当前意图", f"- `{intent}`"])
+    if action_name:
+        lines.extend(["", "## 当前动作", f"- `{action_name}`"])
+    return "\n".join(lines)

@@ -194,6 +194,7 @@ def build_rule_diagnostics_payload(
         "runtime_policy": {
             "blocked_intents": list(runtime_policy.blocked_intents),
             "blocked_actions": list(runtime_policy.blocked_actions),
+            "approval_required_actions": list(runtime_policy.approval_required_actions),
             "allow_new_cases": runtime_policy.allow_new_cases,
             "allow_case_switching": runtime_policy.allow_case_switching,
             "allow_project_profile_updates": runtime_policy.allow_project_profile_updates,
@@ -252,6 +253,9 @@ def render_rule_diagnostics(
     runtime_policy_payload = payload["runtime_policy"]
     lines.append(f"- 禁用意图：{_render_inline_list(runtime_policy_payload['blocked_intents'])}")
     lines.append(f"- 禁用动作：{_render_inline_list(runtime_policy_payload['blocked_actions'])}")
+    lines.append(
+        f"- 需要人工确认的动作：{_render_inline_list(runtime_policy_payload['approval_required_actions'])}"
+    )
     lines.append(
         f"- 允许新建案例：{'是' if runtime_policy_payload['allow_new_cases'] else '否'}"
     )
