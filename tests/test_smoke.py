@@ -61,6 +61,12 @@ from pm_method_agent.runtime_policy import (
     load_runtime_policy,
 )
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
+from pm_method_agent.tool_runtime import (
+    LocalToolExecutionOutcome,
+    LocalToolHandler,
+    LocalToolRequest,
+    LocalToolRuntime,
+)
 
 
 class StubLLMAdapter:
@@ -94,6 +100,19 @@ class RaisingReplyInterpreter:
     def analyze_reply(self, reply_text: str, previous_case=None):  # type: ignore[no-untyped-def]
         del reply_text, previous_case
         raise RuntimeError("boom")
+
+
+class StubLocalToolHandler(LocalToolHandler):
+    name = "stub-local-tool"
+
+    def execute(self, request: LocalToolRequest) -> LocalToolExecutionOutcome:
+        return LocalToolExecutionOutcome(
+            action="stub-tool-executed",
+            terminal_state="completed",
+            success=True,
+            result_ref=f"stub:{request.tool_name}",
+            output_payload={"echo": request.request_payload.get("value")},
+        )
 
 
 class OrchestratorSmokeTest(unittest.TestCase):
@@ -1497,6 +1516,75 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertFalse(evaluate_response.payload["decision"]["allowed"])
         self.assertEqual(evaluate_response.payload["decision"]["violation_kind"], "approval-required")
         self.assertEqual(evaluate_response.payload["decision"]["checks"][0]["check_type"], "action")
+
+    def test_http_service_can_list_and_execute_local_tools(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "command_allowlist_prefixes": [f"{sys.executable} -c"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            list_response = service.handle(method="GET", path="/runtime/tools")
+            exec_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "local-command",
+                        "workspace_id": "tool-http",
+                        "command_args": [sys.executable, "-c", "print('via-tool-http')"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.payload["tools"][0]["tool_name"], "local-command")
+        self.assertEqual(exec_response.status_code, 200)
+        self.assertEqual(exec_response.payload["tool_name"], "local-command")
+        self.assertEqual(exec_response.payload["result"]["tool_name"], "local-command")
+        self.assertIn("via-tool-http", exec_response.payload["result"]["stdout"])
+
+    def test_local_tool_runtime_can_execute_generic_tool_handler(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": [],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            runtime = LocalToolRuntime(base_dir=tmpdir)
+            request = LocalToolRequest(
+                tool_name="stub-local-tool",
+                action_name="stub-local-tool.execute",
+                workspace_id="stub-demo",
+                summary="执行 stub 工具",
+                request_payload={"value": "ok"},
+                resume_from="stub-local-tool.execute",
+            )
+            result = runtime.execute_tool(request, handler=StubLocalToolHandler())
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.tool_name, "stub-local-tool")
+        self.assertEqual(result.action, "stub-tool-executed")
+        self.assertEqual(result.output_payload["echo"], "ok")
+        self.assertEqual(result.runtime_session.execution_ledger[0]["tool_name"], "stub-local-tool")
 
     def test_local_command_executor_can_run_allowed_command(self) -> None:
         with TemporaryDirectory() as tmpdir:

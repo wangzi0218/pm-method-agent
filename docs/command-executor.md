@@ -16,6 +16,10 @@
 
 - `src/pm_method_agent/command_executor.py`
 
+并且已经把公共运行时链路抽到：
+
+- `src/pm_method_agent/tool_runtime.py`
+
 核心对象：
 
 - `LocalCommandExecutor`
@@ -43,6 +47,11 @@
 - terminal semantics
 
 而不只是单独的 `subprocess.run(...)`
+
+更准确地说：
+
+- `tool runtime` 是底座
+- `local-command` 是当前第一个具体 handler
 
 ## 当前结果语义
 

@@ -470,6 +470,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：首次公开前的提交流程与版本建议
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：GitHub 首次公开发布的标准
 - [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)：多轮会话与服务层设计
+- [docs/tool-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/tool-runtime.md)：本地工具运行时、handler 分层和通用执行链路
 - [docs/releases/v0.1.0.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/releases/v0.1.0.md)：首个公开版本说明
 
 ## 当前状态
@@ -498,6 +499,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一层统一的 operation enforcement，用来把动作、命令和写入路径校验收敛成同一套前置判断结果
 - 一层最小 hook enforcement，用来把前置判断真正挂进运行时事件和恢复闭环
 - 一层最小本地命令执行壳，用来把 hook、策略和执行账本接到真实执行入口
+- 一层最小本地 tool runtime，用来把公共执行链路与具体工具 handler 分开
 
 ## 后续形态
 

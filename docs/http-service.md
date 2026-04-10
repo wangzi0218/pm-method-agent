@@ -230,6 +230,11 @@
 
 - `result`
 
+对于通用本地工具接口，还会返回：
+
+- `tool_name`
+- `result`
+
 这样做的原因是：
 
 - 结构化数据方便后续不同入口消费
@@ -247,6 +252,21 @@
 - `show-workspace`
 - `switch-case`
 - `policy-blocked`
+
+## 当前本地工具接口
+
+### `GET /runtime/tools`
+
+用途：
+
+- 查看当前已经暴露的本地工具
+
+### `POST /runtime/tools/execute`
+
+用途：
+
+- 通过通用工具入口执行一个本地工具
+- 当前第一版先暴露 `local-command`
 
 ## 当前推荐接入方式
 

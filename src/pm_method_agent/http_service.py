@@ -7,7 +7,7 @@ from typing import Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
-from pm_method_agent.command_executor import LocalCommandExecutor
+from pm_method_agent.command_executor import LOCAL_COMMAND_TOOL_NAME, LocalCommandExecutor
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -63,6 +63,19 @@ class PMMethodHTTPService:
             if method == "GET" and normalized_path == "/runtime/policy":
                 return HTTPResponse(200, {"runtime_policy": runtime_policy_to_dict(self._runtime_policy)})
 
+            if method == "GET" and normalized_path == "/runtime/tools":
+                return HTTPResponse(
+                    200,
+                    {
+                        "tools": [
+                            {
+                                "tool_name": LOCAL_COMMAND_TOOL_NAME,
+                                "kind": "command",
+                            }
+                        ]
+                    },
+                )
+
             if method == "POST" and normalized_path == "/runtime/policy/evaluate":
                 payload = _parse_json_body(body)
                 decision = evaluate_operation_enforcement(
@@ -89,6 +102,26 @@ class PMMethodHTTPService:
                     timeout_seconds=_ensure_float(payload.get("timeout_seconds"), default=15.0),
                 )
                 return HTTPResponse(200, {"result": result.to_dict()})
+
+            if method == "POST" and normalized_path == "/runtime/tools/execute":
+                payload = _parse_json_body(body)
+                tool_name = str(payload.get("tool_name", "")).strip()
+                if tool_name != LOCAL_COMMAND_TOOL_NAME:
+                    raise HTTPServiceError(400, f"Unsupported local tool: {tool_name or 'unknown'}")
+                result = self._command_executor.execute(
+                    command_args=_ensure_string_list(payload.get("command_args")),
+                    workspace_id=_optional_string(payload.get("workspace_id")) or "default",
+                    cwd=_optional_string(payload.get("cwd")),
+                    write_paths=_ensure_string_list(payload.get("write_paths")),
+                    timeout_seconds=_ensure_float(payload.get("timeout_seconds"), default=15.0),
+                )
+                return HTTPResponse(
+                    200,
+                    {
+                        "tool_name": tool_name,
+                        "result": result.to_dict(),
+                    },
+                )
 
             if method == "POST" and normalized_path == "/project-profiles":
                 payload = _parse_json_body(body)
