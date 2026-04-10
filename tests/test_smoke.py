@@ -27,7 +27,12 @@ from pm_method_agent.project_profile_service import (
     default_project_profile_store,
     get_project_profile,
 )
-from pm_method_agent.runtime_session_service import default_runtime_session_store, get_or_create_runtime_session
+from pm_method_agent.runtime_session_service import (
+    default_runtime_session_store,
+    get_or_create_runtime_session,
+    request_tool_call,
+    save_runtime_session,
+)
 from pm_method_agent.reply_interpreter import (
     HeuristicReplyInterpreter,
     HybridReplyInterpreter,
@@ -1365,10 +1370,56 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(response.runtime_session.workspace_id, "demo")
         self.assertEqual(response.runtime_session.turn_count, 1)
         self.assertEqual(runtime_session.turn_count, 1)
-        self.assertGreaterEqual(len(runtime_session.event_log), 3)
+        self.assertGreaterEqual(len(runtime_session.event_log), 5)
         event_types = [item["event_type"] for item in runtime_session.event_log]
-        self.assertEqual(event_types[:3], ["turn-received", "loop-started", "turn-classified"])
+        self.assertEqual(event_types[:2], ["turn-received", "loop-started"])
+        self.assertIn("tool-call-requested", event_types)
+        self.assertIn("tool-call-completed", event_types)
+        self.assertIn("turn-classified", event_types)
         self.assertEqual(runtime_session.last_terminal_event["query_id"], "query-0001")
+        self.assertGreaterEqual(len(runtime_session.execution_ledger), 2)
+        self.assertEqual(runtime_session.execution_ledger[0]["tool_name"], "reply-interpreter")
+        self.assertEqual(runtime_session.execution_ledger[0]["status"], "completed")
+
+    def test_agent_shell_runtime_session_tracks_execution_ledger(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "看看最近几个案例。",
+                workspace_id="demo",
+            )
+
+        ledger = response.runtime_session.execution_ledger
+        self.assertGreaterEqual(len(ledger), 2)
+        self.assertEqual(ledger[0]["tool_name"], "reply-interpreter")
+        self.assertEqual(ledger[0]["status"], "completed")
+        self.assertTrue(ledger[0]["result_ref"].startswith("parser:"))
+        self.assertEqual(ledger[1]["tool_name"], "workspace-service")
+        self.assertEqual(ledger[1]["status"], "completed")
+
+    def test_runtime_session_closes_pending_tool_calls_on_next_query(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_store = default_runtime_session_store(tmpdir)
+            runtime_session = get_or_create_runtime_session("demo", store=runtime_store)
+            runtime_session.current_query_id = "query-0009"
+            pending_entry = request_tool_call(
+                runtime_session,
+                tool_name="demo-tool",
+                request_payload={"note": "pending"},
+            )
+            save_runtime_session(runtime_session, store=runtime_store)
+
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.runtime_session.pending_tool_calls, [])
+        first_entry = response.runtime_session.execution_ledger[0]
+        self.assertEqual(first_entry["call_id"], pending_entry["call_id"])
+        self.assertEqual(first_entry["status"], "failed")
+        self.assertEqual(first_entry["error"]["reason"], "next-query-started")
 
     def test_agent_shell_runtime_session_tracks_terminal_state_and_resume_point(self) -> None:
         with TemporaryDirectory() as tmpdir:

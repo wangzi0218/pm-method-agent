@@ -193,6 +193,7 @@ class RuntimeSession:
     compression_state: Dict[str, object] = field(default_factory=dict)
     pending_hooks: List[Dict[str, object]] = field(default_factory=list)
     pending_tool_calls: List[Dict[str, object]] = field(default_factory=list)
+    execution_ledger: List[Dict[str, object]] = field(default_factory=list)
     last_terminal_event: Dict[str, object] = field(default_factory=dict)
     children_agent_ids: List[str] = field(default_factory=list)
     event_log: List[Dict[str, object]] = field(default_factory=list)
@@ -212,6 +213,7 @@ class RuntimeSession:
             "compression_state": self.compression_state,
             "pending_hooks": self.pending_hooks,
             "pending_tool_calls": self.pending_tool_calls,
+            "execution_ledger": self.execution_ledger,
             "last_terminal_event": self.last_terminal_event,
             "children_agent_ids": self.children_agent_ids,
             "event_log": self.event_log,
@@ -233,6 +235,7 @@ class RuntimeSession:
             compression_state=dict(payload.get("compression_state", {})),
             pending_hooks=list(payload.get("pending_hooks", [])),
             pending_tool_calls=list(payload.get("pending_tool_calls", [])),
+            execution_ledger=list(payload.get("execution_ledger", [])),
             last_terminal_event=dict(payload.get("last_terminal_event", {})),
             children_agent_ids=list(payload.get("children_agent_ids", [])),
             event_log=list(payload.get("event_log", [])),

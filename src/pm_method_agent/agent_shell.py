@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 from pm_method_agent.models import CaseState, ProjectProfile, RuntimeSession, WorkspaceState
 from pm_method_agent.project_profile_service import (
@@ -17,9 +17,12 @@ from pm_method_agent.reply_interpreter import ReplyAnalysis, build_reply_interpr
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_session_service import (
     complete_runtime_query,
+    complete_tool_call,
     default_runtime_session_store,
+    fail_tool_call,
     get_or_create_runtime_session,
     record_runtime_turn_classification,
+    request_tool_call,
     save_runtime_session,
     start_runtime_query,
 )
@@ -30,6 +33,8 @@ from pm_method_agent.workspace_service import (
     get_or_create_workspace,
     save_workspace,
 )
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -68,140 +73,272 @@ class PMMethodAgentShell:
             active_case_id=workspace.active_case_id,
             message=normalized_message,
         )
-        reply_analysis = self._reply_interpreter.analyze_reply(normalized_message, previous_case=active_case)
-        intent = _classify_agent_intent(
-            message=normalized_message,
-            reply_analysis=reply_analysis,
-            active_case=active_case,
-            workspace=workspace,
-        )
-        record_runtime_turn_classification(
-            runtime_session,
-            intent=intent,
-            active_case_id=workspace.active_case_id,
-        )
-
-        if intent == "workspace-overview":
-            recent_cases = self._load_recent_cases(workspace)
-            response = AgentShellResponse(
-                action="show-workspace",
-                message="这是当前工作区里最近的案例。",
-                workspace=workspace,
-                runtime_session=runtime_session,
-                rendered_card=render_workspace_overview(workspace, recent_cases),
+        try:
+            reply_analysis = self._run_ledger_step(
+                runtime_session,
+                tool_name="reply-interpreter",
+                request_payload={"message": normalized_message},
+                operation=lambda: self._reply_interpreter.analyze_reply(
+                    normalized_message,
+                    previous_case=active_case,
+                ),
+                result_ref_builder=lambda result: f"parser:{result.parser_name}",
             )
-            return self._finalize_response(response)
+            intent = _classify_agent_intent(
+                message=normalized_message,
+                reply_analysis=reply_analysis,
+                active_case=active_case,
+                workspace=workspace,
+            )
+            record_runtime_turn_classification(
+                runtime_session,
+                intent=intent,
+                active_case_id=workspace.active_case_id,
+            )
 
-        if intent == "switch-case":
-            target_case = self._resolve_switch_target(normalized_message, workspace)
-            if target_case is None:
-                recent_cases = self._load_recent_cases(workspace)
+            if intent == "workspace-overview":
+                recent_cases = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="workspace-service",
+                    request_payload={"action": "load-recent-cases", "workspace_id": workspace.workspace_id},
+                    operation=lambda: self._load_recent_cases(workspace),
+                    result_ref_builder=lambda result: f"recent-cases:{len(result)}",
+                )
                 response = AgentShellResponse(
                     action="show-workspace",
-                    message="没找到你想切换的案例，先看一下当前工作区里的最近案例。",
+                    message="这是当前工作区里最近的案例。",
                     workspace=workspace,
                     runtime_session=runtime_session,
-                    rendered_card=render_workspace_overview(workspace, recent_cases),
+                    rendered_card=self._run_ledger_step(
+                        runtime_session,
+                        tool_name="renderer",
+                        request_payload={"card": "workspace-overview"},
+                        operation=lambda: render_workspace_overview(workspace, recent_cases),
+                        result_ref_builder=lambda _: "rendered:workspace-overview",
+                    ),
                 )
                 return self._finalize_response(response)
-            activate_workspace_case(workspace, target_case.case_id)
-            save_workspace(workspace, store=self._workspace_store)
-            response = AgentShellResponse(
-                action="switch-case",
-                message=f"已切换到案例 {target_case.case_id}。",
-                workspace=workspace,
-                runtime_session=runtime_session,
-                case_state=target_case,
-                rendered_card=render_case_state(target_case),
-            )
-            return self._finalize_response(response)
 
-        if intent == "project-background":
-            project_profile = self._update_or_create_project_profile(
-                workspace=workspace,
-                message=normalized_message,
-                active_project_profile=active_project_profile,
-            )
-            workspace.active_project_profile_id = project_profile.project_profile_id
-            case_state = self._continue_active_case_with_project_profile(
-                workspace=workspace,
-                message=normalized_message,
-                project_profile=project_profile,
-            )
-            save_workspace(workspace, store=self._workspace_store)
-            response = AgentShellResponse(
-                action="project-profile-updated",
-                message=(
-                    "已记录这条项目背景，并回填到当前案例。"
-                    if case_state is not None
-                    else "已记录这条项目背景，后续分析会默认带上这层上下文。"
+            if intent == "switch-case":
+                target_case = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="workspace-service",
+                    request_payload={"action": "resolve-switch-case", "workspace_id": workspace.workspace_id},
+                    operation=lambda: self._resolve_switch_target(normalized_message, workspace),
+                    result_ref_builder=lambda result: f"case:{result.case_id}" if result is not None else "case:not-found",
+                )
+                if target_case is None:
+                    recent_cases = self._run_ledger_step(
+                        runtime_session,
+                        tool_name="workspace-service",
+                        request_payload={"action": "load-recent-cases", "workspace_id": workspace.workspace_id},
+                        operation=lambda: self._load_recent_cases(workspace),
+                        result_ref_builder=lambda result: f"recent-cases:{len(result)}",
+                    )
+                    response = AgentShellResponse(
+                        action="show-workspace",
+                        message="没找到你想切换的案例，先看一下当前工作区里的最近案例。",
+                        workspace=workspace,
+                        runtime_session=runtime_session,
+                        rendered_card=self._run_ledger_step(
+                            runtime_session,
+                            tool_name="renderer",
+                            request_payload={"card": "workspace-overview"},
+                            operation=lambda: render_workspace_overview(workspace, recent_cases),
+                            result_ref_builder=lambda _: "rendered:workspace-overview",
+                        ),
+                    )
+                    return self._finalize_response(response)
+                activate_workspace_case(workspace, target_case.case_id)
+                save_workspace(workspace, store=self._workspace_store)
+                response = AgentShellResponse(
+                    action="switch-case",
+                    message=f"已切换到案例 {target_case.case_id}。",
+                    workspace=workspace,
+                    runtime_session=runtime_session,
+                    case_state=target_case,
+                    rendered_card=self._run_ledger_step(
+                        runtime_session,
+                        tool_name="renderer",
+                        request_payload={"card": "case-state", "case_id": target_case.case_id},
+                        operation=lambda: render_case_state(target_case),
+                        result_ref_builder=lambda _: f"rendered:case:{target_case.case_id}",
+                    ),
+                )
+                return self._finalize_response(response)
+
+            if intent == "project-background":
+                project_profile = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="project-profile-service",
+                    request_payload={"action": "update-or-create", "workspace_id": workspace.workspace_id},
+                    operation=lambda: self._update_or_create_project_profile(
+                        workspace=workspace,
+                        message=normalized_message,
+                        active_project_profile=active_project_profile,
+                    ),
+                    result_ref_builder=lambda result: f"project-profile:{result.project_profile_id}",
+                )
+                workspace.active_project_profile_id = project_profile.project_profile_id
+                case_state = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="session-service",
+                    request_payload={"action": "continue-active-case-with-project-profile"},
+                    operation=lambda: self._continue_active_case_with_project_profile(
+                        workspace=workspace,
+                        message=normalized_message,
+                        project_profile=project_profile,
+                    ),
+                    result_ref_builder=lambda result: (
+                        f"case:{result.case_id}" if result is not None else "case:no-backfill"
+                    ),
+                )
+                save_workspace(workspace, store=self._workspace_store)
+                response = AgentShellResponse(
+                    action="project-profile-updated",
+                    message=(
+                        "已记录这条项目背景，并回填到当前案例。"
+                        if case_state is not None
+                        else "已记录这条项目背景，后续分析会默认带上这层上下文。"
+                    ),
+                    workspace=workspace,
+                    runtime_session=runtime_session,
+                    case_state=case_state,
+                    project_profile=project_profile,
+                    rendered_card=(
+                        self._run_ledger_step(
+                            runtime_session,
+                            tool_name="renderer",
+                            request_payload={"card": "background-follow-up", "case_id": case_state.case_id},
+                            operation=lambda: _render_project_background_follow_up(case_state),
+                            result_ref_builder=lambda _: f"rendered:background-follow-up:{case_state.case_id}",
+                        )
+                        if case_state is not None
+                        else ""
+                    ),
+                )
+                return self._finalize_response(response)
+
+            if intent == "history" and workspace.active_case_id:
+                case_state = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="session-service",
+                    request_payload={"action": "load-case", "case_id": workspace.active_case_id},
+                    operation=lambda: get_case(workspace.active_case_id, store=self._case_store),
+                    result_ref_builder=lambda result: f"case:{result.case_id}",
+                )
+                response = AgentShellResponse(
+                    action="show-history",
+                    message="这是当前活跃案例的历史记录。",
+                    workspace=workspace,
+                    runtime_session=runtime_session,
+                    case_state=case_state,
+                    rendered_history=self._run_ledger_step(
+                        runtime_session,
+                        tool_name="renderer",
+                        request_payload={"card": "case-history", "case_id": case_state.case_id},
+                        operation=lambda: render_case_history(case_state),
+                        result_ref_builder=lambda _: f"rendered:history:{case_state.case_id}",
+                    ),
+                )
+                return self._finalize_response(response)
+
+            if intent == "guidance" and workspace.active_case_id:
+                case_state = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="session-service",
+                    request_payload={"action": "load-case", "case_id": workspace.active_case_id},
+                    operation=lambda: get_case(workspace.active_case_id, store=self._case_store),
+                    result_ref_builder=lambda result: f"case:{result.case_id}",
+                )
+                response = AgentShellResponse(
+                    action="show-guidance",
+                    message="这是当前活跃案例的最新建议。",
+                    workspace=workspace,
+                    runtime_session=runtime_session,
+                    case_state=case_state,
+                    rendered_card=self._run_ledger_step(
+                        runtime_session,
+                        tool_name="renderer",
+                        request_payload={"card": "case-state", "case_id": case_state.case_id},
+                        operation=lambda: render_case_state(case_state),
+                        result_ref_builder=lambda _: f"rendered:case:{case_state.case_id}",
+                    ),
+                )
+                return self._finalize_response(response)
+
+            if intent == "continue-case" and workspace.active_case_id:
+                case_state = self._run_ledger_step(
+                    runtime_session,
+                    tool_name="session-service",
+                    request_payload={"action": "reply-to-case", "case_id": workspace.active_case_id},
+                    operation=lambda: reply_to_case(
+                        case_id=workspace.active_case_id,
+                        reply_text=normalized_message,
+                        store=self._case_store,
+                    ),
+                    result_ref_builder=lambda result: f"case:{result.case_id}",
+                )
+                activate_workspace_case(workspace, case_state.case_id)
+                save_workspace(workspace, store=self._workspace_store)
+                response = AgentShellResponse(
+                    action="reply-case",
+                    message="已承接当前活跃案例并继续推进。",
+                    workspace=workspace,
+                    runtime_session=runtime_session,
+                    case_state=case_state,
+                    rendered_card=self._run_ledger_step(
+                        runtime_session,
+                        tool_name="renderer",
+                        request_payload={"card": "case-state", "case_id": case_state.case_id},
+                        operation=lambda: render_case_state(case_state),
+                        result_ref_builder=lambda _: f"rendered:case:{case_state.case_id}",
+                    ),
+                )
+                return self._finalize_response(response)
+
+            case_state = self._run_ledger_step(
+                runtime_session,
+                tool_name="session-service",
+                request_payload={"action": "create-case", "workspace_id": workspace.workspace_id},
+                operation=lambda: create_case(
+                    raw_input=normalized_message,
+                    project_profile=active_project_profile,
+                    store=self._case_store,
                 ),
-                workspace=workspace,
-                runtime_session=runtime_session,
-                case_state=case_state,
-                project_profile=project_profile,
-                rendered_card=_render_project_background_follow_up(case_state) if case_state is not None else "",
-            )
-            return self._finalize_response(response)
-
-        if intent == "history" and workspace.active_case_id:
-            case_state = get_case(workspace.active_case_id, store=self._case_store)
-            response = AgentShellResponse(
-                action="show-history",
-                message="这是当前活跃案例的历史记录。",
-                workspace=workspace,
-                runtime_session=runtime_session,
-                case_state=case_state,
-                rendered_history=render_case_history(case_state),
-            )
-            return self._finalize_response(response)
-
-        if intent == "guidance" and workspace.active_case_id:
-            case_state = get_case(workspace.active_case_id, store=self._case_store)
-            response = AgentShellResponse(
-                action="show-guidance",
-                message="这是当前活跃案例的最新建议。",
-                workspace=workspace,
-                runtime_session=runtime_session,
-                case_state=case_state,
-                rendered_card=render_case_state(case_state),
-            )
-            return self._finalize_response(response)
-
-        if intent == "continue-case" and workspace.active_case_id:
-            case_state = reply_to_case(
-                case_id=workspace.active_case_id,
-                reply_text=normalized_message,
-                store=self._case_store,
+                result_ref_builder=lambda result: f"case:{result.case_id}",
             )
             activate_workspace_case(workspace, case_state.case_id)
             save_workspace(workspace, store=self._workspace_store)
             response = AgentShellResponse(
-                action="reply-case",
-                message="已承接当前活跃案例并继续推进。",
+                action="create-case",
+                message="已按新的输入创建分析案例。",
                 workspace=workspace,
                 runtime_session=runtime_session,
                 case_state=case_state,
-                rendered_card=render_case_state(case_state),
+                rendered_card=self._run_ledger_step(
+                    runtime_session,
+                    tool_name="renderer",
+                    request_payload={"card": "case-state", "case_id": case_state.case_id},
+                    operation=lambda: render_case_state(case_state),
+                    result_ref_builder=lambda _: f"rendered:case:{case_state.case_id}",
+                ),
             )
             return self._finalize_response(response)
-
-        case_state = create_case(
-            raw_input=normalized_message,
-            project_profile=active_project_profile,
-            store=self._case_store,
-        )
-        activate_workspace_case(workspace, case_state.case_id)
-        save_workspace(workspace, store=self._workspace_store)
-        response = AgentShellResponse(
-            action="create-case",
-            message="已按新的输入创建分析案例。",
-            workspace=workspace,
-            runtime_session=runtime_session,
-            case_state=case_state,
-            rendered_card=render_case_state(case_state),
-        )
-        return self._finalize_response(response)
+        except Exception as exc:
+            complete_runtime_query(
+                runtime_session,
+                terminal_state="failed",
+                action="runtime-error",
+                active_case_id=workspace.active_case_id,
+                resume_from=runtime_session.resume_from,
+            )
+            runtime_session.runtime_metadata["last_error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            save_runtime_session(runtime_session, store=self._runtime_session_store)
+            raise
 
     def _load_active_project_profile(self, workspace: WorkspaceState) -> Optional[ProjectProfile]:
         if not workspace.active_project_profile_id:
@@ -302,6 +439,39 @@ class PMMethodAgentShell:
             except FileNotFoundError:
                 return None
         return None
+
+    def _run_ledger_step(
+        self,
+        runtime_session: RuntimeSession,
+        *,
+        tool_name: str,
+        request_payload: Optional[dict[str, object]],
+        operation: Callable[[], T],
+        result_ref_builder: Callable[[T], str],
+    ) -> T:
+        entry = request_tool_call(
+            runtime_session,
+            tool_name=tool_name,
+            request_payload=request_payload,
+        )
+        try:
+            result = operation()
+        except Exception as exc:
+            fail_tool_call(
+                runtime_session,
+                call_id=str(entry["call_id"]),
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            raise
+        complete_tool_call(
+            runtime_session,
+            call_id=str(entry["call_id"]),
+            result_ref=result_ref_builder(result),
+        )
+        return result
 
     def _finalize_response(self, response: AgentShellResponse) -> AgentShellResponse:
         terminal_state = _resolve_terminal_state(response.action, response.case_state)

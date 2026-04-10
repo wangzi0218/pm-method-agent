@@ -419,6 +419,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 在有模型配置时，用 LLM 增强回复解释、前置收敛和卡片文案
 - 为统一入口补上了最小 `runtime session`，记录 `query_id`、`turn_count`、`resume_from` 和终止语义
 - 为每轮 agent 交互补上了最小事件日志，后续可以继续扩展到执行账本和 sub-agent 生命周期
+- 为统一入口补上了最小 `execution ledger`，记录关键执行单元的 `requested / completed / failed` 状态，并在下一轮开始时自动收口未闭环项
 
 ## 体验建议
 
@@ -474,6 +475,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一套基于工作区的案例查看与切换能力
 - 一层基于 OpenAI-compatible 配置的 LLM 增强理解与文案能力
 - 一层最小可运行的高级 runtime 骨架，包括 `runtime session`、终止语义和事件日志
+- 一层最小可运行的执行账本骨架，用来追踪关键执行步骤并为后续工具闭环打底
 
 ## 后续形态
 
