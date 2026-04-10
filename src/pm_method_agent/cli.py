@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from pm_method_agent.http_service import run_http_server
-from pm_method_agent.command_executor import LocalCommandExecutor
 from pm_method_agent.orchestrator import run_analysis_with_context
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.renderers import (
@@ -17,6 +16,7 @@ from pm_method_agent.renderers import (
     render_case_state,
     render_workspace_overview,
 )
+from pm_method_agent.local_tools import LocalToolRegistry
 from pm_method_agent.rule_loader import load_rule_set
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_policy import load_runtime_policy
@@ -189,6 +189,20 @@ def build_session_parser() -> argparse.ArgumentParser:
         help="要执行的命令参数。建议在子命令后用 -- 开始。",
     )
 
+    tool_parser = subparsers.add_parser("tool", help="通过通用本地工具入口执行一个已注册工具。")
+    tool_parser.add_argument(
+        "--format",
+        default="markdown",
+        choices=["markdown", "json"],
+        help="输出格式。默认 markdown。",
+    )
+    tool_parser.add_argument("--tool-name", required=True, help="工具名称，例如 local-command。")
+    tool_parser.add_argument(
+        "--payload-json",
+        required=True,
+        help="工具请求体，使用 JSON 字符串传入。",
+    )
+
     return parser
 
 
@@ -220,7 +234,7 @@ def _run_session_command(argv: List[str]) -> int:
     store = default_store(args.store_dir)
     workspace_store = default_workspace_store(args.store_dir)
     agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
-    command_executor = LocalCommandExecutor(base_dir=args.store_dir)
+    local_tools = LocalToolRegistry(base_dir=args.store_dir)
 
     try:
         if args.command == "start":
@@ -346,12 +360,15 @@ def _run_session_command(argv: List[str]) -> int:
                 command_args = command_args[1:]
             if not command_args:
                 raise ValueError("Missing command args.")
-            result = command_executor.execute(
-                command_args=command_args,
-                workspace_id=args.workspace_id,
-                cwd=args.cwd,
-                write_paths=list(args.write_path),
-                timeout_seconds=args.timeout_seconds,
+            result = local_tools.execute(
+                tool_name="local-command",
+                payload={
+                    "workspace_id": args.workspace_id,
+                    "cwd": args.cwd,
+                    "write_paths": list(args.write_path),
+                    "timeout_seconds": args.timeout_seconds,
+                    "command_args": command_args,
+                },
             )
             if args.format == "json":
                 print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
@@ -362,6 +379,32 @@ def _run_session_command(argv: List[str]) -> int:
                 if result.reason:
                     print(f"原因：{result.reason}")
                 print(f"退出码：{result.exit_code}")
+                if result.stdout:
+                    print("")
+                    print("## stdout")
+                    print(result.stdout.rstrip())
+                if result.stderr:
+                    print("")
+                    print("## stderr")
+                    print(result.stderr.rstrip())
+            return 0
+        elif args.command == "tool":
+            payload = json.loads(args.payload_json)
+            if not isinstance(payload, dict):
+                raise ValueError("payload-json must be a JSON object.")
+            result = local_tools.execute(tool_name=args.tool_name, payload=payload)
+            if args.format == "json":
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(f"工具：{result.tool_name}")
+                print(f"动作：{result.action}")
+                print(f"终止语义：{result.terminal_state}")
+                if result.reason:
+                    print(f"原因：{result.reason}")
+                if result.output_payload:
+                    print("")
+                    print("## 输出")
+                    print(json.dumps(result.output_payload, ensure_ascii=False, indent=2))
                 if result.stdout:
                     print("")
                     print("## stdout")
@@ -442,7 +485,7 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent", "rules", "command"}
+    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent", "rules", "command", "tool"}
     index = 0
     while index < len(args_list):
         token = args_list[index]

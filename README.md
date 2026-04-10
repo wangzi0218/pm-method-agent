@@ -500,6 +500,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一层最小 hook enforcement，用来把前置判断真正挂进运行时事件和恢复闭环
 - 一层最小本地命令执行壳，用来把 hook、策略和执行账本接到真实执行入口
 - 一层最小本地 tool runtime，用来把公共执行链路与具体工具 handler 分开
+- 至少两个本地工具 handler，当前已包含 `local-command` 和 `local-text-file-write`
 
 ## 后续形态
 

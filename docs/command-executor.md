@@ -51,7 +51,11 @@
 更准确地说：
 
 - `tool runtime` 是底座
-- `local-command` 是当前第一个具体 handler
+- `local-command` 是其中一个具体 handler
+
+当前仓库还已经补上第二个 handler：
+
+- `local-text-file-write`
 
 ## 当前结果语义
 

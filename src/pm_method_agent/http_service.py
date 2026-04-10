@@ -7,7 +7,8 @@ from typing import Callable, Dict, Optional
 from urllib.parse import urlparse
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
-from pm_method_agent.command_executor import LOCAL_COMMAND_TOOL_NAME, LocalCommandExecutor
+from pm_method_agent.command_executor import LOCAL_COMMAND_TOOL_NAME
+from pm_method_agent.local_tools import LocalToolRegistry
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -50,7 +51,7 @@ class PMMethodHTTPService:
         self._workspace_store = default_workspace_store(store_dir)
         self._runtime_policy = load_runtime_policy(base_dir=store_dir)
         self._agent_shell = PMMethodAgentShell(base_dir=store_dir)
-        self._command_executor = LocalCommandExecutor(base_dir=store_dir)
+        self._local_tools = LocalToolRegistry(base_dir=store_dir)
 
     def handle(self, method: str, path: str, body: Optional[bytes] = None) -> HTTPResponse:
         try:
@@ -64,17 +65,7 @@ class PMMethodHTTPService:
                 return HTTPResponse(200, {"runtime_policy": runtime_policy_to_dict(self._runtime_policy)})
 
             if method == "GET" and normalized_path == "/runtime/tools":
-                return HTTPResponse(
-                    200,
-                    {
-                        "tools": [
-                            {
-                                "tool_name": LOCAL_COMMAND_TOOL_NAME,
-                                "kind": "command",
-                            }
-                        ]
-                    },
-                )
+                return HTTPResponse(200, {"tools": self._local_tools.list_tools()})
 
             if method == "POST" and normalized_path == "/runtime/policy/evaluate":
                 payload = _parse_json_body(body)
@@ -94,27 +85,16 @@ class PMMethodHTTPService:
 
             if method == "POST" and normalized_path == "/runtime/commands/execute":
                 payload = _parse_json_body(body)
-                result = self._command_executor.execute(
-                    command_args=_ensure_string_list(payload.get("command_args")),
-                    workspace_id=_optional_string(payload.get("workspace_id")) or "default",
-                    cwd=_optional_string(payload.get("cwd")),
-                    write_paths=_ensure_string_list(payload.get("write_paths")),
-                    timeout_seconds=_ensure_float(payload.get("timeout_seconds"), default=15.0),
+                result = self._local_tools.execute(
+                    tool_name=LOCAL_COMMAND_TOOL_NAME,
+                    payload=payload,
                 )
                 return HTTPResponse(200, {"result": result.to_dict()})
 
             if method == "POST" and normalized_path == "/runtime/tools/execute":
                 payload = _parse_json_body(body)
                 tool_name = str(payload.get("tool_name", "")).strip()
-                if tool_name != LOCAL_COMMAND_TOOL_NAME:
-                    raise HTTPServiceError(400, f"Unsupported local tool: {tool_name or 'unknown'}")
-                result = self._command_executor.execute(
-                    command_args=_ensure_string_list(payload.get("command_args")),
-                    workspace_id=_optional_string(payload.get("workspace_id")) or "default",
-                    cwd=_optional_string(payload.get("cwd")),
-                    write_paths=_ensure_string_list(payload.get("write_paths")),
-                    timeout_seconds=_ensure_float(payload.get("timeout_seconds"), default=15.0),
-                )
+                result = self._local_tools.execute(tool_name=tool_name, payload=payload)
                 return HTTPResponse(
                     200,
                     {
@@ -332,10 +312,6 @@ def _build_case_response_payload(case_state) -> JsonDict:
     }
 
 
-def _ensure_float(value: object, *, default: float) -> float:
-    if value is None or value == "":
-        return default
-    return float(value)
 
 
 def _build_agent_response_payload(response) -> JsonDict:

@@ -61,6 +61,7 @@ from pm_method_agent.runtime_policy import (
     load_runtime_policy,
 )
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
+from pm_method_agent.text_file_tool import LocalTextFileWriter
 from pm_method_agent.tool_runtime import (
     LocalToolExecutionOutcome,
     LocalToolHandler,
@@ -1553,6 +1554,145 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(exec_response.payload["tool_name"], "local-command")
         self.assertEqual(exec_response.payload["result"]["tool_name"], "local-command")
         self.assertIn("via-tool-http", exec_response.payload["result"]["stdout"])
+
+    def test_local_text_file_writer_can_write_allowed_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allowed_write_roots": ["notes"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            writer = LocalTextFileWriter(base_dir=tmpdir)
+            result = writer.write_text(
+                path="notes/demo.txt",
+                content="hello tool runtime",
+                workspace_id="file-demo",
+            )
+            written = (root / "notes" / "demo.txt").read_text(encoding="utf-8")
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.action, "file-written")
+        self.assertEqual(written, "hello tool runtime")
+        self.assertEqual(result.output_payload["characters_written"], 18)
+
+    def test_local_text_file_writer_can_be_blocked_by_write_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_write_paths": ["notes/secret.txt"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            writer = LocalTextFileWriter(base_dir=tmpdir)
+            result = writer.write_text(
+                path="notes/secret.txt",
+                content="blocked",
+                workspace_id="file-demo",
+            )
+
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.action, "file-write-blocked")
+        self.assertEqual(result.terminal_state, "blocked")
+        self.assertFalse((root / "notes" / "secret.txt").exists())
+
+    def test_http_service_can_execute_local_text_file_write_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allowed_write_roots": ["notes"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            list_response = service.handle(method="GET", path="/runtime/tools")
+            write_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "local-text-file-write",
+                        "workspace_id": "file-http",
+                        "path": "notes/http.txt",
+                        "content": "from http",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            written = (root / "notes" / "http.txt").read_text(encoding="utf-8")
+
+        tool_names = [item["tool_name"] for item in list_response.payload["tools"]]
+        self.assertIn("local-text-file-write", tool_names)
+        self.assertEqual(write_response.status_code, 200)
+        self.assertEqual(write_response.payload["tool_name"], "local-text-file-write")
+        self.assertEqual(write_response.payload["result"]["action"], "file-written")
+        self.assertEqual(written, "from http")
+
+    def test_cli_tool_command_can_execute_local_text_file_write_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allowed_write_roots": ["notes"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "local-text-file-write",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "file-cli",
+                                "path": "notes/cli.txt",
+                                "content": "from cli",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+            payload = json.loads(stdout.getvalue())
+            written = (root / "notes" / "cli.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "local-text-file-write")
+        self.assertEqual(payload["action"], "file-written")
+        self.assertEqual(written, "from cli")
 
     def test_local_tool_runtime_can_execute_generic_tool_handler(self) -> None:
         with TemporaryDirectory() as tmpdir:

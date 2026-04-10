@@ -261,12 +261,17 @@
 
 - 查看当前已经暴露的本地工具
 
+当前第一版已暴露：
+
+- `local-command`
+- `local-text-file-write`
+
 ### `POST /runtime/tools/execute`
 
 用途：
 
 - 通过通用工具入口执行一个本地工具
-- 当前第一版先暴露 `local-command`
+- 当前第一版已支持 `local-command` 和 `local-text-file-write`
 
 ## 当前推荐接入方式
 

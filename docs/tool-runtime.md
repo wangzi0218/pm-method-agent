@@ -45,19 +45,19 @@
 
 ## 当前第一类 handler
 
-当前第一个落地的 handler 是：
+当前已经落地的 handler 包括：
 
 - `local-command`
+- `local-text-file-write`
 
-也就是当前的本地命令执行器。
-
-这意味着当前已经站住了“底座 + 一个具体工具”的结构，而不是只有一个特殊命令壳。
+这意味着当前已经站住了“底座 + 多个具体工具”的结构，而不是只有一个特殊命令壳。
 
 ## 当前入口
 
 当前可以通过这些入口触发：
 
 - `pm_method_agent.cli command`
+- `pm_method_agent.cli tool`
 - `POST /runtime/commands/execute`
 - `GET /runtime/tools`
 - `POST /runtime/tools/execute`
