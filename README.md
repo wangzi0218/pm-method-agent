@@ -459,6 +459,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)：默认输出风格与审查卡结构
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：里程碑、实现阶段和后续发展计划
 - [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)：本地 HTTP 服务层、接口定义和与 MCP 的关系
+- [docs/hook-enforcement.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/hook-enforcement.md)：最小 hook 生命周期、运行时挂接方式和后续扩展方向
 - [docs/interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)：用户触发、持续互动、记忆层与主动建议设计
 - [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：LLM 适配层、解释器注入点和未来接入方式
 - [docs/operation-enforcement.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/operation-enforcement.md)：统一的动作、命令和写入路径前置校验层
@@ -494,6 +495,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一层最小可运行的 runtime policy，用来把部分规则变成真正的运行时硬约束，并开始覆盖内部动作级执行关口
 - 一层更通用的命令与写入范围策略骨架，为后续 hook enforcement 和外部执行器接入做准备
 - 一层统一的 operation enforcement，用来把动作、命令和写入路径校验收敛成同一套前置判断结果
+- 一层最小 hook enforcement，用来把前置判断真正挂进运行时事件和恢复闭环
 
 ## 后续形态
 

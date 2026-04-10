@@ -14,6 +14,7 @@ os.environ.setdefault("PMMA_DISABLE_ENV_AUTOLOAD", "1")
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.case_copywriter import LLMCaseCopywriter, apply_case_copywriting, build_case_copywriter_from_env
 from pm_method_agent.cli import main
+from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
 from pm_method_agent.http_service import PMMethodHTTPService
 from pm_method_agent.llm_adapter import (
     LLMMessage,
@@ -34,10 +35,12 @@ from pm_method_agent.project_profile_service import (
 )
 from pm_method_agent.runtime_session_service import (
     cancel_runtime_query,
+    close_incomplete_hooks,
     default_runtime_session_store,
     fail_runtime_query,
     get_or_create_runtime_session,
     interrupt_runtime_query,
+    request_hook_call,
     request_tool_call,
     save_runtime_session,
     start_runtime_query,
@@ -1125,6 +1128,57 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(blocked.violation_kind, "approval-required")
         self.assertEqual(blocked.checks[0].check_type, "action")
 
+    def test_hook_enforcement_can_run_pre_operation_hook_and_return_decision(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            runtime_session = get_or_create_runtime_session(
+                "demo-hooks",
+                store=default_runtime_session_store(tmpdir),
+            )
+            start_runtime_query(runtime_session, message="测试 hook")
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+            with self.assertRaises(HookExecutionBlockedError):
+                run_pre_operation_hooks(
+                    runtime_session,
+                    policy,
+                    action_name="project-profile-service.update-or-create",
+                )
+
+        self.assertEqual(runtime_session.pending_hooks, [])
+        event_types = [item["event_type"] for item in runtime_session.event_log]
+        self.assertIn("hook-call-requested", event_types)
+        self.assertIn("hook-call-completed", event_types)
+
+    def test_runtime_session_can_close_pending_hooks_on_next_query(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_store = default_runtime_session_store(tmpdir)
+            runtime_session = get_or_create_runtime_session("demo-hook-close", store=runtime_store)
+            runtime_session.current_query_id = "query-0003"
+            pending_entry = request_hook_call(
+                runtime_session,
+                hook_name="demo-hook",
+                hook_stage="pre-operation",
+                request_payload={"action_name": "demo.action"},
+            )
+            close_incomplete_hooks(runtime_session, reason="next-query-started")
+
+        self.assertEqual(runtime_session.pending_hooks, [])
+        self.assertEqual(pending_entry["hook_name"], "demo-hook")
+        self.assertIn("hook-call-failed", [item["event_type"] for item in runtime_session.event_log])
+
     def test_cli_rules_command_can_render_effective_rule_layers(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1250,12 +1304,12 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("session-service.create-case", response.message)
         self.assertIn("当前动作", response.rendered_card)
         self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "blocked")
-        self.assertGreaterEqual(len(response.runtime_session.execution_ledger), 2)
-        self.assertEqual(response.runtime_session.execution_ledger[1]["status"], "failed")
-        self.assertEqual(
-            response.runtime_session.execution_ledger[1]["error"]["action_name"],
-            "session-service.create-case",
-        )
+        self.assertEqual(len(response.runtime_session.pending_hooks), 0)
+        self.assertEqual(len(response.runtime_session.execution_ledger), 1)
+        event_types = [item["event_type"] for item in response.runtime_session.event_log]
+        self.assertIn("hook-call-requested", event_types)
+        self.assertIn("hook-call-completed", event_types)
+        self.assertEqual(event_types.count("tool-call-requested"), 1)
 
     def test_agent_shell_can_require_approval_for_internal_action_by_runtime_policy(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1282,6 +1336,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("需要先人工确认", response.message)
         self.assertIn("project-profile-service.update-or-create", response.rendered_card)
         self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "blocked")
+        self.assertEqual(len(response.runtime_session.pending_hooks), 0)
 
     def test_llm_case_copywriter_can_soften_stiff_phrases(self) -> None:
         adapter = StubLLMAdapter(

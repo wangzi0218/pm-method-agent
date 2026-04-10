@@ -68,6 +68,8 @@
 - `agent shell` 的内部动作执行前
 - HTTP 的运行时策略校验接口
 
+而真正的运行时挂接方式，当前已经开始通过 `hook enforcement` 承接。
+
 对应接口：
 
 - `GET /runtime/policy`

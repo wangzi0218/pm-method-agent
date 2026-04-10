@@ -85,6 +85,7 @@ def start_runtime_query(
     active_case_id: str = "",
     message: str,
 ) -> RuntimeSession:
+    close_incomplete_hooks(runtime_session, reason="next-query-started")
     close_incomplete_tool_calls(runtime_session, reason="next-query-started")
     runtime_session.turn_count += 1
     runtime_session.current_query_id = f"query-{runtime_session.turn_count:04d}"
@@ -267,6 +268,114 @@ def request_tool_call(
     return entry
 
 
+def request_hook_call(
+    runtime_session: RuntimeSession,
+    *,
+    hook_name: str,
+    hook_stage: str,
+    request_payload: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
+    hook_call_id = f"hook-{len(runtime_session.event_log) + len(runtime_session.pending_hooks) + 1:04d}"
+    entry = {
+        "hook_call_id": hook_call_id,
+        "query_id": runtime_session.current_query_id,
+        "hook_name": hook_name,
+        "hook_stage": hook_stage,
+        "request_payload": request_payload or {},
+        "status": "requested",
+        "result_payload": {},
+        "error": {},
+    }
+    runtime_session.pending_hooks.append(dict(entry))
+    append_runtime_event(
+        runtime_session,
+        "hook-call-requested",
+        {
+            "hook_call_id": hook_call_id,
+            "query_id": runtime_session.current_query_id,
+            "hook_name": hook_name,
+            "hook_stage": hook_stage,
+        },
+    )
+    return entry
+
+
+def complete_hook_call(
+    runtime_session: RuntimeSession,
+    *,
+    hook_call_id: str,
+    result_payload: Optional[Dict[str, object]] = None,
+) -> RuntimeSession:
+    _update_pending_hook_entry(
+        runtime_session,
+        hook_call_id=hook_call_id,
+        status="completed",
+        result_payload=result_payload or {},
+        error={},
+    )
+    runtime_session.pending_hooks = [
+        item for item in runtime_session.pending_hooks if str(item.get("hook_call_id")) != hook_call_id
+    ]
+    append_runtime_event(
+        runtime_session,
+        "hook-call-completed",
+        {
+            "hook_call_id": hook_call_id,
+            "result_payload": result_payload or {},
+        },
+    )
+    return runtime_session
+
+
+def fail_hook_call(
+    runtime_session: RuntimeSession,
+    *,
+    hook_call_id: str,
+    error: Optional[Dict[str, object]] = None,
+) -> RuntimeSession:
+    rendered_error = error or {}
+    _update_pending_hook_entry(
+        runtime_session,
+        hook_call_id=hook_call_id,
+        status="failed",
+        result_payload={},
+        error=rendered_error,
+    )
+    runtime_session.pending_hooks = [
+        item for item in runtime_session.pending_hooks if str(item.get("hook_call_id")) != hook_call_id
+    ]
+    append_runtime_event(
+        runtime_session,
+        "hook-call-failed",
+        {
+            "hook_call_id": hook_call_id,
+            "error": rendered_error,
+        },
+    )
+    return runtime_session
+
+
+def close_incomplete_hooks(
+    runtime_session: RuntimeSession,
+    *,
+    reason: str,
+) -> RuntimeSession:
+    pending_items = list(runtime_session.pending_hooks)
+    for item in pending_items:
+        hook_call_id = str(item.get("hook_call_id", "")).strip()
+        if not hook_call_id:
+            continue
+        fail_hook_call(
+            runtime_session,
+            hook_call_id=hook_call_id,
+            error={
+                "reason": reason,
+                "message": "hook call was left pending and was closed by runtime recovery",
+            },
+        )
+    return runtime_session
+
+
 def complete_tool_call(
     runtime_session: RuntimeSession,
     *,
@@ -356,6 +465,23 @@ def _update_ledger_entry(
             continue
         item["status"] = status
         item["result_ref"] = result_ref
+        item["error"] = error
+        return
+
+
+def _update_pending_hook_entry(
+    runtime_session: RuntimeSession,
+    *,
+    hook_call_id: str,
+    status: str,
+    result_payload: Dict[str, object],
+    error: Dict[str, object],
+) -> None:
+    for item in runtime_session.pending_hooks:
+        if str(item.get("hook_call_id")) != hook_call_id:
+            continue
+        item["status"] = status
+        item["result_payload"] = result_payload
         item["error"] = error
         return
 

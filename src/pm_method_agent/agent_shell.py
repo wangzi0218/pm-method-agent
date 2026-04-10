@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import re
 from typing import Callable, Optional, TypeVar
 
+from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
 from pm_method_agent.models import CaseState, ProjectProfile, RuntimeSession, WorkspaceState
-from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
     default_project_profile_store,
@@ -367,7 +367,7 @@ class PMMethodAgentShell:
                 ),
             )
             return self._finalize_response(response)
-        except RuntimePolicyBlockedError as exc:
+        except (RuntimePolicyBlockedError, HookExecutionBlockedError) as exc:
             response = AgentShellResponse(
                 action="policy-blocked",
                 message=exc.violation.reason,
@@ -507,28 +507,16 @@ class PMMethodAgentShell:
         operation: Callable[[], T],
         result_ref_builder: Callable[[T], str],
     ) -> T:
+        run_pre_operation_hooks(
+            runtime_session,
+            self._runtime_policy,
+            action_name=action_name,
+        )
         entry = request_tool_call(
             runtime_session,
             tool_name=tool_name,
             request_payload=request_payload,
         )
-        decision = evaluate_operation_enforcement(
-            self._runtime_policy,
-            action_name=action_name,
-        )
-        if not decision.allowed and decision.violation is not None:
-            fail_tool_call(
-                runtime_session,
-                call_id=str(entry["call_id"]),
-                error={
-                    "type": "RuntimePolicyBlocked",
-                    "reason": decision.reason,
-                    "action_name": action_name,
-                    "violation_kind": decision.violation_kind,
-                    "enforcement": decision.to_dict(),
-                },
-            )
-            raise RuntimePolicyBlockedError(decision.violation)
         try:
             result = operation()
         except Exception as exc:
