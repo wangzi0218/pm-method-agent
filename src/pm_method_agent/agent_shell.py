@@ -15,9 +15,11 @@ from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.renderers import render_workspace_overview
 from pm_method_agent.reply_interpreter import ReplyAnalysis, build_reply_interpreter_from_env
 from pm_method_agent.runtime_config import ensure_local_env_loaded
+from pm_method_agent.runtime_policy import check_runtime_policy, load_runtime_policy
 from pm_method_agent.runtime_session_service import (
     complete_runtime_query,
     complete_tool_call,
+    fail_runtime_query,
     default_runtime_session_store,
     fail_tool_call,
     get_or_create_runtime_session,
@@ -56,6 +58,7 @@ class PMMethodAgentShell:
         self._project_profile_store = default_project_profile_store(base_dir)
         self._workspace_store = default_workspace_store(base_dir)
         self._runtime_session_store = default_runtime_session_store(base_dir)
+        self._runtime_policy = load_runtime_policy(base_dir=base_dir)
         self._reply_interpreter = build_reply_interpreter_from_env()
 
     def handle_message(
@@ -95,6 +98,16 @@ class PMMethodAgentShell:
                 intent=intent,
                 active_case_id=workspace.active_case_id,
             )
+            violation = check_runtime_policy(self._runtime_policy, intent=intent)
+            if violation is not None:
+                response = AgentShellResponse(
+                    action="policy-blocked",
+                    message=violation.reason,
+                    workspace=workspace,
+                    runtime_session=runtime_session,
+                    rendered_card=_render_runtime_policy_block(intent=intent, reason=violation.reason),
+                )
+                return self._finalize_response(response, forced_terminal_state=violation.terminal_state)
 
             if intent == "workspace-overview":
                 recent_cases = self._run_ledger_step(
@@ -326,17 +339,19 @@ class PMMethodAgentShell:
             )
             return self._finalize_response(response)
         except Exception as exc:
-            complete_runtime_query(
+            fail_runtime_query(
                 runtime_session,
-                terminal_state="failed",
                 action="runtime-error",
                 active_case_id=workspace.active_case_id,
                 resume_from=runtime_session.resume_from,
+                error={
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
             )
-            runtime_session.runtime_metadata["last_error"] = {
-                "type": type(exc).__name__,
-                "message": str(exc),
-            }
+            runtime_session.runtime_metadata["last_error"] = dict(
+                runtime_session.last_terminal_event.get("error", {})
+            )
             save_runtime_session(runtime_session, store=self._runtime_session_store)
             raise
 
@@ -473,8 +488,12 @@ class PMMethodAgentShell:
         )
         return result
 
-    def _finalize_response(self, response: AgentShellResponse) -> AgentShellResponse:
-        terminal_state = _resolve_terminal_state(response.action, response.case_state)
+    def _finalize_response(
+        self,
+        response: AgentShellResponse,
+        forced_terminal_state: str = "",
+    ) -> AgentShellResponse:
+        terminal_state = forced_terminal_state or _resolve_terminal_state(response.action, response.case_state)
         resume_from = _resolve_runtime_resume_from(response.action, response.case_state)
         active_case_id = response.case_state.case_id if response.case_state is not None else response.workspace.active_case_id
         output_kind = response.case_state.output_kind if response.case_state is not None else ""
@@ -734,3 +753,20 @@ def _resolve_runtime_resume_from(action: str, case_state: Optional[CaseState]) -
     if action in {"show-guidance", "show-history", "switch-case"}:
         return case_state.stage
     return last_resume_stage or case_state.stage
+
+
+def _render_runtime_policy_block(*, intent: str, reason: str) -> str:
+    return "\n".join(
+        [
+            "# PM Method Agent 规则阻塞卡",
+            "",
+            "## 当前判断",
+            "这一步先不继续执行。",
+            "",
+            "## 原因",
+            reason,
+            "",
+            "## 当前意图",
+            f"- `{intent}`",
+        ]
+    )

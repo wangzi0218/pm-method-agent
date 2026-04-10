@@ -13,6 +13,7 @@ from pm_method_agent.llm_adapter import (
     load_openai_compatible_config_from_env,
 )
 from pm_method_agent.models import CaseState
+from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.role_extraction import (
     extract_role_relationships,
     extract_roles_from_text,
@@ -217,15 +218,26 @@ def _build_interpretation_request(reply_text: str, previous_case: Optional[CaseS
         }
         for gate in decision_gates
     ]
-    instruction = (
-        "你是 PM Method Agent 的回复解释器。"
-        "请把用户回复整理为 JSON，字段包括："
-        "context_updates、role_relationships、categories、inferred_gate_choice、parser_confidence。"
-        "context_updates 仅允许包含 business_model、primary_platform、target_user_roles。"
-        "role_relationships 仅允许包含 proposers、users、outcome_owners，且值为字符串数组。"
-        "categories 仅允许包含 context、evidence、decision、constraint、other。"
-        "inferred_gate_choice 仅允许为 defer、try-non-product-first、productize-now 或 null。"
-        "不要输出 JSON 以外的内容。"
+    prompt = build_prompt_composition(
+        identity="你是 PM Method Agent 的回复解释器，负责把用户当前回复收敛成可继续执行的结构化结果。",
+        agent_role="你只负责解释这一轮回复，不负责改动阶段推进、决策关口或最终卡片结构。",
+        behavior_rules=[
+            "优先忠实提取用户明确表达的内容，不要主动脑补隐藏前提。",
+            "当角色关系不明确时，宁可留空，也不要强行补全。",
+            "涉及提出者、使用者、结果责任人时，要区分角色职责，不要混在一起。",
+        ],
+        tool_constraints=[
+            "你不能越权改变 stage、workflow_state、output_kind 或 decision_gates。",
+            "你只输出结构化解释结果，不承担 runtime 控制职责。",
+        ],
+        output_discipline=[
+            "必须输出 JSON，不要输出 JSON 以外的内容。",
+            "context_updates 仅允许包含 business_model、primary_platform、target_user_roles。",
+            "role_relationships 仅允许包含 proposers、users、outcome_owners，且值为字符串数组。",
+            "categories 仅允许包含 context、evidence、decision、constraint、other。",
+            "inferred_gate_choice 仅允许为 defer、try-non-product-first、productize-now 或 null。",
+        ],
+        task_instruction="请把当前回复整理为可供会话服务层继续推进的结构化结果。",
     )
     user_payload = {
         "current_context_profile": context_profile,
@@ -235,11 +247,14 @@ def _build_interpretation_request(reply_text: str, previous_case: Optional[CaseS
     }
     return LLMRequest(
         messages=[
-            LLMMessage(role="system", content=instruction),
+            LLMMessage(role="system", content=prompt.render()),
             LLMMessage(role="user", content=json.dumps(user_payload, ensure_ascii=False)),
         ],
         response_format="json",
-        metadata={"task": "interpret-session-reply"},
+        metadata={
+            "task": "interpret-session-reply",
+            "prompt_layers": prompt.metadata(),
+        },
     )
 
 

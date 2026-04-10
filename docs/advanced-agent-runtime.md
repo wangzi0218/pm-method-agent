@@ -39,8 +39,7 @@
 - 显式 `query loop`
 - 跨轮预算与压缩管理
 - 模型输出事件流
-- 工具执行账本
-- 更完整的终止语义
+- 更完整的工具执行账本
 - prompt 分层治理
 - sub-agent 生命周期编排
 
@@ -120,11 +119,15 @@ receive input
 
 当前系统已经区分了一部分：
 
-- `done`
+- `completed`
 - `blocked`
 - `deferred`
+- `continued`
+- `failed`
+- `interrupted`
+- `cancelled`
 
-但对更完整的 agent runtime 来说，这还不够。
+当前这些语义已经在 runtime session 里有了最小实现，但还没有全部映射到更完整的外部交互层和恢复策略。
 
 建议正式区分这些终止语义：
 
@@ -195,6 +198,14 @@ receive input
 - 每个 tool call 都要有唯一 id
 - 每个 tool call 都要有生命周期状态
 - 中断恢复时，系统先检查账本是否闭环
+
+当前仓库已经有了最小骨架：
+
+- `requested`
+- `completed`
+- `failed`
+
+并且会在下一轮开始时，先自动收口上轮遗留的未闭环项。
 
 建议最小字段：
 

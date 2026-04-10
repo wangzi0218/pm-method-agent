@@ -11,6 +11,7 @@ from pm_method_agent.llm_adapter import (
     load_openai_compatible_config_from_env,
 )
 from pm_method_agent.models import CaseState, PreFramingDirection, PreFramingResult
+from pm_method_agent.prompting import build_prompt_composition
 
 
 AMBIGUOUS_HINTS = [
@@ -214,16 +215,25 @@ def _build_pre_framing_request(
     case_state: CaseState,
     fallback_result: PreFramingResult,
 ) -> LLMRequest:
-    instruction = (
-        "你是 PM Method Agent 的前置收敛增强器。"
-        "请基于用户输入和已有启发式结果，输出 JSON。"
-        "字段包括：reason、candidate_directions、priority_questions、recommended_direction_id。"
-        "candidate_directions 最多 3 项，每项字段包括 direction_id、label、summary、assumptions、confidence。"
-        "priority_questions 最多 3 项。"
-        "不要改动主线阶段，只增强候选方向和追问。"
-        "语气要自然、克制、像协作中的产品同事，不要写成汇报材料。"
-        "summary 和 reason 尽量让人一眼看懂，不要堆“当前、需要补充、初步成型、建议先”这类模板词。"
-        "不要输出 JSON 以外的内容。"
+    prompt = build_prompt_composition(
+        identity="你是 PM Method Agent 的前置收敛增强器，负责在正式分析前收窄理解方向。",
+        agent_role="你只增强候选方向和优先追问，不改变主线阶段，也不替代主协调器做最终判断。",
+        behavior_rules=[
+            "只在现有输入和启发式结果基础上增强，不要凭空扩写新的业务事实。",
+            "候选方向要彼此可区分，不要换种说法重复同一件事。",
+            "优先帮助用户更快收窄问题，不要写成长篇分析。",
+        ],
+        tool_constraints=[
+            "你不能改动阶段推进、决策关口或 case 的主线状态。",
+        ],
+        output_discipline=[
+            "必须输出 JSON，不要输出 JSON 以外的内容。",
+            "字段包括 reason、candidate_directions、priority_questions、recommended_direction_id。",
+            "candidate_directions 最多 3 项，每项字段包括 direction_id、label、summary、assumptions、confidence。",
+            "priority_questions 最多 3 项。",
+            "语气要自然、克制、像协作中的产品同事，不要写成汇报材料。",
+        ],
+        task_instruction="请基于用户输入和已有启发式结果，增强前置收敛方向和追问。",
     )
     payload = {
         "raw_input": case_state.raw_input,
@@ -232,11 +242,14 @@ def _build_pre_framing_request(
     }
     return LLMRequest(
         messages=[
-            LLMMessage(role="system", content=instruction),
+            LLMMessage(role="system", content=prompt.render()),
             LLMMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
         ],
         response_format="json",
-        metadata={"task": "pre-framing-enhancement"},
+        metadata={
+            "task": "pre-framing-enhancement",
+            "prompt_layers": prompt.metadata(),
+        },
     )
 
 

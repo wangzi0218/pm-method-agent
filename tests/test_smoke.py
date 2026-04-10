@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -11,6 +13,7 @@ os.environ.setdefault("PMMA_DISABLE_ENV_AUTOLOAD", "1")
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.case_copywriter import LLMCaseCopywriter, apply_case_copywriting, build_case_copywriter_from_env
+from pm_method_agent.cli import main
 from pm_method_agent.http_service import PMMethodHTTPService
 from pm_method_agent.llm_adapter import (
     LLMMessage,
@@ -22,16 +25,21 @@ from pm_method_agent.llm_adapter import (
 from pm_method_agent.models import CaseState
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis, run_analysis_with_context
 from pm_method_agent.pre_framing import LLMPreFramingGenerator, build_pre_framing_result
+from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.project_profile_service import (
     create_project_profile,
     default_project_profile_store,
     get_project_profile,
 )
 from pm_method_agent.runtime_session_service import (
+    cancel_runtime_query,
     default_runtime_session_store,
+    fail_runtime_query,
     get_or_create_runtime_session,
+    interrupt_runtime_query,
     request_tool_call,
     save_runtime_session,
+    start_runtime_query,
 )
 from pm_method_agent.reply_interpreter import (
     HeuristicReplyInterpreter,
@@ -41,6 +49,7 @@ from pm_method_agent.reply_interpreter import (
 )
 from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
+from pm_method_agent.runtime_policy import load_runtime_policy
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
@@ -69,6 +78,12 @@ class StubTransport:
             }
         )
         return self.response_text
+
+
+class RaisingReplyInterpreter:
+    def analyze_reply(self, reply_text: str, previous_case=None):  # type: ignore[no-untyped-def]
+        del reply_text, previous_case
+        raise RuntimeError("boom")
 
 
 class OrchestratorSmokeTest(unittest.TestCase):
@@ -110,6 +125,24 @@ class OrchestratorSmokeTest(unittest.TestCase):
         analysis = LLMReplyInterpreter(adapter=adapter).analyze_reply("这是前台提的。")
 
         self.assertEqual(analysis.role_relationships["proposers"], ["前台"])
+
+    def test_llm_reply_interpreter_uses_layered_prompt_sections(self) -> None:
+        adapter = StubLLMAdapter(
+            content='{"categories":["context"],"parser_confidence":"strong"}'
+        )
+        interpreter = LLMReplyInterpreter(adapter=adapter)
+
+        interpreter.analyze_reply("这是一个 ToB 的 HIS 产品，前台在网页端操作提醒。")
+
+        request = adapter.requests[0]
+        system_prompt = request.messages[0].content
+        self.assertIn("[身份描述]", system_prompt)
+        self.assertIn("[角色职责]", system_prompt)
+        self.assertIn("[行为规则]", system_prompt)
+        self.assertIn("[工具约束]", system_prompt)
+        self.assertIn("[输出纪律]", system_prompt)
+        self.assertIn("[任务目标]", system_prompt)
+        self.assertIn("prompt_layers", request.metadata)
 
     def test_heuristic_reply_interpreter_can_extract_generic_roles_from_sentence(self) -> None:
         interpreter = HeuristicReplyInterpreter()
@@ -804,6 +837,13 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(len(result.candidate_directions), 2)
         self.assertIn("提醒链路本身不稳定", [item.label for item in result.candidate_directions])
         self.assertEqual(len(adapter.requests), 1)
+        system_prompt = adapter.requests[0].messages[0].content
+        self.assertIn("[身份描述]", system_prompt)
+        self.assertIn("[行为规则]", system_prompt)
+        self.assertIn("[工具约束]", system_prompt)
+        self.assertIn("[输出纪律]", system_prompt)
+        self.assertIn("[任务目标]", system_prompt)
+        self.assertIn("prompt_layers", adapter.requests[0].metadata)
 
     def test_llm_case_copywriter_can_only_enhance_copy_slots(self) -> None:
         adapter = StubLLMAdapter(
@@ -833,6 +873,201 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(enhanced_case.blocking_reason, "这一步还差一个明确选择，系统才能继续往下推进。")
         self.assertEqual(enhanced_case.next_actions, ["先明确你的倾向。", "顺手补一句原因。"])
         self.assertEqual(enhanced_case.metadata["copywriter"], "llm")
+        system_prompt = adapter.requests[0].messages[0].content
+        self.assertIn("[角色职责]", system_prompt)
+        self.assertIn("[追加要求]", system_prompt)
+        self.assertIn("prompt_layers", adapter.requests[0].metadata)
+
+    def test_layered_prompt_can_accept_project_and_append_overrides_from_env(self) -> None:
+        adapter = StubLLMAdapter(
+            content='{"categories":["context"],"parser_confidence":"strong"}'
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "PMMA_PROMPT_PROJECT": "项目里默认使用中文\n优先保守解释",
+                "PMMA_PROMPT_APPEND": "输出前先检查是否越权",
+            },
+            clear=False,
+        ):
+            interpreter = LLMReplyInterpreter(adapter=adapter)
+            interpreter.analyze_reply("这是一个 ToB 的 HIS 产品，前台在网页端操作提醒。")
+
+        system_prompt = adapter.requests[0].messages[0].content
+        self.assertIn("[项目规则]", system_prompt)
+        self.assertIn("项目里默认使用中文", system_prompt)
+        self.assertIn("优先保守解释", system_prompt)
+        self.assertIn("[追加要求]", system_prompt)
+        self.assertIn("输出前先检查是否越权", system_prompt)
+
+    def test_prompt_composition_can_load_rules_from_repo_directory_and_user_layers(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "AGENTS.md").write_text(
+                "# 团队规则\n- 仓库级规则一\n",
+                encoding="utf-8",
+            )
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "behavior_rules": ["先看清上下文再动手"],
+                        "tool_constraints": ["不要直接改生产配置"],
+                        "output_discipline": ["默认用中文输出"],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            nested = root / "frontend" / "pages"
+            (nested / ".pmma").mkdir(parents=True, exist_ok=True)
+            (nested / ".pmma" / "rules.md").write_text(
+                "[目录规则]\n- 当前目录优先遵循前端约束\n",
+                encoding="utf-8",
+            )
+            user_rules_path = root / "user-rules.md"
+            user_rules_path.write_text(
+                "[项目规则]\n- 用户偏好先给结论再解释\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {"PMMA_USER_RULES_PATH": str(user_rules_path)},
+                clear=False,
+            ):
+                prompt = build_prompt_composition(
+                    identity="测试身份",
+                    task_instruction="测试任务",
+                    base_dir=str(nested),
+                )
+
+        rendered = prompt.render()
+        self.assertIn("仓库级规则一", rendered)
+        self.assertIn("当前目录优先遵循前端约束", rendered)
+        self.assertIn("用户偏好先给结论再解释", rendered)
+        self.assertIn("先看清上下文再动手", rendered)
+        self.assertIn("不要直接改生产配置", rendered)
+        self.assertIn("默认用中文输出", rendered)
+        self.assertGreaterEqual(len(prompt.rule_sources), 3)
+
+    def test_runtime_policy_can_load_from_policy_json(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_intents": ["switch-case"],
+                            "allow_new_cases": False,
+                            "allow_project_profile_updates": False,
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        self.assertEqual(policy.blocked_intents, ["switch-case"])
+        self.assertFalse(policy.allow_new_cases)
+        self.assertFalse(policy.allow_project_profile_updates)
+
+    def test_cli_rules_command_can_render_effective_rule_layers(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "AGENTS.md").write_text(
+                "# 团队规则\n- 默认使用中文\n",
+                encoding="utf-8",
+            )
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "behavior_rules": ["先看清上下文再动手"],
+                        "runtime_policy": {
+                            "blocked_intents": ["switch-case"],
+                            "allow_new_cases": False,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["rules", "--base-dir", tmpdir, "--show-prompt"])
+
+        rendered = stdout.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("规则概览", rendered)
+        self.assertIn("默认使用中文", rendered)
+        self.assertIn("先看清上下文再动手", rendered)
+        self.assertIn("允许新建案例：否", rendered)
+        self.assertIn("`switch-case`", rendered)
+        self.assertIn("[身份描述]", rendered)
+
+    def test_agent_shell_can_block_new_case_by_runtime_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allow_new_cases": False,
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "policy-blocked")
+        self.assertIn("不允许直接新建案例", response.message)
+        self.assertIn("规则阻塞卡", response.rendered_card)
+        self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "blocked")
+
+    def test_agent_shell_can_block_switch_case_by_runtime_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_intents": ["switch-case"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToB 的 PC 后台，前台和管理员在用。我们需要优化权限配置流程，避免前台误操作。",
+                workspace_id="demo",
+            )
+            second_response = shell.handle_message(
+                "还有一个问题，新用户注册后发帖率也偏低，想一起看看。",
+                workspace_id="demo",
+            )
+            response = shell.handle_message(
+                "切到上一个案例。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "create-case")
+        self.assertEqual(response.action, "policy-blocked")
+        self.assertIn("被禁用了", response.message)
+        self.assertEqual(response.runtime_session.last_terminal_event["terminal_state"], "cancelled")
 
     def test_llm_case_copywriter_can_soften_stiff_phrases(self) -> None:
         adapter = StubLLMAdapter(
@@ -1421,6 +1656,45 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(first_entry["status"], "failed")
         self.assertEqual(first_entry["error"]["reason"], "next-query-started")
 
+    def test_runtime_session_can_mark_failed_interrupted_and_cancelled_terminal_states(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_session = get_or_create_runtime_session(
+                "demo-runtime-semantics",
+                store=default_runtime_session_store(tmpdir),
+            )
+            start_runtime_query(runtime_session, message="测试失败路径")
+            fail_runtime_query(
+                runtime_session,
+                action="runtime-error",
+                resume_from="decision-challenge",
+                error={"type": "RuntimeError", "message": "boom"},
+            )
+            self.assertEqual(runtime_session.runtime_status, "failed")
+            self.assertEqual(runtime_session.last_terminal_event["terminal_state"], "failed")
+            self.assertEqual(runtime_session.last_terminal_event["resume_from"], "decision-challenge")
+
+            start_runtime_query(runtime_session, message="测试中断路径")
+            interrupt_runtime_query(
+                runtime_session,
+                action="user-interrupt",
+                resume_from="validation-design",
+                reason={"reason": "manual-stop"},
+            )
+            self.assertEqual(runtime_session.runtime_status, "interrupted")
+            self.assertEqual(runtime_session.last_terminal_event["terminal_state"], "interrupted")
+            self.assertEqual(runtime_session.last_terminal_event["error"]["reason"], "manual-stop")
+
+            start_runtime_query(runtime_session, message="测试取消路径")
+            cancel_runtime_query(
+                runtime_session,
+                action="user-cancel",
+                resume_from="problem-definition",
+                reason={"reason": "cancelled-by-user"},
+            )
+            self.assertEqual(runtime_session.runtime_status, "cancelled")
+            self.assertEqual(runtime_session.last_terminal_event["terminal_state"], "cancelled")
+            self.assertEqual(runtime_session.last_terminal_event["error"]["reason"], "cancelled-by-user")
+
     def test_agent_shell_runtime_session_tracks_terminal_state_and_resume_point(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shell = PMMethodAgentShell(base_dir=tmpdir)
@@ -1438,6 +1712,25 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(second_response.case_state.workflow_state, "deferred")
         self.assertEqual(second_response.runtime_session.last_terminal_event["terminal_state"], "deferred")
         self.assertEqual(second_response.runtime_session.last_terminal_event["resume_from"], "decision-challenge")
+
+    def test_agent_shell_persists_failed_terminal_state_when_runtime_crashes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell._reply_interpreter = RaisingReplyInterpreter()
+            with self.assertRaises(RuntimeError):
+                shell.handle_message(
+                    "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                    workspace_id="demo",
+                )
+            runtime_session = get_or_create_runtime_session(
+                "demo",
+                store=default_runtime_session_store(tmpdir),
+            )
+
+        self.assertEqual(runtime_session.runtime_status, "failed")
+        self.assertEqual(runtime_session.last_terminal_event["terminal_state"], "failed")
+        self.assertEqual(runtime_session.last_terminal_event["action"], "runtime-error")
+        self.assertEqual(runtime_session.last_terminal_event["error"]["type"], "RuntimeError")
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(

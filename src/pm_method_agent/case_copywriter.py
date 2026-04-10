@@ -13,6 +13,7 @@ from pm_method_agent.llm_adapter import (
     load_openai_compatible_config_from_env,
 )
 from pm_method_agent.models import CaseState
+from pm_method_agent.prompting import build_prompt_composition
 
 
 @dataclass
@@ -79,20 +80,30 @@ def apply_case_copywriting(
 
 
 def _build_copy_request(case_state: CaseState) -> LLMRequest:
-    instruction = (
-        "你是 PM Method Agent 的中文卡片文案增强器。"
-        "你只能润色文案，不允许改变阶段、关口、结构和决策含义。"
-        "请输出 JSON，字段仅允许：normalized_summary、blocking_reason、next_actions。"
-        "normalized_summary 和 blocking_reason 各最多一句。"
-        "next_actions 最多 5 条，每条一句。"
-        "语气要求：自然、克制、像协作中的产品同事，不要报告腔，不要网梗，不要客服话术。"
-        "优先写成用户一眼能接住的话，不要故作正式。"
-        "尽量少用这些说法：当前、建议先、需要补充、问题描述已初步成型、继续推进、值得投入产品能力。"
-        "可以参考这类改写："
-        "把“问题描述已初步成型，但还需要补充更多证据和角色关系的细节”改成“方向已经差不多了，但还得把证据和角色关系补上”。"
-        "把“当前先按非产品路径推进，建议先试流程、培训或管理方案”改成“这轮先按非产品路径看，先试流程、培训或管理方案”。"
-        "把“当前还没有识别到你对这个决策关口的明确选择”改成“这轮还没看到你对这个关口的明确选择”。"
-        "不要输出 JSON 以外的内容。"
+    prompt = build_prompt_composition(
+        identity="你是 PM Method Agent 的中文卡片文案增强器，负责把结构化结论润色成更自然的中文。",
+        agent_role="你只能润色文案，不允许改变阶段、关口、结构和决策含义。",
+        behavior_rules=[
+            "优先让用户一眼看懂，不要故作正式。",
+            "语气要自然、克制、像协作中的产品同事，不要报告腔，不要网梗，不要客服话术。",
+            "尽量避免堆叠模板词，尤其少用“当前、建议先、需要补充、继续推进、值得投入产品能力”等说法。",
+        ],
+        tool_constraints=[
+            "你不能改动阶段、关口、结构和决策含义。",
+            "你只能输出可直接替换文案槽位的结果。",
+        ],
+        output_discipline=[
+            "必须输出 JSON，不要输出 JSON 以外的内容。",
+            "字段仅允许：normalized_summary、blocking_reason、next_actions。",
+            "normalized_summary 和 blocking_reason 各最多一句。",
+            "next_actions 最多 5 条，每条一句。",
+        ],
+        custom_append=[
+            "可以参考这类改写：把“问题描述已初步成型，但还需要补充更多证据和角色关系的细节”改成“方向已经差不多了，但还得把证据和角色关系补上”。",
+            "把“当前先按非产品路径推进，建议先试流程、培训或管理方案”改成“这轮先按非产品路径看，先试流程、培训或管理方案”。",
+            "把“当前还没有识别到你对这个决策关口的明确选择”改成“这轮还没看到你对这个关口的明确选择”。",
+        ],
+        task_instruction="请在不改变结构和含义的前提下，润色当前卡片文案。",
     )
     payload = {
         "output_kind": case_state.output_kind,
@@ -122,11 +133,14 @@ def _build_copy_request(case_state: CaseState) -> LLMRequest:
     }
     return LLMRequest(
         messages=[
-            LLMMessage(role="system", content=instruction),
+            LLMMessage(role="system", content=prompt.render()),
             LLMMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
         ],
         response_format="json",
-        metadata={"task": "case-copywriting"},
+        metadata={
+            "task": "case-copywriting",
+            "prompt_layers": prompt.metadata(),
+        },
     )
 
 

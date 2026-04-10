@@ -144,27 +144,73 @@ def complete_runtime_query(
     output_kind: str = "",
     workflow_state: str = "",
 ) -> RuntimeSession:
-    runtime_session.runtime_status = "idle"
-    runtime_session.current_loop_state = "idle"
-    runtime_session.resume_from = resume_from
-    if active_case_id:
-        runtime_session.active_case_id = active_case_id
-    runtime_session.last_terminal_event = {
-        "query_id": runtime_session.current_query_id,
-        "terminal_state": terminal_state,
-        "action": action,
-        "active_case_id": runtime_session.active_case_id,
-        "resume_from": resume_from,
-        "output_kind": output_kind,
-        "workflow_state": workflow_state,
-    }
-    append_runtime_event(
+    return _terminate_runtime_query(
         runtime_session,
-        "terminal-state-emitted",
-        dict(runtime_session.last_terminal_event),
+        terminal_state=terminal_state,
+        action=action,
+        active_case_id=active_case_id,
+        resume_from=resume_from,
+        output_kind=output_kind,
+        workflow_state=workflow_state,
+        runtime_status_after="idle",
     )
-    runtime_session.current_query_id = ""
-    return runtime_session
+
+
+def fail_runtime_query(
+    runtime_session: RuntimeSession,
+    *,
+    action: str,
+    active_case_id: str = "",
+    resume_from: str = "",
+    error: Optional[Dict[str, object]] = None,
+) -> RuntimeSession:
+    return _terminate_runtime_query(
+        runtime_session,
+        terminal_state="failed",
+        action=action,
+        active_case_id=active_case_id,
+        resume_from=resume_from,
+        error=error,
+        runtime_status_after="failed",
+    )
+
+
+def interrupt_runtime_query(
+    runtime_session: RuntimeSession,
+    *,
+    action: str,
+    active_case_id: str = "",
+    resume_from: str = "",
+    reason: Optional[Dict[str, object]] = None,
+) -> RuntimeSession:
+    return _terminate_runtime_query(
+        runtime_session,
+        terminal_state="interrupted",
+        action=action,
+        active_case_id=active_case_id,
+        resume_from=resume_from,
+        error=reason,
+        runtime_status_after="interrupted",
+    )
+
+
+def cancel_runtime_query(
+    runtime_session: RuntimeSession,
+    *,
+    action: str,
+    active_case_id: str = "",
+    resume_from: str = "",
+    reason: Optional[Dict[str, object]] = None,
+) -> RuntimeSession:
+    return _terminate_runtime_query(
+        runtime_session,
+        terminal_state="cancelled",
+        action=action,
+        active_case_id=active_case_id,
+        resume_from=resume_from,
+        error=reason,
+        runtime_status_after="cancelled",
+    )
 
 
 def append_runtime_event(
@@ -312,3 +358,39 @@ def _update_ledger_entry(
         item["result_ref"] = result_ref
         item["error"] = error
         return
+
+
+def _terminate_runtime_query(
+    runtime_session: RuntimeSession,
+    *,
+    terminal_state: str,
+    action: str,
+    active_case_id: str = "",
+    resume_from: str = "",
+    output_kind: str = "",
+    workflow_state: str = "",
+    error: Optional[Dict[str, object]] = None,
+    runtime_status_after: str = "idle",
+) -> RuntimeSession:
+    runtime_session.runtime_status = runtime_status_after
+    runtime_session.current_loop_state = "idle"
+    runtime_session.resume_from = resume_from
+    if active_case_id:
+        runtime_session.active_case_id = active_case_id
+    runtime_session.last_terminal_event = {
+        "query_id": runtime_session.current_query_id,
+        "terminal_state": terminal_state,
+        "action": action,
+        "active_case_id": runtime_session.active_case_id,
+        "resume_from": resume_from,
+        "output_kind": output_kind,
+        "workflow_state": workflow_state,
+        "error": error or {},
+    }
+    append_runtime_event(
+        runtime_session,
+        "terminal-state-emitted",
+        dict(runtime_session.last_terminal_event),
+    )
+    runtime_session.current_query_id = ""
+    return runtime_session

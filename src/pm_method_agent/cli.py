@@ -3,17 +3,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from pm_method_agent.http_service import run_http_server
 from pm_method_agent.orchestrator import run_analysis_with_context
+from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.renderers import (
     build_workspace_cases_payload,
     render_case_history,
+    render_rule_diagnostics,
     render_case_state,
     render_workspace_overview,
 )
+from pm_method_agent.rule_loader import load_rule_set
 from pm_method_agent.runtime_config import ensure_local_env_loaded
+from pm_method_agent.runtime_policy import load_runtime_policy
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 from pm_method_agent.workspace_service import (
@@ -144,6 +149,18 @@ def build_session_parser() -> argparse.ArgumentParser:
     agent_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
     agent_parser.add_argument("message", help="用户当前输入。")
 
+    rules_parser = subparsers.add_parser("rules", help="查看当前目录生效的规则和运行时策略。")
+    rules_parser.add_argument(
+        "--base-dir",
+        default=".",
+        help="规则解析起点目录。默认当前目录。",
+    )
+    rules_parser.add_argument(
+        "--show-prompt",
+        action="store_true",
+        help="同时输出拼装后的 prompt 预览。",
+    )
+
     return parser
 
 
@@ -273,6 +290,27 @@ def _run_session_command(argv: List[str]) -> int:
                     print("")
                     print(response.rendered_card)
             return 0
+        elif args.command == "rules":
+            base_dir = str(Path(args.base_dir).resolve())
+            rule_set = load_rule_set(base_dir=base_dir)
+            runtime_policy = load_runtime_policy(base_dir=base_dir)
+            prompt_composition = build_prompt_composition(
+                identity="你是 PM Method Agent 的受控分析模块。",
+                agent_role="在规则约束下完成问题定义、决策挑战和验证设计的分析协作。",
+                task_instruction="读取当前项目的规则层与运行时策略，并输出可检查的统一视图。",
+                base_dir=base_dir,
+            )
+            print(
+                render_rule_diagnostics(
+                    base_dir=base_dir,
+                    rule_set=rule_set,
+                    prompt_composition=prompt_composition,
+                    runtime_policy=runtime_policy,
+                    output_format=args.format,
+                    show_prompt=args.show_prompt,
+                )
+            )
+            return 0
         else:
             case_state = get_case(case_id=args.case_id, store=store)
     except FileNotFoundError as exc:
@@ -344,7 +382,7 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent"}
+    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent", "rules"}
     index = 0
     while index < len(args_list):
         token = args_list[index]

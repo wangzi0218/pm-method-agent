@@ -4,7 +4,10 @@ import json
 from typing import List
 
 from pm_method_agent.models import CaseState, WorkspaceState
+from pm_method_agent.prompting import PromptComposition
+from pm_method_agent.rule_loader import LoadedRuleSet
 from pm_method_agent.runtime_config import get_llm_runtime_status
+from pm_method_agent.runtime_policy import RuntimePolicy
 
 STAGE_LABELS = {
     "intake": "输入接收",
@@ -172,6 +175,101 @@ def render_workspace_overview(workspace_state: WorkspaceState, recent_cases: lis
     return "\n".join(lines)
 
 
+def build_rule_diagnostics_payload(
+    *,
+    base_dir: str,
+    rule_set: LoadedRuleSet,
+    prompt_composition: PromptComposition,
+    runtime_policy: RuntimePolicy,
+    show_prompt: bool = False,
+) -> dict:
+    return {
+        "base_dir": base_dir,
+        "rule_sources": list(prompt_composition.rule_sources or rule_set.sources),
+        "behavior_rules": list(prompt_composition.behavior_rules),
+        "tool_constraints": list(prompt_composition.tool_constraints),
+        "output_discipline": list(prompt_composition.output_discipline),
+        "project_instructions": list(prompt_composition.project_instructions),
+        "custom_append": list(prompt_composition.custom_append),
+        "runtime_policy": {
+            "blocked_intents": list(runtime_policy.blocked_intents),
+            "blocked_actions": list(runtime_policy.blocked_actions),
+            "allow_new_cases": runtime_policy.allow_new_cases,
+            "allow_case_switching": runtime_policy.allow_case_switching,
+            "allow_project_profile_updates": runtime_policy.allow_project_profile_updates,
+            "sources": list(runtime_policy.sources),
+        },
+        "prompt_layers": prompt_composition.metadata(),
+        "prompt_preview": prompt_composition.render() if show_prompt else "",
+    }
+
+
+def render_rule_diagnostics(
+    *,
+    base_dir: str,
+    rule_set: LoadedRuleSet,
+    prompt_composition: PromptComposition,
+    runtime_policy: RuntimePolicy,
+    output_format: str = "markdown",
+    show_prompt: bool = False,
+) -> str:
+    payload = build_rule_diagnostics_payload(
+        base_dir=base_dir,
+        rule_set=rule_set,
+        prompt_composition=prompt_composition,
+        runtime_policy=runtime_policy,
+        show_prompt=show_prompt,
+    )
+    if output_format == "json":
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+    if output_format != "markdown":
+        raise ValueError("Unsupported format. Use 'markdown' or 'json'.")
+
+    lines: List[str] = []
+    lines.append("# PM Method Agent 规则概览")
+    lines.append("")
+    lines.append(f"- 生效目录：`{payload['base_dir']}`")
+    lines.append(f"- 规则来源：`{len(payload['rule_sources'])}`")
+    lines.append("")
+    lines.append("## 规则来源")
+    if payload["rule_sources"]:
+        for source in payload["rule_sources"]:
+            lines.append(f"- {source}")
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    _append_rule_section(lines, "项目规则", payload["project_instructions"])
+    lines.append("")
+    _append_rule_section(lines, "行为规则", payload["behavior_rules"])
+    lines.append("")
+    _append_rule_section(lines, "工具约束", payload["tool_constraints"])
+    lines.append("")
+    _append_rule_section(lines, "输出纪律", payload["output_discipline"])
+    lines.append("")
+    _append_rule_section(lines, "追加要求", payload["custom_append"])
+    lines.append("")
+    lines.append("## 运行时策略")
+    runtime_policy_payload = payload["runtime_policy"]
+    lines.append(f"- 禁用意图：{_render_inline_list(runtime_policy_payload['blocked_intents'])}")
+    lines.append(f"- 禁用动作：{_render_inline_list(runtime_policy_payload['blocked_actions'])}")
+    lines.append(
+        f"- 允许新建案例：{'是' if runtime_policy_payload['allow_new_cases'] else '否'}"
+    )
+    lines.append(
+        f"- 允许切换案例：{'是' if runtime_policy_payload['allow_case_switching'] else '否'}"
+    )
+    lines.append(
+        f"- 允许更新项目背景：{'是' if runtime_policy_payload['allow_project_profile_updates'] else '否'}"
+    )
+    if show_prompt and payload["prompt_preview"]:
+        lines.append("")
+        lines.append("## Prompt 预览")
+        lines.append("```text")
+        lines.append(payload["prompt_preview"])
+        lines.append("```")
+    return "\n".join(lines)
+
+
 def _render_markdown(case_state: CaseState) -> str:
     if case_state.output_kind == "context-question-card":
         return _render_context_question_card(case_state)
@@ -231,6 +329,21 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("")
     _append_unknowns(lines, case_state)
     return "\n".join(lines)
+
+
+def _append_rule_section(lines: List[str], title: str, items: List[str]) -> None:
+    lines.append(f"## {title}")
+    if items:
+        for item in items:
+            lines.append(f"- {item}")
+        return
+    lines.append("- 暂无")
+
+
+def _render_inline_list(items: List[str]) -> str:
+    if not items:
+        return "无"
+    return " / ".join(f"`{item}`" for item in items)
 
 
 def _render_history_markdown(history_payload: dict) -> str:
