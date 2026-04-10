@@ -50,6 +50,7 @@
 用途：
 
 - 检查服务是否可用
+- 查看当前是否启用了 LLM 运行时
 
 ### `POST /cases`
 
@@ -100,6 +101,69 @@
 
 - 获取会话历史、阶段变更和已处理关口
 
+### `POST /project-profiles`
+
+用途：
+
+- 创建项目背景
+
+### `GET /project-profiles/{project_profile_id}`
+
+用途：
+
+- 读取项目背景
+
+### `POST /project-profiles/{project_profile_id}`
+
+用途：
+
+- 更新项目背景
+
+### `GET /workspaces/{workspace_id}`
+
+用途：
+
+- 读取当前工作区状态
+
+### `GET /workspaces/{workspace_id}/cases`
+
+用途：
+
+- 读取当前工作区最近案例
+- 查看当前活跃案例
+- 让网页或 agent 外壳快速恢复上下文
+
+返回内容除了结构化 `cases` 外，还会附带：
+
+- `rendered_workspace`
+
+### `POST /workspaces/{workspace_id}/active-case`
+
+用途：
+
+- 显式切换当前活跃案例
+
+示例请求体：
+
+```json
+{
+  "case_id": "case-xxxxxx"
+}
+```
+
+### `POST /workspaces/{workspace_id}/messages`
+
+用途：
+
+- 通过工作区上下文驱动统一 agent 入口
+
+### `POST /agent/messages`
+
+用途：
+
+- 不显式操作 case id，直接以统一入口发送一条用户消息
+- 适合先验证统一入口，再决定是否自己维护 workspace
+
 ## 当前返回结构
 
 当前服务优先返回两类内容：
@@ -107,12 +171,50 @@
 - `case`
 - `rendered_card` 或 `rendered_history`
 
+对于 agent 入口，还会返回：
+
+- `action`
+- `workspace`
+- `project_profile`
+- `message`
+
 这样做的原因是：
 
 - 结构化数据方便后续不同入口消费
 - 已渲染卡片方便当前快速验证和调试
 
 后续如果需要更细粒度的前端展示，可以逐步把视图层从 `rendered_*` 下沉为更明确的数据块。
+
+当前 `action` 已覆盖的主要类型包括：
+
+- `create-case`
+- `reply-case`
+- `project-profile-updated`
+- `show-guidance`
+- `show-history`
+- `show-workspace`
+- `switch-case`
+
+## 当前推荐接入方式
+
+如果你是在做不同形态的外壳，当前建议这样用：
+
+### CLI 或脚本
+
+- 直接调用 `pm_method_agent.cli`
+- 或直接走本地 HTTP
+
+### IDE agent / skill
+
+- 优先使用 `POST /workspaces/{workspace_id}/messages`
+- 需要展示最近案例时，补 `GET /workspaces/{workspace_id}/cases`
+- 需要显式切换上下文时，补 `POST /workspaces/{workspace_id}/active-case`
+
+### 网页
+
+- 可以直接复用工作区接口和案例接口
+- 当前先消费 `rendered_*` 也没问题
+- 后续再逐步切换到结构化块渲染
 
 ## 和 MCP 的关系
 
@@ -145,3 +247,31 @@ HTTP 不是对 MCP 的替代，而是 MCP 的基础层之一。
 - 持久化数据库
 
 这些能力应当等到真正进入托管服务阶段后再补。
+
+## 一个最小串联示例
+
+1. 先发第一条消息：
+
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。"
+  }'
+```
+
+2. 再补项目背景：
+
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "这是一个 ToB 的 HIS 产品，主要通过网页端使用，前台在操作，店长会看结果。"
+  }'
+```
+
+3. 查看最近案例：
+
+```bash
+curl http://127.0.0.1:8000/workspaces/demo/cases
+```

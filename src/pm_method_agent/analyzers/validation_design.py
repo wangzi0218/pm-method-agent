@@ -19,7 +19,7 @@ def analyze_validation_design(case_state: CaseState) -> None:
             base_text = base_text.split(marker, 1)[0].strip()
             break
 
-    hypothesis = f"可先验证这个假设：如果解决“{base_text}”背后的关键阻塞，核心行为指标会改善。"
+    hypothesis = f"可以先按这个假设去验证：如果解决“{base_text}”背后的关键阻塞，核心行为指标会改善。"
     falsification = "如果现状数据并不支持问题成立，或非产品手段已能低成本解决，这条产品方向就应降级。"
     min_validation = "先收集 3 到 5 个真实案例，再设计最小验证动作。"
 
@@ -43,10 +43,10 @@ def analyze_validation_design(case_state: CaseState) -> None:
     case_state.add_finding(
         AnalyzerFinding(
             dimension="validation-design",
-            claim="进入方案前，先把成功指标、护栏指标和停止条件定下来。",
+            claim="在往方案走之前，先把成功指标、护栏指标和停止条件说清。",
             claim_type="challenge",
             evidence_level="medium",
-            evidence=["如果没有事前约定的判断标准，后面就很难判断值不值得继续投。"],
+            evidence=["如果没有事前约定的判断标准，后面就很难判断这件事还值不值得继续做。"],
             unknowns=[
                 "成功指标是什么",
                 "失败或停止条件是什么",

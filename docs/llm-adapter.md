@@ -4,6 +4,10 @@
 
 `PM Method Agent` 的长期形态一定会接入 LLM，但不应把方法核心直接绑死在某一个模型或某一个供应商上。
 
+如果要进一步看“哪些能力该留在本地层，哪些能力该交给 LLM”，可继续参考：
+
+- [docs/llm-boundary-scenarios.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-boundary-scenarios.md)
+
 这一层的目标不是“让模型接管所有逻辑”，而是把模型调用放进稳定边界里，让项目同时支持：
 
 - 默认无模型运行
@@ -16,6 +20,8 @@
 
 - `src/pm_method_agent/llm_adapter.py`
 - `src/pm_method_agent/reply_interpreter.py`
+- `src/pm_method_agent/pre_framing.py`
+- `src/pm_method_agent/case_copywriter.py`
 
 当前已落地的能力包括：
 
@@ -25,6 +31,9 @@
 - `OpenAICompatibleConfig`
 - `HeuristicReplyInterpreter`
 - `LLMReplyInterpreter`
+- `HybridReplyInterpreter`
+- `LLMPreFramingGenerator`
+- `LLMCaseCopywriter`
 - `reply_to_case(..., reply_interpreter=...)` 注入点
 - 基于环境变量的默认解释器切换
 
@@ -52,6 +61,14 @@
 - 用户回复的结构化解释
 - 关口选择的语义识别
 - 场景信息抽取
+- pre-framing 的候选方向生成
+- 更自然的协作文案
+
+当前已经实际接入的就是这三类：
+
+- `reply interpreter`：混合模式，LLM 增强 + 规则兜底
+- `pre-framing generator`：LLM 只增强候选方向，不碰主线状态
+- `case copywriter`：LLM 只润色文案槽位，不碰结构和关口
 
 而这些环节之外，当前仍建议优先保持规则化：
 
@@ -147,6 +164,20 @@
 - `PMMA_LLM_TIMEOUT`
 - `PMMA_LLM_EXTRA_HEADERS_JSON`
 
+如果你想在本地安全地配置，而不把密钥带进仓库，建议：
+
+1. 复制一份 [.env.example](/Users/wannz/Documents/sourcetree/pm-method-agent/.env.example)
+2. 本地保存为 `.env.local`
+3. 再把真实 key 只写进 `.env.local`
+
+当前 CLI、agent 和 HTTP service 启动时都会优先读取当前目录下的 `.env` / `.env.local`。
+
+仓库默认已经忽略：
+
+- `.env`
+- `.env.local`
+- `.env.*.local`
+
 例如使用兼容 OpenAI 格式的服务时，可以像这样：
 
 ```bash
@@ -154,6 +185,12 @@ export PMMA_LLM_ENABLED=1
 export PMMA_LLM_BASE_URL=https://api.deepseek.com
 export PMMA_LLM_API_KEY=your-api-key
 export PMMA_LLM_MODEL=deepseek-chat
+```
+
+或使用本地 `.env.local`：
+
+```bash
+cp .env.example .env.local
 ```
 
 配置后，`reply` 会自动尝试使用 LLM 来解释用户回复。

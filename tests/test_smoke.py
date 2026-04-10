@@ -1,10 +1,16 @@
+import json
 import os
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+os.environ.setdefault("PMMA_DISABLE_ENV_AUTOLOAD", "1")
+
+from pm_method_agent.agent_shell import PMMethodAgentShell
+from pm_method_agent.case_copywriter import LLMCaseCopywriter, apply_case_copywriting, build_case_copywriter_from_env
 from pm_method_agent.http_service import PMMethodHTTPService
 from pm_method_agent.llm_adapter import (
     LLMMessage,
@@ -13,13 +19,23 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     OpenAICompatibleConfig,
 )
-from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis
+from pm_method_agent.models import CaseState
+from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis, run_analysis_with_context
+from pm_method_agent.pre_framing import LLMPreFramingGenerator, build_pre_framing_result
+from pm_method_agent.project_profile_service import (
+    create_project_profile,
+    default_project_profile_store,
+    get_project_profile,
+)
+from pm_method_agent.runtime_session_service import default_runtime_session_store, get_or_create_runtime_session
 from pm_method_agent.reply_interpreter import (
     HeuristicReplyInterpreter,
+    HybridReplyInterpreter,
     LLMReplyInterpreter,
     build_reply_interpreter_from_env,
 )
 from pm_method_agent.renderers import render_case_history, render_case_state
+from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
@@ -51,12 +67,161 @@ class StubTransport:
 
 
 class OrchestratorSmokeTest(unittest.TestCase):
+    def test_heuristic_reply_interpreter_can_extract_multi_platform_background(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "当前这个项目属于 ToB 的 HIS 产品，主要使用网页端，但也提供小程序，诊所前台提出需求，店长对结果负责。"
+        )
+
+        self.assertEqual(analysis.context_updates["business_model"], "tob")
+        self.assertEqual(analysis.context_updates["primary_platform"], "multi-platform")
+        self.assertIn("前台", analysis.context_updates["target_user_roles"])
+        self.assertIn("店长", analysis.context_updates["target_user_roles"])
+
+    def test_heuristic_reply_interpreter_can_extract_colloquial_business_and_platform_terms(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "这个偏 B 端，平时门店店员主要在 H5 上操作，但老板会盯结果。"
+        )
+
+        self.assertEqual(analysis.context_updates["business_model"], "tob")
+        self.assertEqual(analysis.context_updates["primary_platform"], "mobile-web")
+        self.assertIn("店员", analysis.context_updates["target_user_roles"])
+        self.assertIn("老板", analysis.context_updates["target_user_roles"])
+
+    def test_normalize_context_updates_can_fold_role_aliases(self) -> None:
+        adapter = StubLLMAdapter(
+            content='{"context_updates":{"target_user_roles":["前台工作人员","店长"]},"parser_confidence":"strong"}'
+        )
+        analysis = LLMReplyInterpreter(adapter=adapter).analyze_reply("测试")
+
+        self.assertIn("前台", analysis.context_updates["target_user_roles"])
+        self.assertNotIn("前台工作人员", analysis.context_updates["target_user_roles"])
+
+    def test_normalize_role_relationships_can_fold_role_aliases(self) -> None:
+        adapter = StubLLMAdapter(
+            content='{"role_relationships":{"proposers":["前台员工"]},"parser_confidence":"strong"}'
+        )
+        analysis = LLMReplyInterpreter(adapter=adapter).analyze_reply("这是前台提的。")
+
+        self.assertEqual(analysis.role_relationships["proposers"], ["前台"])
+
+    def test_heuristic_reply_interpreter_can_extract_generic_roles_from_sentence(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "这个需求是诊所前台提出的需求，每一个诊所的店长或者核心医生会对结果负责。"
+        )
+
+        self.assertIn("前台", analysis.context_updates["target_user_roles"])
+        self.assertIn("店长", analysis.context_updates["target_user_roles"])
+        self.assertIn("核心医生", analysis.context_updates["target_user_roles"])
+        self.assertIn("前台", analysis.role_relationships["proposers"])
+        self.assertIn("店长", analysis.role_relationships["outcome_owners"])
+
+    def test_heuristic_reply_interpreter_does_not_treat_patient_as_target_role_without_usage_signal(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply("前台最近老是漏提醒患者，我在想是不是要处理一下。")
+
+        self.assertIn("前台", analysis.context_updates["target_user_roles"])
+        self.assertNotIn("患者", analysis.context_updates["target_user_roles"])
+
+    def test_heuristic_reply_interpreter_keeps_patient_role_when_patient_side_usage_is_explicit(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply("这是一个患者端小程序，患者会在上面查看报告，医生也会跟进结果。")
+
+        self.assertIn("患者", analysis.context_updates["target_user_roles"])
+        self.assertIn("医生", analysis.context_updates["target_user_roles"])
+
+    def test_heuristic_reply_interpreter_can_extract_natural_role_relationships(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "这个事是运营提的，审核同学每天在用，老板盯结果。"
+        )
+
+        self.assertIn("运营", analysis.context_updates["target_user_roles"])
+        self.assertIn("审核专员", analysis.context_updates["target_user_roles"])
+        self.assertIn("老板", analysis.context_updates["target_user_roles"])
+        self.assertIn("运营", analysis.role_relationships["proposers"])
+        self.assertIn("审核专员", analysis.role_relationships["users"])
+        self.assertIn("老板", analysis.role_relationships["outcome_owners"])
+
+    def test_heuristic_reply_interpreter_can_extract_user_from_in_between_operation_phrase(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "这是一个 ToB 的 HIS 产品，前台在网页端操作提醒，店长会盯结果。"
+        )
+
+        self.assertIn("前台", analysis.role_relationships["users"])
+        self.assertEqual(analysis.role_relationships["outcome_owners"], ["店长"])
+
+    def test_heuristic_reply_interpreter_can_distinguish_operator_and_non_user_decision_maker(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "这个事是运营提的，一线审核同学在处理，老板拍板，医生不直接操作。"
+        )
+
+        self.assertIn("运营", analysis.context_updates["target_user_roles"])
+        self.assertIn("审核专员", analysis.context_updates["target_user_roles"])
+        self.assertIn("老板", analysis.context_updates["target_user_roles"])
+        self.assertIn("医生", analysis.context_updates["target_user_roles"])
+        self.assertEqual(analysis.role_relationships["proposers"], ["运营"])
+        self.assertEqual(analysis.role_relationships["users"], ["审核专员"])
+        self.assertEqual(analysis.role_relationships["outcome_owners"], ["老板"])
+
+    def test_heuristic_reply_interpreter_can_extract_hospital_head_without_marking_them_as_user(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply("护士在用，院长不操作但会拍板。")
+
+        self.assertIn("护士", analysis.context_updates["target_user_roles"])
+        self.assertIn("院长", analysis.context_updates["target_user_roles"])
+        self.assertEqual(analysis.role_relationships["users"], ["护士"])
+        self.assertEqual(analysis.role_relationships["outcome_owners"], ["院长"])
+
+    def test_heuristic_reply_interpreter_can_ignore_negated_roles(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply("更准确说，不是前台在操作，是护士在操作，店长盯结果。")
+
+        self.assertNotIn("前台", analysis.context_updates["target_user_roles"])
+        self.assertEqual(analysis.role_relationships["users"], ["护士"])
+
+    def test_review_card_can_render_role_relationships(self) -> None:
+        from pm_method_agent.orchestrator import run_analysis_with_context
+
+        case_state = run_analysis_with_context(
+            "最近诊所前台经常漏掉复诊患者的就诊前提醒。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "multi-platform",
+                "target_user_roles": ["前台", "店长"],
+            },
+        )
+        case_state.metadata["role_relationships"] = {
+            "proposers": ["前台"],
+            "users": ["前台"],
+            "outcome_owners": ["店长"],
+        }
+
+        rendered = render_case_state(case_state)
+        self.assertIn("提出者：前台", rendered)
+        self.assertIn("实际使用者：前台", rendered)
+        self.assertIn("结果责任人：店长", rendered)
+
     def test_auto_mode_requests_context_when_context_is_missing(self) -> None:
         case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
+        self.assertEqual(case_state.stage, "pre-framing")
+        self.assertEqual(case_state.workflow_state, "blocked")
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIsNotNone(case_state.pre_framing_result)
+        assert case_state.pre_framing_result is not None
+        self.assertGreaterEqual(len(case_state.pre_framing_result.candidate_directions), 2)
+        self.assertGreaterEqual(len(case_state.pending_questions), 2)
+
+    def test_auto_mode_still_uses_context_question_card_for_too_short_input(self) -> None:
+        case_state = run_analysis("做个弹窗")
+
         self.assertEqual(case_state.stage, "context-alignment")
         self.assertEqual(case_state.workflow_state, "blocked")
         self.assertEqual(case_state.output_kind, "context-question-card")
-        self.assertGreaterEqual(len(case_state.pending_questions), 2)
 
     def test_problem_framing_mode_keeps_expected_stage(self) -> None:
         case_state = run_analysis("诊所希望做一个新的数据看板", mode="problem-framing")
@@ -125,9 +290,48 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
         rendered = render_case_state(case_state)
         self.assertIn("## 关键判断", rendered)
-        self.assertIn("## 先做这几步", rendered)
+        self.assertIn("## 建议先做", rendered)
         self.assertIn("### 场景信息", rendered)
         self.assertIn("### 决策与验证", rendered)
+
+    def test_rendered_review_card_can_polish_finding_copy_without_mutating_data(self) -> None:
+        from pm_method_agent.orchestrator import run_analysis_with_context
+
+        case_state = run_analysis_with_context(
+            "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "mobile-web",
+                "target_user_roles": ["前台", "诊所管理者"],
+            },
+        )
+
+        original_claims = [finding.claim for finding in case_state.findings]
+        rendered = render_case_state(case_state)
+
+        self.assertIn("输入里已经带出方案，先把要解决的问题单独说清。", rendered)
+        self.assertIn("补上现状流程、失败案例和现有替代做法。", rendered)
+        self.assertIn("把当前输入拆成现象、解释、方案假设三层。", rendered)
+        self.assertIn("输入里已经带出方案，建议先把要解决的问题单独说清。", original_claims)
+
+    def test_rendered_review_card_can_polish_gate_copy(self) -> None:
+        from pm_method_agent.orchestrator import run_analysis_with_context
+
+        case_state = run_analysis_with_context(
+            "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "mobile-web",
+                "target_user_roles": ["前台", "诊所管理者"],
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertIn("按现在的信息，能不能直接进入方案讨论？", rendered)
+        self.assertIn("按现在的信息，这件事要不要继续往产品方案走？", rendered)
+        self.assertIn("输入里已经混进方案了，现状证据也还不够。", rendered)
+        self.assertIn("基础场景信息已经够用了，也没看到更优的非产品路径，可以继续往验证走。", rendered)
 
     def test_session_service_can_create_and_load_case(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -139,11 +343,67 @@ class OrchestratorSmokeTest(unittest.TestCase):
             loaded_case = get_case(case_state.case_id, store=store)
 
         self.assertEqual(loaded_case.case_id, case_state.case_id)
-        self.assertEqual(loaded_case.output_kind, "context-question-card")
+        self.assertEqual(loaded_case.output_kind, "continue-guidance-card")
         self.assertEqual(
             loaded_case.metadata["session_original_input"],
             "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
         )
+
+    def test_continue_card_can_render_pre_framing_directions(self) -> None:
+        case_state = run_analysis("想增加一个新手引导浮层，提升新用户发帖率。")
+
+        rendered = render_case_state(case_state)
+
+        self.assertIn("## 更像哪几类问题", rendered)
+        self.assertIn("## 先确认这几件事", rendered)
+        self.assertIn("## 更建议先沿哪条继续", rendered)
+
+    def test_project_profile_service_can_create_and_load_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_project_profile_store(tmpdir)
+            profile = create_project_profile(
+                project_name="医疗服务平台",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "mobile-web",
+                    "target_user_roles": ["前台", "诊所管理者"],
+                },
+                stable_constraints=["上线周期紧"],
+                success_metrics=["预约到诊率"],
+                notes=["主要服务诊所前台场景"],
+                store=store,
+            )
+            loaded_profile = get_project_profile(profile.project_profile_id, store=store)
+
+        self.assertEqual(loaded_profile.project_name, "医疗服务平台")
+        self.assertEqual(loaded_profile.context_profile["business_model"], "tob")
+        self.assertIn("上线周期紧", loaded_profile.stable_constraints)
+        self.assertIn("预约到诊率", loaded_profile.success_metrics)
+
+    def test_case_can_inherit_context_from_project_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            case_store = default_store(tmpdir)
+            profile_store = default_project_profile_store(tmpdir)
+            profile = create_project_profile(
+                project_name="医疗服务平台",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "mobile-web",
+                    "target_user_roles": ["前台", "诊所管理者"],
+                },
+                store=profile_store,
+            )
+            case_state = create_case(
+                raw_input="前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+                project_profile=profile,
+                context_profile={"product_domain": "医疗服务平台"},
+                store=case_store,
+            )
+
+        self.assertEqual(case_state.context_profile["business_model"], "tob")
+        self.assertEqual(case_state.context_profile["primary_platform"], "mobile-web")
+        self.assertEqual(case_state.context_profile["product_domain"], "医疗服务平台")
+        self.assertEqual(case_state.metadata["project_profile_name"], "医疗服务平台")
 
     def test_session_service_can_reply_and_continue(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -174,11 +434,87 @@ class OrchestratorSmokeTest(unittest.TestCase):
             replied_case.metadata["latest_user_reply"],
             "这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
         )
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "context-alignment")
         validation_claims = [
             finding.claim for finding in replied_case.findings if finding.dimension == "validation-design"
         ]
         self.assertTrue(validation_claims)
         self.assertNotIn("补充场景信息", validation_claims[0])
+
+    def test_session_service_stores_each_follow_up_reply_in_single_primary_note_bucket(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                store=store,
+            )
+            reply_text = "这是一个 ToB 的 HIS 产品，前台在网页端操作提醒，店长会盯结果。"
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text=reply_text,
+                store=store,
+            )
+
+        self.assertIn(reply_text, replied_case.metadata["session_note_buckets"]["context_notes"])
+        self.assertNotIn(reply_text, replied_case.metadata["session_note_buckets"]["decision_notes"])
+        self.assertEqual(replied_case.raw_input.count(reply_text), 1)
+
+    def test_session_service_can_replace_roles_on_explicit_correction(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="最近门店提醒流程总出错，我想看看是不是该处理。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "店长"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="更准确说，不是前台在操作，是护士在操作，店长盯结果。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.context_profile["target_user_roles"], ["护士", "店长"])
+        self.assertEqual(replied_case.metadata["role_relationships"]["users"], ["护士"])
+        self.assertEqual(replied_case.metadata["role_relationships"]["outcome_owners"], ["店长"])
+
+    def test_session_service_only_marks_questions_as_answered_when_reply_is_sufficient(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这是一个 ToB 网页端产品，前台在使用。",
+                store=store,
+            )
+
+        answered_questions = replied_case.metadata["answered_questions"]
+        self.assertIn("当前产品属于企业产品、消费者产品还是内部产品？", answered_questions)
+        self.assertIn("当前主要使用平台是桌面端、移动端、小程序还是多端？", answered_questions)
+        self.assertNotIn("谁提出需求、谁使用产品、谁承担最终结果？", answered_questions)
+        self.assertEqual(replied_case.context_profile["primary_platform"], "pc")
+
+    def test_role_relationships_can_influence_problem_framing_judgment(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="当前这个项目属于 ToB 的 HIS 产品，前台提了这个需求，前台自己就在流程里操作这个动作，店长对结果负责。",
+                store=store,
+            )
+
+        claims = [finding.claim for finding in replied_case.findings if finding.dimension == "problem-framing"]
+        self.assertIn("关键角色已经有了基础分工，接下来更值得补目标差异和协作边界。", claims)
 
     def test_session_service_tracks_resolved_blocking_gate(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -345,6 +681,228 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(replied_case.metadata["last_reply_parser"], "llm")
         self.assertEqual(len(adapter.requests), 1)
 
+    def test_hybrid_reply_interpreter_can_merge_heuristic_and_llm_results(self) -> None:
+        llm_adapter = StubLLMAdapter(
+            content=(
+                '{"context_updates":{"business_model":"tob","primary_platform":"mobile-web"},'
+                '"role_relationships":{"outcome_owners":["老板"]},'
+                '"categories":["context","decision"],'
+                '"inferred_gate_choice":"defer","parser_confidence":"strong"}'
+            )
+        )
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=llm_adapter),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("这个事是运营提的，审核同学每天在用，老板盯结果，资源比较紧张。")
+
+        self.assertEqual(analysis.context_updates["business_model"], "tob")
+        self.assertEqual(analysis.context_updates["primary_platform"], "mobile-web")
+        self.assertIn("运营", analysis.context_updates["target_user_roles"])
+        self.assertIn("审核专员", analysis.context_updates["target_user_roles"])
+        self.assertIn("运营", analysis.role_relationships["proposers"])
+        self.assertIn("审核专员", analysis.role_relationships["users"])
+        self.assertIn("老板", analysis.role_relationships["outcome_owners"])
+        self.assertEqual(analysis.inferred_gate_choice, "defer")
+        self.assertEqual(analysis.parser_name, "hybrid")
+
+    def test_hybrid_reply_interpreter_prefers_explicit_heuristic_role_relationships(self) -> None:
+        llm_adapter = StubLLMAdapter(
+            content=(
+                '{"role_relationships":{"outcome_owners":["前台","店长"]},'
+                '"categories":["context"],"parser_confidence":"strong"}'
+            )
+        )
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=llm_adapter),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("前台在网页端操作提醒，店长会盯结果。")
+
+        self.assertEqual(analysis.role_relationships["outcome_owners"], ["店长"])
+
+    def test_hybrid_reply_interpreter_does_not_backfill_multiple_proposers_without_explicit_signal(self) -> None:
+        llm_adapter = StubLLMAdapter(
+            content=(
+                '{"role_relationships":{"proposers":["前台","店长"]},'
+                '"categories":["context"],"parser_confidence":"strong"}'
+            )
+        )
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=llm_adapter),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("前台在网页端操作提醒，店长会盯结果。")
+
+        self.assertEqual(analysis.role_relationships["proposers"], [])
+
+    def test_hybrid_reply_interpreter_does_not_backfill_single_proposer_without_explicit_signal(self) -> None:
+        llm_adapter = StubLLMAdapter(
+            content=(
+                '{"role_relationships":{"proposers":["前台员工"]},'
+                '"categories":["context"],"parser_confidence":"strong"}'
+            )
+        )
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=llm_adapter),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("这是一个 ToB 的 HIS 产品，前台在网页端操作提醒，店长会盯结果。")
+
+        self.assertEqual(analysis.role_relationships["proposers"], [])
+
+    def test_hybrid_reply_interpreter_does_not_backfill_user_for_non_user_decision_role(self) -> None:
+        llm_adapter = StubLLMAdapter(
+            content=(
+                '{"role_relationships":{"users":["采购负责人"]},'
+                '"categories":["context"],"parser_confidence":"strong"}'
+            )
+        )
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=llm_adapter),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("采购负责人不是使用者，但会决定是否上线。")
+
+        self.assertIn("采购负责人", analysis.context_updates["target_user_roles"])
+        self.assertEqual(analysis.role_relationships["users"], [])
+
+    def test_llm_pre_framing_generator_can_enhance_candidates_without_changing_contract(self) -> None:
+        adapter = StubLLMAdapter(
+            content=(
+                '{"reason":"输入里混着现象和方案，先收方向更稳。",'
+                '"candidate_directions":['
+                '{"direction_id":"D-101","label":"提醒链路本身不稳定","summary":"核心问题可能在提醒链路而不是单点页面。","assumptions":["当前触发条件不稳定"],"confidence":"medium"},'
+                '{"direction_id":"D-102","label":"角色分工没有对齐","summary":"执行者和结果责任人之间可能没有形成稳定协作。","assumptions":["责任边界不清"],"confidence":"medium"}'
+                '],'
+                '"priority_questions":["现在是谁在触发提醒？","最近为什么更值得处理？"],'
+                '"recommended_direction_id":"D-102"}'
+            )
+        )
+        generator = LLMPreFramingGenerator(adapter=adapter)
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="intake",
+            raw_input="前台希望增加一个提醒弹窗，避免漏提醒患者。",
+            context_profile={},
+        )
+
+        result = build_pre_framing_result(case_state, generator=generator)
+
+        self.assertTrue(result.triggered)
+        self.assertEqual(result.recommended_direction_id, "D-102")
+        self.assertEqual(len(result.candidate_directions), 2)
+        self.assertIn("提醒链路本身不稳定", [item.label for item in result.candidate_directions])
+        self.assertEqual(len(adapter.requests), 1)
+
+    def test_llm_case_copywriter_can_only_enhance_copy_slots(self) -> None:
+        adapter = StubLLMAdapter(
+            content=(
+                '{"normalized_summary":"先别急着往方案走，先把问题方向收一收。",'
+                '"blocking_reason":"这一步还差一个明确选择，系统才能继续往下推进。",'
+                '"next_actions":["先明确你的倾向。","顺手补一句原因。"]}'
+            )
+        )
+        copywriter = LLMCaseCopywriter(adapter=adapter)
+        case_state = run_analysis_with_context(
+            "我们需要优化权限配置流程，避免前台误操作。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "pc",
+                "target_user_roles": ["前台", "管理员"],
+            },
+        )
+
+        original_stage = case_state.stage
+        original_output_kind = case_state.output_kind
+        enhanced_case = apply_case_copywriting(case_state, copywriter=copywriter)
+
+        self.assertEqual(enhanced_case.stage, original_stage)
+        self.assertEqual(enhanced_case.output_kind, original_output_kind)
+        self.assertEqual(enhanced_case.normalized_summary, "先别急着往方案走，先把问题方向收一收。")
+        self.assertEqual(enhanced_case.blocking_reason, "这一步还差一个明确选择，系统才能继续往下推进。")
+        self.assertEqual(enhanced_case.next_actions, ["先明确你的倾向。", "顺手补一句原因。"])
+        self.assertEqual(enhanced_case.metadata["copywriter"], "llm")
+
+    def test_llm_case_copywriter_can_soften_stiff_phrases(self) -> None:
+        adapter = StubLLMAdapter(
+            content=(
+                '{"normalized_summary":"问题描述已初步成型，但还需要补充更多证据和角色关系的细节。",'
+                '"blocking_reason":"当前先按非产品路径推进，建议先试流程、培训或管理方案。",'
+                '"next_actions":["建议先补充现状流程。","当前还没有明确选择。"]}'
+            )
+        )
+        copywriter = LLMCaseCopywriter(adapter=adapter)
+        case_state = run_analysis_with_context(
+            "我们需要优化权限配置流程，避免前台误操作。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "pc",
+                "target_user_roles": ["前台", "管理员"],
+            },
+        )
+
+        enhanced_case = apply_case_copywriting(case_state, copywriter=copywriter)
+
+        self.assertEqual(enhanced_case.normalized_summary, "方向已经差不多了，但还得补更多证据和角色关系的细节。")
+        self.assertEqual(enhanced_case.blocking_reason, "这轮先按非产品路径看，先试流程、培训或管理方案。")
+        self.assertEqual(enhanced_case.next_actions, ["先补充现状流程。", "这轮还没明确选择。"])
+
+    def test_build_case_copywriter_from_env_requires_explicit_flag(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PMMA_LLM_ENABLED": "1",
+                "PMMA_LLM_BASE_URL": "https://api.deepseek.com",
+                "PMMA_LLM_API_KEY": "demo-key",
+                "PMMA_LLM_MODEL": "deepseek-chat",
+                "PMMA_LLM_PROVIDER": "deepseek",
+                "PMMA_LLM_COPYWRITER_ENABLED": "1",
+            },
+            clear=False,
+        ):
+            copywriter = build_case_copywriter_from_env()
+
+        self.assertIsNotNone(copywriter)
+
+    def test_runtime_config_can_load_env_local_without_overriding_existing_env(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text("PMMA_LLM_MODEL=base-model\n", encoding="utf-8")
+            (root / ".env.local").write_text(
+                "PMMA_LLM_BASE_URL=https://api.deepseek.com\n"
+                "PMMA_LLM_MODEL=deepseek-chat\n"
+                "PMMA_LLM_PROVIDER=deepseek\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "PMMA_DISABLE_ENV_AUTOLOAD": "0",
+                    "PMMA_LLM_ENABLED": "1",
+                    "PMMA_LLM_API_KEY": "env-key",
+                },
+                clear=False,
+            ):
+                ensure_local_env_loaded(tmpdir)
+                runtime = get_llm_runtime_status(tmpdir)
+                self.assertEqual(os.getenv("PMMA_LLM_MODEL"), "deepseek-chat")
+                self.assertEqual(runtime["provider"], "deepseek")
+
+    def test_rendered_card_can_show_llm_runtime_summary(self) -> None:
+        case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
+        case_state.metadata["llm_runtime"] = {"summary": "LLM 混合（回复解释、前置收敛）"}
+
+        rendered = render_case_state(case_state)
+
+        self.assertIn("增强模式", rendered)
+        self.assertIn("LLM 混合（回复解释、前置收敛）", rendered)
+
     def test_http_service_can_create_reply_and_load_history(self) -> None:
         with TemporaryDirectory() as tmpdir:
             service = PMMethodHTTPService(store_dir=tmpdir)
@@ -382,6 +940,453 @@ class OrchestratorSmokeTest(unittest.TestCase):
             response = service.handle(method="GET", path="/cases/case-missing")
 
         self.assertEqual(response.status_code, 404)
+
+    def test_http_service_health_can_expose_llm_runtime(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(method="GET", path="/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("llm_runtime", response.payload)
+
+    def test_http_service_can_manage_project_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            create_response = service.handle(
+                method="POST",
+                path="/project-profiles",
+                body=(
+                    '{"project_name":"医疗服务平台",'
+                    '"context_profile":{"business_model":"tob","primary_platform":"mobile-web"},'
+                    '"stable_constraints":["上线周期紧"]}'
+                ).encode("utf-8"),
+            )
+            profile_id = str(create_response.payload["project_profile"]["project_profile_id"])
+            update_response = service.handle(
+                method="POST",
+                path=f"/project-profiles/{profile_id}",
+                body='{"success_metrics":["到诊率"],"notes":["默认服务诊所前台场景"]}'.encode("utf-8"),
+            )
+            get_response = service.handle(
+                method="GET",
+                path=f"/project-profiles/{profile_id}",
+            )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(get_response.status_code, 200)
+        self.assertIn("上线周期紧", get_response.payload["project_profile"]["stable_constraints"])
+        self.assertIn("到诊率", get_response.payload["project_profile"]["success_metrics"])
+
+    def test_http_service_can_handle_agent_messages_with_workspace(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            first_response = service.handle(
+                method="POST",
+                path="/agent/messages",
+                body='{"workspace_id":"demo","message":"前台最近老是漏提醒患者，我在想是不是要处理一下。"}'.encode(
+                    "utf-8"
+                ),
+            )
+            second_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"这是一个 ToB 移动端产品，前台使用，管理者负责结果。"}'.encode("utf-8"),
+            )
+            workspace_response = service.handle(
+                method="GET",
+                path="/workspaces/demo",
+            )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(first_response.payload["action"], "create-case")
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.payload["action"], "reply-case")
+        self.assertEqual(workspace_response.status_code, 200)
+        self.assertTrue(workspace_response.payload["workspace"]["active_case_id"])
+
+    def test_http_service_can_list_workspace_cases_and_switch_active_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            first_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"前台最近老是漏提醒患者，我在想是不是要处理一下。"}'.encode("utf-8"),
+            )
+            second_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"还有一个问题，新用户注册后发帖率也偏低，想一起看看。"}'.encode("utf-8"),
+            )
+            list_response = service.handle(
+                method="GET",
+                path="/workspaces/demo/cases",
+            )
+            first_case_id = str(first_response.payload["case"]["case_id"])
+            switch_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/active-case",
+                body=json.dumps({"case_id": first_case_id}, ensure_ascii=False).encode("utf-8"),
+            )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.payload["cases"]["recent_cases"]), 2)
+        self.assertEqual(second_response.payload["workspace"]["active_case_id"], second_response.payload["case"]["case_id"])
+        self.assertEqual(switch_response.status_code, 200)
+        self.assertEqual(switch_response.payload["workspace"]["active_case_id"], first_case_id)
+        self.assertIn(first_case_id, switch_response.payload["rendered_card"])
+
+    def test_http_service_can_use_workspace_agent_for_project_background(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"这个项目是 ToB 医疗服务平台，主要跑在移动端。"}'.encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.payload["action"], "project-profile-updated")
+        self.assertIsNotNone(response.payload["project_profile"])
+
+    def test_agent_shell_can_create_case_from_rough_idea(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "create-case")
+        self.assertTrue(response.workspace.active_case_id)
+        self.assertIn("PM Method Agent", response.rendered_card)
+
+    def test_agent_shell_can_continue_active_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            second_response = shell.handle_message(
+                "这是一个 ToB 移动端产品，前台使用，管理者负责结果。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertEqual(first_response.workspace.active_case_id, second_response.workspace.active_case_id)
+        self.assertIn("执行模块", second_response.rendered_card)
+
+    def test_agent_shell_prefers_continuing_active_case_for_follow_up_message(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。",
+                workspace_id="demo",
+            )
+            shell.handle_message(
+                "当前这个项目属于 ToB 的 HIS 产品，主要使用网页端，但也提供 App，诊所前台提出需求，店长对结果负责。",
+                workspace_id="demo",
+            )
+            follow_up_response = shell.handle_message(
+                "我暂时没有想好是否值得投入产品能力，但研发资源比较紧张，这个更像是一个 nice to have 的能力。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(follow_up_response.action, "reply-case")
+        self.assertEqual(first_response.workspace.active_case_id, follow_up_response.workspace.active_case_id)
+        self.assertIn("决策关口卡", follow_up_response.rendered_card)
+
+    def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="我觉得这个需求可以不用现在做，研发资源比较紧张，更像是一个 nice to have。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "defer")
+        self.assertEqual(replied_case.workflow_state, "deferred")
+
+    def test_session_service_can_infer_defer_from_validation_before_commit_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="先做点轻验证，但先不立项。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "defer")
+        self.assertEqual(replied_case.workflow_state, "deferred")
+
+    def test_session_service_can_infer_defer_from_design_before_launch_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="设计可以先看，上线先别急。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "defer")
+        self.assertEqual(replied_case.workflow_state, "deferred")
+
+    def test_session_service_can_infer_defer_from_observe_then_decide_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="先观察两周，再决定要不要做产品。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "defer")
+        self.assertEqual(replied_case.workflow_state, "deferred")
+
+    def test_session_service_can_infer_try_non_product_from_process_constraint_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="先看流程约束能不能解决，再决定要不要做产品。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "try-non-product-first")
+        self.assertEqual(replied_case.workflow_state, "blocked")
+
+    def test_agent_shell_can_update_project_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "这个项目是 ToB 医疗服务平台，主要跑在移动端，前台和诊所管理者都很关键。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "project-profile-updated")
+        self.assertIsNotNone(response.project_profile)
+        self.assertEqual(response.workspace.active_project_profile_id, response.project_profile.project_profile_id)
+        self.assertEqual(response.project_profile.context_profile["business_model"], "tob")
+        self.assertEqual(response.rendered_card, "")
+
+    def test_agent_shell_project_background_can_backfill_active_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。",
+                workspace_id="demo",
+            )
+            second_response = shell.handle_message(
+                "当前这个项目属于 ToB 的 HIS 产品，主要使用网页端，但也提供小程序，诊所前台提出需求，店长对结果负责。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "project-profile-updated")
+        self.assertIsNotNone(second_response.case_state)
+        self.assertEqual(second_response.case_state.context_profile["business_model"], "tob")
+        self.assertEqual(second_response.case_state.context_profile["primary_platform"], "multi-platform")
+        self.assertIn("店长", second_response.case_state.context_profile["target_user_roles"])
+        self.assertIn("继续卡", second_response.rendered_card)
+        self.assertIn("提出者：前台", second_response.rendered_card)
+        self.assertIn("结果责任人：店长", second_response.rendered_card)
+        self.assertNotIn("当前产品属于企业产品、消费者产品还是内部产品？", second_response.case_state.pending_questions)
+        self.assertNotIn("当前主要使用平台是桌面端、移动端、小程序还是多端？", second_response.case_state.pending_questions)
+
+    def test_agent_shell_can_show_guidance_for_active_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            response = shell.handle_message(
+                "我现在下一步该做什么？",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "show-guidance")
+        self.assertIn("PM Method Agent", response.rendered_card)
+
+    def test_agent_shell_can_start_new_case_even_with_active_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            second_response = shell.handle_message(
+                "还有一个问题，新用户注册后发帖率也偏低，想一起看看。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "create-case")
+        self.assertNotEqual(first_response.case_state.case_id, second_response.case_state.case_id)
+        self.assertEqual(second_response.workspace.active_case_id, second_response.case_state.case_id)
+
+    def test_agent_shell_can_treat_meta_question_as_guidance(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            response = shell.handle_message(
+                "如果这是 ToC，会有什么不同？",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(response.action, "show-guidance")
+        self.assertEqual(first_response.workspace.active_case_id, response.workspace.active_case_id)
+
+    def test_agent_shell_can_show_workspace_overview(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            shell.handle_message(
+                "还有一个问题，新用户注册后发帖率也偏低，想一起看看。",
+                workspace_id="demo",
+            )
+            response = shell.handle_message(
+                "看看最近几个案例。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(response.action, "show-workspace")
+        self.assertIn("## 最近案例", response.rendered_card)
+        self.assertIn("当前", response.rendered_card)
+
+    def test_agent_shell_can_switch_to_previous_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            second_response = shell.handle_message(
+                "还有一个问题，新用户注册后发帖率也偏低，想一起看看。",
+                workspace_id="demo",
+            )
+            response = shell.handle_message(
+                "切到上一个案例。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(second_response.action, "create-case")
+        self.assertEqual(response.action, "switch-case")
+        self.assertEqual(response.workspace.active_case_id, first_response.case_state.case_id)
+        self.assertIn(first_response.case_state.case_id, response.rendered_card)
+
+    def test_agent_shell_can_replace_project_profile_roles_on_explicit_correction(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这个项目是 ToB 医疗服务平台，前台和诊所管理者都很关键。",
+                workspace_id="demo",
+            )
+            response = shell.handle_message(
+                "更准确说，这个项目核心不是前台，是医生和护士。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.action, "project-profile-updated")
+        self.assertEqual(response.action, "project-profile-updated")
+        assert response.project_profile is not None
+        self.assertEqual(response.project_profile.context_profile["target_user_roles"], ["医生", "护士"])
+
+    def test_agent_shell_persists_runtime_session_with_event_log(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo",
+            )
+            runtime_session = get_or_create_runtime_session(
+                "demo",
+                store=default_runtime_session_store(tmpdir),
+            )
+
+        self.assertEqual(response.runtime_session.workspace_id, "demo")
+        self.assertEqual(response.runtime_session.turn_count, 1)
+        self.assertEqual(runtime_session.turn_count, 1)
+        self.assertGreaterEqual(len(runtime_session.event_log), 3)
+        event_types = [item["event_type"] for item in runtime_session.event_log]
+        self.assertEqual(event_types[:3], ["turn-received", "loop-started", "turn-classified"])
+        self.assertEqual(runtime_session.last_terminal_event["query_id"], "query-0001")
+
+    def test_agent_shell_runtime_session_tracks_terminal_state_and_resume_point(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToB 的 PC 后台，前台和管理员在用。我们需要优化权限配置流程，避免前台误操作。",
+                workspace_id="demo",
+            )
+            second_response = shell.handle_message(
+                "我觉得这个需求可以不用现在做，研发资源比较紧张，更像是一个 nice to have。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(first_response.runtime_session.last_terminal_event["terminal_state"], "blocked")
+        self.assertEqual(first_response.runtime_session.last_terminal_event["resume_from"], "decision-challenge")
+        self.assertEqual(second_response.case_state.workflow_state, "deferred")
+        self.assertEqual(second_response.runtime_session.last_terminal_event["terminal_state"], "deferred")
+        self.assertEqual(second_response.runtime_session.last_terminal_event["resume_from"], "decision-challenge")
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(
@@ -429,7 +1434,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         ):
             interpreter = build_reply_interpreter_from_env()
 
-        self.assertIsInstance(interpreter, LLMReplyInterpreter)
+        self.assertIsInstance(interpreter, HybridReplyInterpreter)
 
     def test_build_reply_interpreter_from_env_falls_back_when_config_missing(self) -> None:
         with patch.dict(

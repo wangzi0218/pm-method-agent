@@ -93,11 +93,11 @@
 一份典型输出通常包含：
 
 - 基础信息
-- 初步判断
+- 当前判断
 - 关键判断
 - 需要确认
-- 先做这几步
-- 待补信息
+- 建议先做
+- 建议补充
 
 ## 用户入口
 
@@ -172,7 +172,9 @@
 
 ### 推荐快速开始
 
-当前阶段最稳的运行方式，不是先安装命令，而是直接源码运行：
+如果你只是想先体验当前方法内核，最稳的方式仍然是直接源码运行。
+
+单轮直跑：
 
 ```bash
 PYTHONPATH=src python3 -m pm_method_agent.cli \
@@ -184,7 +186,23 @@ PYTHONPATH=src python3 -m pm_method_agent.cli \
   "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。"
 ```
 
-如果只是想快速体验，这一条已经足够。
+如果你只是想看单轮输出，这一条已经足够。
+
+但如果你想体验更接近真实使用的方式，当前更推荐直接走统一入口 `agent`：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id demo \
+  "前台最近老是漏提醒患者，我在想是不是要处理一下。"
+```
+
+再顺手补一句：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id demo \
+  "这是一个 ToB 医疗服务平台，主要通过网页端使用，前台在操作，店长会看结果。"
+```
 
 ### 可选安装
 
@@ -205,6 +223,8 @@ pm-method-agent "前台希望增加一个预约前提醒弹窗，避免漏提醒
 ```bash
 python3 -m pip install --upgrade pip
 ```
+
+在一些较老的 Python / pip 环境里，`install -e .` 仍可能失败。遇到这种情况，直接继续使用源码直跑即可，不影响体验当前版本。
 
 如果你暂时不想动本机环境，就继续使用源码直跑方式：
 
@@ -276,6 +296,35 @@ PYTHONPATH=src python3 -m pm_method_agent.cli show case-xxxxxx
 PYTHONPATH=src python3 -m pm_method_agent.cli history case-xxxxxx
 ```
 
+通过统一入口模拟 agent / skill 交互：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id demo \
+ "前台最近老是漏提醒患者，我在想是不是要处理一下。"
+```
+
+继续补一句：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id demo \
+  "这是一个 ToB 移动端产品，前台使用，管理者负责结果。"
+```
+
+查看当前工作区：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli workspace demo
+```
+
+切换到指定案例：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli workspace demo \
+  --switch-case-id case-xxxxxx
+```
+
 启动本地 HTTP 服务：
 
 ```bash
@@ -286,6 +335,22 @@ PYTHONPATH=src python3 -m pm_method_agent.cli serve --host 127.0.0.1 --port 8000
 
 ```bash
 curl http://127.0.0.1:8000/health
+```
+
+读取工作区最近案例：
+
+```bash
+curl http://127.0.0.1:8000/workspaces/demo/cases
+```
+
+切换当前工作区的活跃案例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/demo/active-case \
+  -H "Content-Type: application/json" \
+  -d '{
+    "case_id": "case-xxxxxx"
+  }'
 ```
 
 创建案例：
@@ -300,6 +365,32 @@ curl -X POST http://127.0.0.1:8000/cases \
       "primary_platform": "mobile-web",
       "target_user_roles": ["前台", "诊所管理者"]
     }
+  }'
+```
+
+创建项目背景：
+
+```bash
+curl -X POST http://127.0.0.1:8000/project-profiles \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_name": "医疗服务平台",
+    "context_profile": {
+      "business_model": "tob",
+      "primary_platform": "mobile-web"
+    },
+    "stable_constraints": ["上线周期紧"]
+  }'
+```
+
+通过统一 agent 入口发送消息：
+
+```bash
+curl -X POST http://127.0.0.1:8000/agent/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": "demo",
+    "message": "前台最近老是漏提醒患者，我在想是不是要处理一下。"
   }'
 ```
 
@@ -322,6 +413,12 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 记录关口选择，并影响后续状态推进
 - 对“暂缓”“先试非产品路径”“继续产品化”做不同分支处理
 - 在需要时保持关口阻塞，而不是误判为已完成
+- 通过工作区记住当前活跃 case 和项目背景
+- 查看最近案例，并在案例之间切换
+- 通过 HTTP service 直接驱动统一 agent 入口
+- 在有模型配置时，用 LLM 增强回复解释、前置收敛和卡片文案
+- 为统一入口补上了最小 `runtime session`，记录 `query_id`、`turn_count`、`resume_from` 和终止语义
+- 为每轮 agent 交互补上了最小事件日志，后续可以继续扩展到执行账本和 sub-agent 生命周期
 
 ## 体验建议
 
@@ -330,6 +427,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 更合适的方式是直接按体验用例集逐条验证：
 
 - [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：推荐体验顺序、覆盖场景与预期观察点
+- [docs/real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：如何拿真实问题试跑、记录反馈并判断体验是否站得住
 
 如果你想判断“现在是不是已经适合公开发到 GitHub”，可以对照：
 
@@ -341,12 +439,17 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/architecture.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/architecture.md)：系统架构、升级口和交付适配层
 - [docs/agent-architecture.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-architecture.md)：主代理、专项代理和内部协作方式
 - [docs/agent-interaction.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-interaction.md)：主代理状态机、追问规则和阶段推进逻辑
+- [docs/agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)：最小 agent 外壳、工作区状态和统一入口运行时
+- [docs/advanced-agent-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/advanced-agent-runtime.md)：更完整的 agent runtime 设计，包括 query loop、终止语义、prompt 治理和 sub-agent 编排
+- [docs/brainstorm-integration.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/brainstorm-integration.md)：如何把 brainstorm 作为前置思考层融合进主代理，而不退化成普通聊天
 - [docs/context-profile.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/context-profile.md)：场景和产品基础信息的定义方式
 - [docs/contracts.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/contracts.md)：案例状态、结论项、决策关口和证据分级契约
 - [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例与验证方式
+- [docs/real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：真实问题试跑方法、记录模板与体验判断标准
 - [docs/output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)：默认输出风格与审查卡结构
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：里程碑、实现阶段和后续发展计划
 - [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)：本地 HTTP 服务层、接口定义和与 MCP 的关系
+- [docs/interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)：用户触发、持续互动、记忆层与主动建议设计
 - [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：LLM 适配层、解释器注入点和未来接入方式
 - [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：首次公开前的提交流程与版本建议
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：GitHub 首次公开发布的标准
@@ -366,6 +469,11 @@ export PMMA_LLM_MODEL=deepseek-chat
 - 一套可直接复制执行的体验用例
 - 一层可扩展的 LLM 适配骨架与回复解释器接口
 - 一层最小可运行的本地 HTTP 服务
+- 一份面向长期协作的交互层与记忆层设计
+- 一层最小可运行的 agent 外壳与工作区状态
+- 一套基于工作区的案例查看与切换能力
+- 一层基于 OpenAI-compatible 配置的 LLM 增强理解与文案能力
+- 一层最小可运行的高级 runtime 骨架，包括 `runtime session`、终止语义和事件日志
 
 ## 后续形态
 
@@ -374,7 +482,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 更合理的演进方式是：
 
 - 当前阶段：CLI 用于验证方法内核
-- 下一阶段：继续完善本地服务层、状态机与解释器接入
+- 下一阶段：继续完善交互层、记忆层和 skill / agent 接入
 - 后续阶段：优先提供 skill / agent 入口，再按需要补网页和托管服务能力
 
 如果未来提供网页或 AI 原生入口，底层都会复用这层服务接口来承接会话状态、阶段推进和结果读取。

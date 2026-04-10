@@ -6,13 +6,17 @@ from pathlib import Path
 from typing import Dict, Optional
 from uuid import uuid4
 
-from pm_method_agent.models import CaseState
+from pm_method_agent.case_copywriter import apply_case_copywriting
+from pm_method_agent.models import CaseState, ProjectProfile
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis_with_context
+from pm_method_agent.project_profile_service import merge_project_profile_context
 from pm_method_agent.reply_interpreter import (
     ReplyAnalysis,
     ReplyInterpreter,
     build_reply_interpreter_from_env,
 )
+from pm_method_agent.role_extraction import normalize_role_name
+from pm_method_agent.runtime_config import get_llm_runtime_status
 
 
 SESSION_STORE_DIRNAME = ".pm_method_agent/cases"
@@ -28,6 +32,7 @@ SESSION_LATEST_REPLY_KEY = "latest_user_reply"
 SESSION_LAST_RESUME_STAGE_KEY = "last_resume_stage"
 SESSION_LAST_GATE_CHOICE_KEY = "last_gate_choice"
 SESSION_LAST_REPLY_PARSER_KEY = "last_reply_parser"
+SESSION_ROLE_RELATIONSHIPS_KEY = "role_relationships"
 
 NOTE_BUCKET_KEYS = [
     "context_notes",
@@ -68,18 +73,28 @@ def default_store(base_dir: Optional[str] = None) -> LocalCaseStore:
 def create_case(
     raw_input: str,
     context_profile: Optional[Dict[str, object]] = None,
+    project_profile: Optional[ProjectProfile] = None,
     mode: str = "auto",
     case_id: Optional[str] = None,
     store: Optional[LocalCaseStore] = None,
 ) -> CaseState:
     active_store = store or default_store()
     resolved_case_id = case_id or _generate_case_id()
+    merged_context_profile = merge_project_profile_context(project_profile, context_profile)
+    initial_reply_analysis = build_reply_interpreter_from_env().analyze_reply(raw_input)
+    merged_context_profile = _merge_context_profile(
+        merged_context_profile,
+        initial_reply_analysis.context_updates,
+        raw_input,
+    )
+    initial_role_relationships = _normalize_role_relationships(initial_reply_analysis.role_relationships)
     case_state = run_analysis_with_context(
         raw_input=raw_input,
         mode=mode,
         case_id=resolved_case_id,
-        context_profile=context_profile or {},
+        context_profile=merged_context_profile,
         show_case_id=True,
+        metadata={SESSION_ROLE_RELATIONSHIPS_KEY: initial_role_relationships},
     )
     case_state.metadata[SESSION_MODE_KEY] = mode
     case_state.metadata[SESSION_INPUT_KEY] = raw_input.strip()
@@ -100,6 +115,13 @@ def create_case(
     case_state.metadata[SESSION_LAST_RESUME_STAGE_KEY] = "context-alignment"
     case_state.metadata[SESSION_LAST_GATE_CHOICE_KEY] = None
     case_state.metadata[SESSION_LAST_REPLY_PARSER_KEY] = None
+    case_state.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = initial_role_relationships
+    case_state.metadata["llm_runtime"] = get_llm_runtime_status()
+    if project_profile is not None:
+        project_profile_id = getattr(project_profile, "project_profile_id", None)
+        project_name = getattr(project_profile, "project_name", None)
+        case_state.metadata["project_profile_id"] = project_profile_id
+        case_state.metadata["project_profile_name"] = project_name
     case_state.metadata["show_case_id"] = True
     active_store.save(case_state)
     return case_state
@@ -126,14 +148,19 @@ def reply_to_case(
     merged_context = _merge_context_profile(
         previous_case.context_profile,
         reply_analysis.context_updates,
+        reply_text,
     )
     if context_profile_updates:
-        merged_context = _merge_context_profile(merged_context, context_profile_updates)
+        merged_context = _merge_context_profile(merged_context, context_profile_updates, reply_text)
 
     note_buckets = _merge_note_buckets(
         previous_case.metadata.get(SESSION_NOTE_BUCKETS_KEY, {}),
         reply_analysis,
         reply_text.strip(),
+    )
+    role_relationships = _merge_role_relationships(
+        previous_case.metadata.get(SESSION_ROLE_RELATIONSHIPS_KEY, {}),
+        reply_analysis,
     )
     rerun_input = _compose_session_input(original_input, note_buckets)
     resume_stage = _resolve_resume_stage(previous_case, reply_analysis)
@@ -143,6 +170,7 @@ def reply_to_case(
         merged_context=merged_context,
         resume_stage=resume_stage,
         reply_analysis=reply_analysis,
+        role_relationships=role_relationships,
     )
 
     turns = list(previous_case.metadata.get(SESSION_TURNS_KEY, []))
@@ -157,7 +185,9 @@ def reply_to_case(
 
     answered_questions = list(previous_case.metadata.get(SESSION_ANSWERED_QUESTIONS_KEY, []))
     for question in previous_case.pending_questions:
-        if question not in answered_questions:
+        if question in answered_questions:
+            continue
+        if _is_pending_question_answered(question, merged_context, reply_analysis, reply_text.strip()):
             answered_questions.append(question)
 
     resolved_gates = list(previous_case.metadata.get(SESSION_RESOLVED_GATES_KEY, []))
@@ -209,6 +239,8 @@ def reply_to_case(
     next_case.metadata[SESSION_LAST_RESUME_STAGE_KEY] = resume_stage
     next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.inferred_gate_choice
     next_case.metadata[SESSION_LAST_REPLY_PARSER_KEY] = reply_analysis.parser_name
+    next_case.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = role_relationships
+    next_case.metadata["llm_runtime"] = get_llm_runtime_status()
     next_case.metadata["show_case_id"] = True
     active_store.save(next_case)
     return next_case
@@ -248,6 +280,9 @@ def _generate_case_id() -> str:
 def _resolve_resume_stage(previous_case: CaseState, reply_analysis: ReplyAnalysis) -> str:
     if previous_case.output_kind == "context-question-card":
         return "context-alignment"
+    if previous_case.output_kind == "continue-guidance-card":
+        next_stage = str(previous_case.metadata.get("next_stage", "") or "").strip()
+        return next_stage or "problem-definition"
     if previous_case.output_kind == "stage-block-card":
         next_stage = str(previous_case.metadata.get("next_stage", "") or "").strip()
         return next_stage or "problem-definition"
@@ -267,6 +302,7 @@ def _build_next_case_from_reply(
     merged_context: Dict[str, object],
     resume_stage: str,
     reply_analysis: ReplyAnalysis,
+    role_relationships: Dict[str, list[str]],
 ) -> CaseState:
     inferred_gate_choice = reply_analysis.inferred_gate_choice
     if previous_case.output_kind == "decision-gate-card":
@@ -275,14 +311,14 @@ def _build_next_case_from_reply(
                 previous_case=previous_case,
                 rerun_input=rerun_input,
                 merged_context=merged_context,
-                summary="当前还没有识别到你对这个决策关口的明确选择。",
-                blocking_reason="需要先明确这一关口的选择，系统才能决定是否继续推进。",
+                summary="这轮回复里，还没有看到你对这个决策关口的明确选择。",
+                blocking_reason="这一关需要先定方向，系统才能继续往下推进。",
                 workflow_state="blocked",
                 output_kind="decision-gate-card",
                 next_stage="decision-challenge",
                 next_actions=[
-                    "请直接回答：进入产品化阶段、优先评估非产品路径，或暂缓。",
-                    "如果你已经做过取舍，也可以补一句原因，系统会继续承接。",
+                    "可以直接回答：进入产品化阶段、优先评估非产品路径，或暂缓。",
+                    "如果你已经有倾向，也可以顺手补一句原因，系统会继续承接。",
                 ],
             )
         if inferred_gate_choice == "defer":
@@ -290,8 +326,8 @@ def _build_next_case_from_reply(
                 previous_case=previous_case,
                 rerun_input=rerun_input,
                 merged_context=merged_context,
-                summary="已记录本轮选择：当前暂缓，不继续推进产品化。",
-                blocking_reason="当前已按你的选择暂缓，后续可在条件变化后重新启动分析。",
+                summary="这轮先记为暂缓，暂不继续推进产品化。",
+                blocking_reason="这轮先按暂缓处理；如果后面条件变了，再接着往下看。",
                 workflow_state="deferred",
                 output_kind="stage-block-card",
                 next_stage="decision-challenge",
@@ -305,8 +341,8 @@ def _build_next_case_from_reply(
                 previous_case=previous_case,
                 rerun_input=rerun_input,
                 merged_context=merged_context,
-                summary="已记录本轮选择：先评估非产品路径，再决定是否继续产品化。",
-                blocking_reason="当前已转向非产品路径验证，建议先完成流程、培训或管理方案试行。",
+                summary="这轮先转去看非产品路径，再决定要不要继续产品化。",
+                blocking_reason="这轮先按非产品路径看，先试流程、培训或管理方案。",
                 workflow_state="blocked",
                 output_kind="stage-block-card",
                 next_stage="decision-challenge",
@@ -321,6 +357,10 @@ def _build_next_case_from_reply(
         case_id=previous_case.case_id,
         context_profile=merged_context,
         show_case_id=True,
+        metadata={
+            SESSION_ROLE_RELATIONSHIPS_KEY: role_relationships,
+            "skip_pre_framing": previous_case.output_kind == "continue-guidance-card",
+        },
     )
 
 
@@ -345,7 +385,7 @@ def _build_gate_outcome_case(
     case_state.next_actions = next_actions
     case_state.metadata["selected_modes"] = ["decision-challenge"]
     case_state.metadata["next_stage"] = next_stage
-    return case_state
+    return apply_case_copywriting(case_state)
 
 
 def _empty_note_buckets() -> Dict[str, list[str]]:
@@ -369,25 +409,78 @@ def _merge_note_buckets(
         "constraint": "constraint_notes",
         "other": "other_notes",
     }
-    target_buckets = [bucket_mapping[category] for category in reply_analysis.categories]
-    if not target_buckets:
-        target_buckets = ["other_notes"]
-
-    for bucket_key in target_buckets:
-        if reply_text not in merged[bucket_key]:
-            merged[bucket_key].append(reply_text)
+    target_bucket = _select_primary_note_bucket(reply_analysis, bucket_mapping)
+    if reply_text not in merged[target_bucket]:
+        merged[target_bucket].append(reply_text)
     return merged
+
+
+def _select_primary_note_bucket(
+    reply_analysis: ReplyAnalysis,
+    bucket_mapping: Dict[str, str],
+) -> str:
+    if reply_analysis.inferred_gate_choice:
+        return bucket_mapping["decision"]
+    if reply_analysis.context_updates or any(reply_analysis.role_relationships.values()):
+        return bucket_mapping["context"]
+    for category in ["decision", "evidence", "constraint", "context", "other"]:
+        if category in reply_analysis.categories:
+            return bucket_mapping[category]
+    return bucket_mapping["other"]
+
+
+def _merge_role_relationships(
+    previous_relationships: object,
+    reply_analysis: ReplyAnalysis,
+) -> Dict[str, list[str]]:
+    merged = _normalize_role_relationships(previous_relationships)
+    current = _normalize_role_relationships(reply_analysis.role_relationships)
+    for key, items in current.items():
+        if items:
+            merged[key] = list(items)
+            continue
+        for item in items:
+            if item not in merged[key]:
+                merged[key].append(item)
+    return merged
+
+
+def _normalize_role_relationships(value: object) -> Dict[str, list[str]]:
+    normalized = {
+        "proposers": [],
+        "users": [],
+        "outcome_owners": [],
+    }
+    if not isinstance(value, dict):
+        return normalized
+    for key in normalized:
+        items = value.get(key, [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            rendered = normalize_role_name(str(item).strip())
+            if rendered and rendered not in normalized[key]:
+                normalized[key].append(rendered)
+    return normalized
 
 
 def _merge_context_profile(
     existing: Dict[str, object],
     updates: Optional[Dict[str, object]],
+    source_text: str = "",
 ) -> Dict[str, object]:
     merged = dict(existing)
     if not updates:
         return merged
     for key, value in updates.items():
         if key == "target_user_roles":
+            if _has_explicit_correction_signal(source_text):
+                deduped_roles: list[str] = []
+                for role in list(value):
+                    if role not in deduped_roles:
+                        deduped_roles.append(role)
+                merged[key] = deduped_roles
+                continue
             current_roles = list(merged.get(key, []))
             for role in list(value):
                 if role not in current_roles:
@@ -406,3 +499,44 @@ def _resolve_gate_resolution_kind(recommended_option: str, user_choice: str) -> 
     if user_choice == recommended_option:
         return "accepted-recommendation"
     return "overrode-recommendation"
+
+
+def _is_pending_question_answered(
+    question: str,
+    merged_context: Dict[str, object],
+    reply_analysis: ReplyAnalysis,
+    reply_text: str,
+) -> bool:
+    del reply_analysis
+    if "企业产品、消费者产品还是内部产品" in question:
+        return bool(merged_context.get("business_model"))
+    if "主要使用平台是桌面端、移动端、小程序还是多端" in question:
+        return bool(merged_context.get("primary_platform"))
+    if "谁提出需求、谁使用产品、谁承担最终结果" in question:
+        roles = merged_context.get("target_user_roles", [])
+        normalized_roles = [str(role).strip() for role in roles] if isinstance(roles, list) else []
+        has_responsibility_signal = any(
+            keyword in reply_text for keyword in ["负责", "结果", "店长", "管理者", "负责人", "老板", "诊所管理者"]
+        )
+        return len([role for role in normalized_roles if role]) >= 2 and has_responsibility_signal
+    return False
+
+
+def _has_explicit_correction_signal(source_text: str) -> bool:
+    text = source_text.strip()
+    if not text:
+        return False
+    return any(
+        pattern in text
+        for pattern in [
+            "不是",
+            "而是",
+            "其实是",
+            "其实不是",
+            "更准确说",
+            "准确说",
+            "刚确认",
+            "修正一下",
+            "改成",
+        ]
+    )

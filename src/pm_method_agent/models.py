@@ -65,6 +65,182 @@ class DecisionGate:
 
 
 @dataclass
+class PreFramingDirection:
+    direction_id: str
+    label: str
+    summary: str
+    assumptions: List[str] = field(default_factory=list)
+    confidence: str = "medium"
+
+    def to_dict(self) -> Dict[str, object]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "PreFramingDirection":
+        return cls(
+            direction_id=str(payload["direction_id"]),
+            label=str(payload["label"]),
+            summary=str(payload["summary"]),
+            assumptions=list(payload.get("assumptions", [])),
+            confidence=str(payload.get("confidence", "medium")),
+        )
+
+
+@dataclass
+class PreFramingResult:
+    triggered: bool = False
+    reason: str = ""
+    candidate_directions: List[PreFramingDirection] = field(default_factory=list)
+    priority_questions: List[str] = field(default_factory=list)
+    recommended_direction_id: str = ""
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "triggered": self.triggered,
+            "reason": self.reason,
+            "candidate_directions": [item.to_dict() for item in self.candidate_directions],
+            "priority_questions": self.priority_questions,
+            "recommended_direction_id": self.recommended_direction_id,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "PreFramingResult":
+        return cls(
+            triggered=bool(payload.get("triggered", False)),
+            reason=str(payload.get("reason", "")),
+            candidate_directions=[
+                PreFramingDirection.from_dict(item)
+                for item in payload.get("candidate_directions", [])
+            ],
+            priority_questions=list(payload.get("priority_questions", [])),
+            recommended_direction_id=str(payload.get("recommended_direction_id", "")),
+        )
+
+
+@dataclass
+class ProjectProfile:
+    project_profile_id: str
+    project_name: str
+    context_profile: Dict[str, object] = field(default_factory=dict)
+    stable_constraints: List[str] = field(default_factory=list)
+    success_metrics: List[str] = field(default_factory=list)
+    notes: List[str] = field(default_factory=list)
+    metadata: Dict[str, object] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "project_profile_id": self.project_profile_id,
+            "project_name": self.project_name,
+            "context_profile": self.context_profile,
+            "stable_constraints": self.stable_constraints,
+            "success_metrics": self.success_metrics,
+            "notes": self.notes,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "ProjectProfile":
+        return cls(
+            project_profile_id=str(payload["project_profile_id"]),
+            project_name=str(payload.get("project_name", "")),
+            context_profile=dict(payload.get("context_profile", {})),
+            stable_constraints=list(payload.get("stable_constraints", [])),
+            success_metrics=list(payload.get("success_metrics", [])),
+            notes=list(payload.get("notes", [])),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+
+@dataclass
+class WorkspaceState:
+    workspace_id: str
+    active_case_id: str = ""
+    active_project_profile_id: str = ""
+    recent_case_ids: List[str] = field(default_factory=list)
+    metadata: Dict[str, object] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "workspace_id": self.workspace_id,
+            "active_case_id": self.active_case_id,
+            "active_project_profile_id": self.active_project_profile_id,
+            "recent_case_ids": self.recent_case_ids,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "WorkspaceState":
+        return cls(
+            workspace_id=str(payload["workspace_id"]),
+            active_case_id=str(payload.get("active_case_id", "")),
+            active_project_profile_id=str(payload.get("active_project_profile_id", "")),
+            recent_case_ids=list(payload.get("recent_case_ids", [])),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+
+@dataclass
+class RuntimeSession:
+    session_id: str
+    workspace_id: str
+    active_case_id: str = ""
+    runtime_status: str = "idle"
+    current_query_id: str = ""
+    current_loop_state: str = "idle"
+    turn_count: int = 0
+    resume_from: str = ""
+    context_budget: Dict[str, object] = field(default_factory=dict)
+    compression_state: Dict[str, object] = field(default_factory=dict)
+    pending_hooks: List[Dict[str, object]] = field(default_factory=list)
+    pending_tool_calls: List[Dict[str, object]] = field(default_factory=list)
+    last_terminal_event: Dict[str, object] = field(default_factory=dict)
+    children_agent_ids: List[str] = field(default_factory=list)
+    event_log: List[Dict[str, object]] = field(default_factory=list)
+    runtime_metadata: Dict[str, object] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "session_id": self.session_id,
+            "workspace_id": self.workspace_id,
+            "active_case_id": self.active_case_id,
+            "runtime_status": self.runtime_status,
+            "current_query_id": self.current_query_id,
+            "current_loop_state": self.current_loop_state,
+            "turn_count": self.turn_count,
+            "resume_from": self.resume_from,
+            "context_budget": self.context_budget,
+            "compression_state": self.compression_state,
+            "pending_hooks": self.pending_hooks,
+            "pending_tool_calls": self.pending_tool_calls,
+            "last_terminal_event": self.last_terminal_event,
+            "children_agent_ids": self.children_agent_ids,
+            "event_log": self.event_log,
+            "runtime_metadata": self.runtime_metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, object]) -> "RuntimeSession":
+        return cls(
+            session_id=str(payload["session_id"]),
+            workspace_id=str(payload["workspace_id"]),
+            active_case_id=str(payload.get("active_case_id", "")),
+            runtime_status=str(payload.get("runtime_status", "idle")),
+            current_query_id=str(payload.get("current_query_id", "")),
+            current_loop_state=str(payload.get("current_loop_state", "idle")),
+            turn_count=int(payload.get("turn_count", 0)),
+            resume_from=str(payload.get("resume_from", "")),
+            context_budget=dict(payload.get("context_budget", {})),
+            compression_state=dict(payload.get("compression_state", {})),
+            pending_hooks=list(payload.get("pending_hooks", [])),
+            pending_tool_calls=list(payload.get("pending_tool_calls", [])),
+            last_terminal_event=dict(payload.get("last_terminal_event", {})),
+            children_agent_ids=list(payload.get("children_agent_ids", [])),
+            event_log=list(payload.get("event_log", [])),
+            runtime_metadata=dict(payload.get("runtime_metadata", {})),
+        )
+
+
+@dataclass
 class CaseState:
     case_id: str
     stage: str
@@ -74,6 +250,7 @@ class CaseState:
     blocking_reason: str = ""
     pending_questions: List[str] = field(default_factory=list)
     context_profile: Dict[str, object] = field(default_factory=dict)
+    pre_framing_result: Optional[PreFramingResult] = None
     normalized_summary: str = ""
     evidence: List[str] = field(default_factory=list)
     unknowns: List[str] = field(default_factory=list)
@@ -114,6 +291,7 @@ class CaseState:
             "pending_questions": self.pending_questions,
             "raw_input": self.raw_input,
             "context_profile": self.context_profile,
+            "pre_framing_result": self.pre_framing_result.to_dict() if self.pre_framing_result else None,
             "normalized_summary": self.normalized_summary,
             "evidence": self.evidence,
             "unknowns": self.unknowns,
@@ -134,6 +312,11 @@ class CaseState:
             blocking_reason=str(payload.get("blocking_reason", "")),
             pending_questions=list(payload.get("pending_questions", [])),
             context_profile=dict(payload.get("context_profile", {})),
+            pre_framing_result=(
+                PreFramingResult.from_dict(payload["pre_framing_result"])
+                if isinstance(payload.get("pre_framing_result"), dict)
+                else None
+            ),
             normalized_summary=str(payload.get("normalized_summary", "")),
             evidence=list(payload.get("evidence", [])),
             unknowns=list(payload.get("unknowns", [])),

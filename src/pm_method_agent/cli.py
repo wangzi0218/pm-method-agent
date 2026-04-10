@@ -7,8 +7,21 @@ from typing import List, Optional
 
 from pm_method_agent.http_service import run_http_server
 from pm_method_agent.orchestrator import run_analysis_with_context
-from pm_method_agent.renderers import render_case_history, render_case_state
+from pm_method_agent.renderers import (
+    build_workspace_cases_payload,
+    render_case_history,
+    render_case_state,
+    render_workspace_overview,
+)
+from pm_method_agent.runtime_config import ensure_local_env_loaded
+from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
+from pm_method_agent.workspace_service import (
+    activate_workspace_case,
+    default_workspace_store,
+    get_or_create_workspace,
+    save_workspace,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -119,14 +132,23 @@ def build_session_parser() -> argparse.ArgumentParser:
     history_parser = subparsers.add_parser("history", help="查看当前会话的历史和状态变化。")
     history_parser.add_argument("case_id", help="会话案例编号。")
 
+    workspace_parser = subparsers.add_parser("workspace", help="查看或切换当前工作区。")
+    workspace_parser.add_argument("workspace_id", help="工作区标识。")
+    workspace_parser.add_argument("--switch-case-id", help="切换当前活跃案例。")
+
     serve_parser = subparsers.add_parser("serve", help="启动本地 HTTP 服务。")
     serve_parser.add_argument("--host", default="127.0.0.1", help="监听地址。默认 127.0.0.1。")
     serve_parser.add_argument("--port", type=int, default=8000, help="监听端口。默认 8000。")
+
+    agent_parser = subparsers.add_parser("agent", help="通过统一入口模拟 agent/skill 交互。")
+    agent_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+    agent_parser.add_argument("message", help="用户当前输入。")
 
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    ensure_local_env_loaded()
     args_list = list(argv) if argv is not None else sys.argv[1:]
     if _is_session_command(args_list):
         return _run_session_command(args_list)
@@ -151,6 +173,8 @@ def _run_session_command(argv: List[str]) -> int:
     parser = build_session_parser()
     args = parser.parse_args(argv)
     store = default_store(args.store_dir)
+    workspace_store = default_workspace_store(args.store_dir)
+    agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
 
     try:
         if args.command == "start":
@@ -170,8 +194,84 @@ def _run_session_command(argv: List[str]) -> int:
             )
         elif args.command == "show":
             case_state = get_case(case_id=args.case_id, store=store)
+        elif args.command == "workspace":
+            workspace = get_or_create_workspace(args.workspace_id, store=workspace_store)
+            if args.switch_case_id:
+                case_state = get_case(case_id=args.switch_case_id, store=store)
+                activate_workspace_case(workspace, case_state.case_id)
+                save_workspace(workspace, store=workspace_store)
+                if args.format == "json":
+                    print(
+                        json.dumps(
+                            {
+                                "workspace": workspace.to_dict(),
+                                "case": case_state.to_dict(),
+                                "rendered_card": render_case_state(case_state),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(f"已切换到案例 {case_state.case_id}。")
+                    print("")
+                    print(render_case_state(case_state))
+                return 0
+            recent_cases = []
+            for case_id in workspace.recent_case_ids:
+                try:
+                    recent_cases.append(get_case(case_id=case_id, store=store))
+                except FileNotFoundError:
+                    continue
+            if args.format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "workspace": workspace.to_dict(),
+                            "cases": build_workspace_cases_payload(workspace, recent_cases),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(render_workspace_overview(workspace, recent_cases))
+            return 0
         elif args.command == "serve":
             run_http_server(host=args.host, port=args.port, store_dir=args.store_dir)
+            return 0
+        elif args.command == "agent":
+            response = agent_shell.handle_message(
+                message=args.message,
+                workspace_id=args.workspace_id,
+            )
+            if args.format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "action": response.action,
+                            "message": response.message,
+                            "workspace": response.workspace.to_dict(),
+                            "runtime_session": response.runtime_session.to_dict(),
+                            "case": response.case_state.to_dict() if response.case_state else None,
+                            "project_profile": (
+                                response.project_profile.to_dict() if response.project_profile else None
+                            ),
+                            "rendered_card": response.rendered_card,
+                            "rendered_history": response.rendered_history,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(response.message)
+                if response.rendered_history:
+                    print("")
+                    print(response.rendered_history)
+                elif response.rendered_card:
+                    print("")
+                    print(response.rendered_card)
             return 0
         else:
             case_state = get_case(case_id=args.case_id, store=store)
@@ -244,7 +344,7 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show", "history", "serve"}
+    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent"}
     index = 0
     while index < len(args_list):
         token = args_list[index]
