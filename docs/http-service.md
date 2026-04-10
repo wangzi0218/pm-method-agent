@@ -63,7 +63,7 @@
 
 用途：
 
-- 在真正执行前，统一评估动作、命令和写入路径是否允许继续
+- 在真正执行前，统一评估动作、命令、读取路径和写入路径是否允许继续
 - 给未来 hook、网页壳或本地执行器复用同一套前置校验结果
 
 示例请求体：
@@ -72,6 +72,7 @@
 {
   "action_name": "project-profile-service.update-or-create",
   "command_args": ["git", "status"],
+  "read_paths": ["docs/internal/runtime-policy.md"],
   "write_paths": ["src/pm_method_agent/runtime_policy.py"]
 }
 ```
@@ -94,6 +95,37 @@
   "timeout_seconds": 15
 }
 ```
+
+### `GET /workspaces/{workspace_id}/runtime/approvals`
+
+用途：
+
+- 查看当前工作区待确认的运行时操作
+- 让网页壳或本地 agent 在“阻断后”知道下一步该怎么继续
+
+### `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/approve`
+
+用途：
+
+- 批准一条待确认操作
+- 按原请求继续执行对应工具
+- 保持 runtime session、事件日志和执行账本闭环
+
+### `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/reject`
+
+用途：
+
+- 显式拒绝一条待确认操作
+- 让这条审批退出待处理队列
+- 把拒绝状态写入审批账本
+
+### `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/expire`
+
+用途：
+
+- 显式把一条待确认操作标记为过期
+- 让网页壳或平台侧可以清理长期未处理项
+- 保留“已经过期”的正式状态，而不是直接丢失记录
 
 ### `POST /cases`
 
@@ -167,6 +199,21 @@
 用途：
 
 - 读取当前工作区状态
+- 读取当前工作区审批偏好
+
+### `GET /workspaces/{workspace_id}/approval-preferences`
+
+用途：
+
+- 读取当前工作区审批偏好
+- 查看哪些动作会在这个工作区被自动批准
+
+### `POST /workspaces/{workspace_id}/approval-preferences`
+
+用途：
+
+- 更新当前工作区审批偏好
+- 当前第一版主要支持 `auto_approve_actions`
 
 ### `GET /workspaces/{workspace_id}/cases`
 
@@ -259,19 +306,49 @@
 
 用途：
 
-- 查看当前已经暴露的本地工具
+- 查看当前已经暴露的工具
 
 当前第一版已暴露：
 
 - `local-command`
+- `local-directory-list`
+- `local-text-file-read`
+- `local-text-search`
 - `local-text-file-write`
+- `platform-workspace-overview`
+- `platform-case-read`
+- `platform-project-profile-read`
+- `platform-project-profile-upsert`
+
+返回内容除了工具名和说明，还会带上：
+
+- `execution_scope`
+- `input_schema`
+- `supports_read_paths`
+- `supports_write_paths`
+- `supports_command_args`
+- `default_timeout_seconds`
+
+这样不同外壳就不用再自己猜每个工具该怎么调用。
+同时也能开始区分：
+
+- 哪些工具要走本地环境
+- 哪些工具直接读取平台状态
+- 哪些平台工具会改写平台内状态
+
+### `GET /runtime/tools/{tool_name}`
+
+用途：
+
+- 查看单个本地工具的完整元数据
+- 给 CLI、网页或 agent 壳做按需发现
 
 ### `POST /runtime/tools/execute`
 
 用途：
 
-- 通过通用工具入口执行一个本地工具
-- 当前第一版已支持 `local-command` 和 `local-text-file-write`
+- 通过通用工具入口执行一个工具
+- 当前第一版已支持本地工具和平台工具两类执行面
 
 ## 当前推荐接入方式
 

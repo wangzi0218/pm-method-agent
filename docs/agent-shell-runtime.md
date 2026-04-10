@@ -41,6 +41,7 @@
 - `active_case_id`
 - `active_project_profile_id`
 - `recent_case_ids`
+- `metadata.approval_preferences`
 
 这意味着系统已经能：
 
@@ -48,6 +49,7 @@
 - 记住你当前所在项目的大背景
 - 在后续一句补充里默认接住当前上下文
 - 列出最近几个案例，并在它们之间切换
+- 给当前工作区保存局部审批偏好，例如自动批准某些低风险动作
 
 ### `case`
 
@@ -169,6 +171,15 @@ PYTHONPATH=src python3 -m pm_method_agent.cli agent \
 
 ```bash
 PYTHONPATH=src python3 -m pm_method_agent.cli workspace demo
+```
+
+更新当前工作区审批偏好：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli \
+  --format json \
+  workspace demo \
+  --approval-preferences-json '{"auto_approve_actions":["project-profile-service.update-or-create"]}'
 ```
 
 切到上一个案例：

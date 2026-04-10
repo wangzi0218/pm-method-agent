@@ -232,7 +232,7 @@ def _build_pre_framing_card(case_state: CaseState) -> CaseState:
         if missing_context_questions
         else list(pre_framing_result.priority_questions)
     )
-    case_state.normalized_summary = "这件事现在还有几种都说得通的理解，先收一收方向，再继续往下看会更稳。"
+    case_state.normalized_summary = pre_framing_result.reason or "这件事还有几种都说得通的理解，先收一收会更稳。"
     case_state.extend_next_actions(
         [
             "先回答更像哪一类问题，再决定要不要往方案层走。",

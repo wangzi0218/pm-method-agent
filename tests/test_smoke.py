@@ -15,6 +15,7 @@ from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.case_copywriter import LLMCaseCopywriter, apply_case_copywriting, build_case_copywriter_from_env
 from pm_method_agent.cli import main
 from pm_method_agent.command_executor import LocalCommandExecutor
+from pm_method_agent.directory_list_tool import LocalDirectoryLister
 from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
 from pm_method_agent.http_service import PMMethodHTTPService
 from pm_method_agent.llm_adapter import (
@@ -35,8 +36,13 @@ from pm_method_agent.project_profile_service import (
     get_project_profile,
 )
 from pm_method_agent.runtime_session_service import (
+    RUNTIME_EVENT_LOG_LIMIT,
+    RUNTIME_LEDGER_LIMIT,
+    append_runtime_event,
     cancel_runtime_query,
     close_incomplete_hooks,
+    complete_hook_call,
+    complete_tool_call,
     default_runtime_session_store,
     fail_runtime_query,
     get_or_create_runtime_session,
@@ -57,16 +63,28 @@ from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runt
 from pm_method_agent.runtime_policy import (
     check_runtime_action_policy,
     check_runtime_command_policy,
+    check_runtime_read_policy,
+    resolve_runtime_approval_handling,
     check_runtime_write_policy,
     load_runtime_policy,
 )
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
+from pm_method_agent.text_file_read_tool import LocalTextFileReader
+from pm_method_agent.text_search_tool import LocalTextSearcher
 from pm_method_agent.text_file_tool import LocalTextFileWriter
 from pm_method_agent.tool_runtime import (
     LocalToolExecutionOutcome,
     LocalToolHandler,
     LocalToolRequest,
     LocalToolRuntime,
+)
+from pm_method_agent.workspace_service import (
+    activate_workspace_case,
+    default_workspace_store,
+    get_or_create_workspace,
+    get_workspace_approval_preferences,
+    save_workspace,
+    update_workspace_approval_preferences,
 )
 
 
@@ -199,6 +217,18 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertIn("患者", analysis.context_updates["target_user_roles"])
         self.assertIn("医生", analysis.context_updates["target_user_roles"])
+
+    def test_heuristic_reply_interpreter_can_understand_consumer_app_role_phrasing(self) -> None:
+        interpreter = HeuristicReplyInterpreter()
+        analysis = interpreter.analyze_reply(
+            "这是一个内容社区 App，运营提出这个想法，新用户是实际使用者。现在发帖转化主要卡在注册后第一天。"
+        )
+
+        self.assertEqual(analysis.context_updates["business_model"], "toc")
+        self.assertEqual(analysis.context_updates["primary_platform"], "native-app")
+        self.assertEqual(analysis.context_updates["target_user_roles"], ["运营", "新用户"])
+        self.assertEqual(analysis.role_relationships["proposers"], ["运营"])
+        self.assertEqual(analysis.role_relationships["users"], ["新用户"])
 
     def test_heuristic_reply_interpreter_can_extract_natural_role_relationships(self) -> None:
         interpreter = HeuristicReplyInterpreter()
@@ -357,9 +387,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
             },
         )
         rendered = render_case_state(case_state)
-        self.assertIn("## 关键判断", rendered)
-        self.assertIn("## 建议先做", rendered)
-        self.assertIn("### 场景信息", rendered)
+        self.assertIn("## 我主要看到这几个点", rendered)
+        self.assertIn("## 更建议先做", rendered)
+        self.assertIn("### 现状与证据", rendered)
         self.assertIn("### 决策与验证", rendered)
 
     def test_rendered_review_card_can_polish_finding_copy_without_mutating_data(self) -> None:
@@ -401,6 +431,61 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("输入里已经混进方案了，现状证据也还不够。", rendered)
         self.assertIn("基础场景信息已经够用了，也没看到更优的非产品路径，可以继续往验证走。", rendered)
 
+    def test_rendered_review_card_can_dedupe_overlap_between_actions_and_unknowns(self) -> None:
+        from pm_method_agent.orchestrator import run_analysis_with_context
+
+        case_state = run_analysis_with_context(
+            "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "mobile-web",
+                "target_user_roles": ["前台", "诊所管理者"],
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertIn("补上现状流程、失败案例和现有替代做法。", rendered)
+        self.assertNotIn("- 当前流程是怎么运行的", rendered)
+        self.assertNotIn("- 当前是否已有替代方案或绕路方式", rendered)
+        self.assertIn("- 当前的基线数据是多少", rendered)
+
+    def test_rendered_review_card_can_merge_compact_decision_context_findings(self) -> None:
+        from pm_method_agent.orchestrator import run_analysis_with_context
+
+        case_state = run_analysis_with_context(
+            "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "mobile-web",
+                "target_user_roles": ["前台", "诊所管理者"],
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertIn("还有几个场景前提会直接影响后面的判断", rendered)
+        self.assertIn("这是企业产品场景", rendered)
+        self.assertIn("现在主要是非桌面端场景", rendered)
+        self.assertEqual(rendered.count("这条会影响后面怎么判断，但不用单独放大。"), 1)
+
+    def test_rendered_review_card_does_not_show_summary_count_markers(self) -> None:
+        from pm_method_agent.orchestrator import run_analysis_with_context
+
+        case_state = run_analysis_with_context(
+            "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "mobile-web",
+                "target_user_roles": ["前台", "诊所管理者"],
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertNotIn("另有 1 项", rendered)
+        self.assertNotIn("另有 2 项", rendered)
+
     def test_session_service_can_create_and_load_case(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)
@@ -422,9 +507,85 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         rendered = render_case_state(case_state)
 
-        self.assertIn("## 更像哪几类问题", rendered)
-        self.assertIn("## 先确认这几件事", rendered)
-        self.assertIn("## 更建议先沿哪条继续", rendered)
+        self.assertIn("## 我先按这几个方向理解", rendered)
+        self.assertIn("## 现在更值得先补", rendered)
+        self.assertIn("## 如果先按这个方向继续", rendered)
+
+    def test_pre_framing_can_identify_core_problem_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "目前用户反馈的微信消息太多、打扰频繁，真正要解决的是消息过载问题，还是通知打扰问题，还是群消息管理问题？三者对应的产品方向完全不同，需要先明确核心问题定义。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("这次最先要收敛的到底是哪一个问题", rendered)
+        self.assertIn("现在最大的卡点其实是「核心问题还没收住」", rendered)
+
+    def test_pre_framing_can_identify_user_scene_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "本次要优化的消息提醒体验，核心面向的是职场用户、学生用户，还是中老年用户？不同人群的痛点强度与使用场景差异极大。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("用户与场景还没钉住", rendered)
+        self.assertIn("这次最核心的人群到底是谁", rendered)
+
+    def test_pre_framing_can_identify_scope_boundary_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "本次要做的消息分类需求，是否包含公众号、小程序通知、群聊、私聊？是否要覆盖所有消息类型，范围未定义。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("范围与边界还没锁住", rendered)
+        self.assertIn("这次准备先覆盖哪些对象，不覆盖哪些对象", rendered)
+
+    def test_pre_framing_can_identify_goal_value_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "本次对聊天列表体验的优化，核心目标是提升使用时长、降低卸载率，还是提升关键操作效率？成功指标不明确，需求优先级无法锚定。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("目标与价值还没钉住", rendered)
+        self.assertIn("这次最想优先拉动的目标到底是什么", rendered)
+
+    def test_pre_framing_can_identify_constraints_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "现有微信后台数据与存储架构，是否支持对消息做实时分类、优先级计算？底层能力是否满足需求前提尚不明确。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("条件与约束还没摸清", rendered)
+        self.assertIn("现有底层能力到底支不支持这件事成立", rendered)
 
     def test_project_profile_service_can_create_and_load_profile(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -807,6 +968,22 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(analysis.role_relationships["proposers"], [])
 
+    def test_hybrid_reply_interpreter_can_backfill_explicit_user_phrase_from_llm(self) -> None:
+        llm_adapter = StubLLMAdapter(
+            content=(
+                '{"role_relationships":{"users":["新用户"]},'
+                '"categories":["context"],"parser_confidence":"strong"}'
+            )
+        )
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=llm_adapter),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("这是一个内容社区 App，新用户是实际使用者。")
+
+        self.assertEqual(analysis.role_relationships["users"], ["新用户"])
+
     def test_hybrid_reply_interpreter_does_not_backfill_single_proposer_without_explicit_signal(self) -> None:
         llm_adapter = StubLLMAdapter(
             content=(
@@ -992,9 +1169,15 @@ class OrchestratorSmokeTest(unittest.TestCase):
                             "blocked_intents": ["switch-case"],
                             "blocked_actions": ["session-service.create-case"],
                             "approval_required_actions": ["project-profile-service.*"],
+                            "auto_approve_actions": ["workspace-service.*"],
+                            "auto_expire_approval_actions": ["renderer.case-state"],
+                            "manual_approval_only_actions": ["command-executor.run"],
                             "command_allowlist_prefixes": ["git status", "python -m unittest"],
                             "blocked_command_patterns": ["rm *"],
                             "approval_required_command_patterns": ["git push*"],
+                            "allowed_read_roots": ["docs", "examples"],
+                            "blocked_read_paths": [".env*", "secrets/*"],
+                            "approval_required_read_paths": ["docs/internal/*"],
                             "allowed_write_roots": ["src", "tests"],
                             "blocked_write_paths": [".env*", "secrets/*"],
                             "approval_required_write_paths": ["docs/releases/*"],
@@ -1011,9 +1194,15 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(policy.blocked_intents, ["switch-case"])
         self.assertEqual(policy.blocked_actions, ["session-service.create-case"])
         self.assertEqual(policy.approval_required_actions, ["project-profile-service.*"])
+        self.assertEqual(policy.auto_approve_actions, ["workspace-service.*"])
+        self.assertEqual(policy.auto_expire_approval_actions, ["renderer.case-state"])
+        self.assertEqual(policy.manual_approval_only_actions, ["command-executor.run"])
         self.assertEqual(policy.command_allowlist_prefixes, ["git status", "python -m unittest"])
         self.assertEqual(policy.blocked_command_patterns, ["rm *"])
         self.assertEqual(policy.approval_required_command_patterns, ["git push*"])
+        self.assertTrue(policy.allowed_read_roots[0].endswith("/docs"))
+        self.assertEqual(policy.blocked_read_paths, [".env*", "secrets/*"])
+        self.assertEqual(policy.approval_required_read_paths, ["docs/internal/*"])
         self.assertTrue(policy.allowed_write_roots[0].endswith("/src"))
         self.assertEqual(policy.blocked_write_paths, [".env*", "secrets/*"])
         self.assertEqual(policy.approval_required_write_paths, ["docs/releases/*"])
@@ -1047,6 +1236,49 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIsNotNone(approval)
         self.assertIn("需要先人工确认", approval.reason)
         self.assertIsNone(allowed)
+
+    def test_runtime_approval_handling_can_resolve_manual_auto_approve_and_auto_expire(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "auto_approve_actions": ["workspace-service.*"],
+                            "auto_expire_approval_actions": ["renderer.case-state"],
+                            "manual_approval_only_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        manual = resolve_runtime_approval_handling(
+            policy,
+            action_name="project-profile-service.update-or-create",
+            workspace_auto_approve_actions=["project-profile-service.update-or-create"],
+        )
+        workspace_auto = resolve_runtime_approval_handling(
+            policy,
+            action_name="case-service.read",
+            workspace_auto_approve_actions=["case-service.*"],
+        )
+        policy_auto = resolve_runtime_approval_handling(
+            policy,
+            action_name="workspace-service.load-recent-cases",
+        )
+        auto_expire = resolve_runtime_approval_handling(
+            policy,
+            action_name="renderer.case-state",
+        )
+
+        self.assertEqual(manual.mode, "manual-only")
+        self.assertEqual(workspace_auto.mode, "auto-approve")
+        self.assertEqual(policy_auto.mode, "auto-approve")
+        self.assertEqual(auto_expire.mode, "auto-expire")
 
     def test_runtime_command_policy_can_enforce_allowlist_blocklist_and_approval(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1112,6 +1344,38 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIsNotNone(outside)
         self.assertIn("README.md", outside.reason)
 
+    def test_runtime_read_policy_can_enforce_roots_blocklist_and_approval(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allowed_read_roots": ["docs", "examples"],
+                            "blocked_read_paths": [".env*", "secrets/*"],
+                            "approval_required_read_paths": ["docs/internal/*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        allowed = check_runtime_read_policy(policy, read_paths=["docs/guide.md"])
+        blocked = check_runtime_read_policy(policy, read_paths=[".env.local"])
+        approval = check_runtime_read_policy(policy, read_paths=["docs/internal/plan.md"])
+        outside = check_runtime_read_policy(policy, read_paths=["README.md"])
+
+        self.assertIsNone(allowed)
+        self.assertIsNotNone(blocked)
+        self.assertIn(".env.local", blocked.reason)
+        self.assertIsNotNone(approval)
+        self.assertIn("需要先人工确认", approval.reason)
+        self.assertIsNotNone(outside)
+        self.assertIn("README.md", outside.reason)
+
     def test_operation_enforcement_can_return_unified_decision(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1122,6 +1386,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
                         "runtime_policy": {
                             "approval_required_actions": ["project-profile-service.*"],
                             "command_allowlist_prefixes": ["git status"],
+                            "allowed_read_roots": ["docs"],
                             "allowed_write_roots": ["src"],
                         }
                     },
@@ -1135,6 +1400,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             policy,
             action_name="renderer.case-state",
             command_args=["git", "status"],
+            read_paths=["docs/runtime.md"],
             write_paths=["src/pm_method_agent/runtime_policy.py"],
         )
         blocked = evaluate_operation_enforcement(
@@ -1144,7 +1410,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
 
         self.assertTrue(allowed.allowed)
-        self.assertEqual([item.decision for item in allowed.checks], ["allowed", "allowed", "allowed"])
+        self.assertEqual([item.decision for item in allowed.checks], ["allowed", "allowed", "allowed", "allowed"])
         self.assertFalse(blocked.allowed)
         self.assertEqual(blocked.violation_kind, "approval-required")
         self.assertEqual(blocked.checks[0].check_type, "action")
@@ -1200,6 +1466,92 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(pending_entry["hook_name"], "demo-hook")
         self.assertIn("hook-call-failed", [item["event_type"] for item in runtime_session.event_log])
 
+    def test_runtime_session_event_ids_remain_monotonic_after_log_truncation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_store = default_runtime_session_store(tmpdir)
+            runtime_session = get_or_create_runtime_session("demo-event-log", store=runtime_store)
+
+            for index in range(RUNTIME_EVENT_LOG_LIMIT + 5):
+                append_runtime_event(
+                    runtime_session,
+                    "demo-event",
+                    {"index": index + 1},
+                )
+
+            save_runtime_session(runtime_session, store=runtime_store)
+            reloaded_session = get_or_create_runtime_session("demo-event-log", store=runtime_store)
+            append_runtime_event(reloaded_session, "demo-event", {"index": RUNTIME_EVENT_LOG_LIMIT + 6})
+
+        event_ids = [item["event_id"] for item in reloaded_session.event_log]
+        self.assertEqual(len(event_ids), RUNTIME_EVENT_LOG_LIMIT)
+        self.assertEqual(len(event_ids), len(set(event_ids)))
+        self.assertEqual(event_ids[0], "evt-0007")
+        self.assertEqual(event_ids[-1], "evt-0056")
+
+    def test_runtime_session_tool_call_ids_remain_monotonic_after_ledger_truncation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_store = default_runtime_session_store(tmpdir)
+            runtime_session = get_or_create_runtime_session("demo-ledger", store=runtime_store)
+            runtime_session.current_query_id = "query-0001"
+
+            for index in range(RUNTIME_LEDGER_LIMIT + 5):
+                entry = request_tool_call(
+                    runtime_session,
+                    tool_name="demo-tool",
+                    request_payload={"index": index + 1},
+                )
+                complete_tool_call(runtime_session, call_id=entry["call_id"], result_ref=f"tool:{index + 1}")
+
+            save_runtime_session(runtime_session, store=runtime_store)
+            reloaded_session = get_or_create_runtime_session("demo-ledger", store=runtime_store)
+            reloaded_session.current_query_id = "query-0002"
+            next_entry = request_tool_call(
+                reloaded_session,
+                tool_name="demo-tool",
+                request_payload={"index": RUNTIME_LEDGER_LIMIT + 6},
+            )
+
+        call_ids = [item["call_id"] for item in reloaded_session.execution_ledger]
+        self.assertEqual(len(call_ids), RUNTIME_LEDGER_LIMIT)
+        self.assertEqual(len(call_ids), len(set(call_ids)))
+        self.assertEqual(call_ids[0], "call-0007")
+        self.assertEqual(call_ids[-1], "call-0106")
+        self.assertEqual(next_entry["call_id"], "call-0106")
+
+    def test_runtime_session_hook_ids_remain_monotonic_across_completed_calls(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_store = default_runtime_session_store(tmpdir)
+            runtime_session = get_or_create_runtime_session("demo-hooks-monotonic", store=runtime_store)
+            runtime_session.current_query_id = "query-0001"
+
+            first = request_hook_call(
+                runtime_session,
+                hook_name="demo-hook",
+                hook_stage="pre-operation",
+                request_payload={"index": 1},
+            )
+            complete_hook_call(runtime_session, hook_call_id=first["hook_call_id"], result_payload={"ok": True})
+
+            second = request_hook_call(
+                runtime_session,
+                hook_name="demo-hook",
+                hook_stage="pre-operation",
+                request_payload={"index": 2},
+            )
+            complete_hook_call(runtime_session, hook_call_id=second["hook_call_id"], result_payload={"ok": True})
+
+            third = request_hook_call(
+                runtime_session,
+                hook_name="demo-hook",
+                hook_stage="pre-operation",
+                request_payload={"index": 3},
+            )
+
+        self.assertEqual(first["hook_call_id"], "hook-0001")
+        self.assertEqual(second["hook_call_id"], "hook-0002")
+        self.assertEqual(third["hook_call_id"], "hook-0003")
+        self.assertEqual(runtime_session.pending_hooks[-1]["hook_call_id"], "hook-0003")
+
     def test_cli_rules_command_can_render_effective_rule_layers(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1216,6 +1568,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
                             "blocked_intents": ["switch-case"],
                             "approval_required_actions": ["project-profile-service.*"],
                             "command_allowlist_prefixes": ["git status"],
+                            "allowed_read_roots": ["docs"],
                             "allowed_write_roots": ["src"],
                             "allow_new_cases": False,
                         },
@@ -1237,6 +1590,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("`switch-case`", rendered)
         self.assertIn("`project-profile-service.*`", rendered)
         self.assertIn("`git status`", rendered)
+        self.assertIn("允许读取根目录", rendered)
         self.assertIn("[身份描述]", rendered)
 
     def test_agent_shell_can_block_new_case_by_runtime_policy(self) -> None:
@@ -1535,6 +1889,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             )
             service = PMMethodHTTPService(store_dir=tmpdir)
             list_response = service.handle(method="GET", path="/runtime/tools")
+            describe_response = service.handle(method="GET", path="/runtime/tools/local-command")
             exec_response = service.handle(
                 method="POST",
                 path="/runtime/tools/execute",
@@ -1550,6 +1905,12 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(list_response.status_code, 200)
         self.assertEqual(list_response.payload["tools"][0]["tool_name"], "local-command")
+        self.assertIn("input_schema", list_response.payload["tools"][0])
+        self.assertEqual(list_response.payload["tools"][0]["execution_scope"], "local")
+        self.assertIn("platform-workspace-overview", [item["tool_name"] for item in list_response.payload["tools"]])
+        self.assertEqual(describe_response.status_code, 200)
+        self.assertEqual(describe_response.payload["tool"]["tool_name"], "local-command")
+        self.assertTrue(describe_response.payload["tool"]["supports_command_args"])
         self.assertEqual(exec_response.status_code, 200)
         self.assertEqual(exec_response.payload["tool_name"], "local-command")
         self.assertEqual(exec_response.payload["result"]["tool_name"], "local-command")
@@ -1582,6 +1943,195 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(result.action, "file-written")
         self.assertEqual(written, "hello tool runtime")
         self.assertEqual(result.output_payload["characters_written"], 18)
+
+    def test_local_directory_lister_can_list_directory_entries(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "a.txt").write_text("a", encoding="utf-8")
+            (root / "notes" / "sub").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / ".hidden").write_text("h", encoding="utf-8")
+            lister = LocalDirectoryLister(base_dir=tmpdir)
+            result = lister.list_directory(
+                path="notes",
+                workspace_id="dir-list-demo",
+            )
+
+        entry_names = [item["name"] for item in result.output_payload["entries"]]
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.action, "directory-listed")
+        self.assertEqual(entry_names, ["a.txt", "sub"])
+        self.assertFalse(result.output_payload["include_hidden"])
+
+    def test_local_directory_lister_can_be_blocked_by_read_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_read_paths": ["notes/private"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (root / "notes" / "private").mkdir(parents=True, exist_ok=True)
+            lister = LocalDirectoryLister(base_dir=tmpdir)
+            result = lister.list_directory(
+                path="notes/private",
+                workspace_id="dir-list-demo",
+            )
+
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.action, "directory-list-blocked")
+        self.assertEqual(result.terminal_state, "blocked")
+        self.assertIn("notes/private", result.reason)
+
+    def test_local_directory_lister_can_limit_entry_count(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "a.txt").write_text("a", encoding="utf-8")
+            (root / "notes" / "b.txt").write_text("b", encoding="utf-8")
+            lister = LocalDirectoryLister(base_dir=tmpdir)
+            result = lister.list_directory(
+                path="notes",
+                workspace_id="dir-list-demo",
+                max_entries=1,
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.output_payload["entry_count"], 1)
+        self.assertTrue(result.output_payload["truncated"])
+
+    def test_local_text_file_reader_can_read_existing_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "demo.txt").write_text("hello reader", encoding="utf-8")
+            reader = LocalTextFileReader(base_dir=tmpdir)
+            result = reader.read_text(
+                path="notes/demo.txt",
+                workspace_id="file-read-demo",
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.action, "file-read")
+        self.assertEqual(result.output_payload["content"], "hello reader")
+        self.assertFalse(result.output_payload["truncated"])
+
+    def test_local_text_searcher_can_search_directory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "a.txt").write_text("hello world\nnext line", encoding="utf-8")
+            (root / "notes" / "b.txt").write_text("something else\nHello there", encoding="utf-8")
+            searcher = LocalTextSearcher(base_dir=tmpdir)
+            result = searcher.search_text(
+                path="notes",
+                query="hello",
+                workspace_id="text-search-demo",
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.action, "text-searched")
+        self.assertEqual(result.output_payload["match_count"], 2)
+        self.assertEqual(result.output_payload["matches"][0]["relative_path"], "a.txt")
+
+    def test_local_text_searcher_can_be_blocked_by_read_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_read_paths": ["notes/private"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (root / "notes" / "private").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "private" / "a.txt").write_text("hello", encoding="utf-8")
+            searcher = LocalTextSearcher(base_dir=tmpdir)
+            result = searcher.search_text(
+                path="notes/private",
+                query="hello",
+                workspace_id="text-search-demo",
+            )
+
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.action, "text-search-blocked")
+        self.assertEqual(result.terminal_state, "blocked")
+        self.assertIn("notes/private", result.reason)
+
+    def test_local_text_searcher_can_limit_result_count(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "a.txt").write_text("hello\nhello\nhello", encoding="utf-8")
+            searcher = LocalTextSearcher(base_dir=tmpdir)
+            result = searcher.search_text(
+                path="notes",
+                query="hello",
+                workspace_id="text-search-demo",
+                max_results=2,
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.output_payload["match_count"], 2)
+        self.assertTrue(result.output_payload["truncated"])
+
+    def test_local_text_file_reader_can_be_blocked_by_read_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "blocked_read_paths": ["notes/secret.txt"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "secret.txt").write_text("hidden", encoding="utf-8")
+            reader = LocalTextFileReader(base_dir=tmpdir)
+            result = reader.read_text(
+                path="notes/secret.txt",
+                workspace_id="file-read-demo",
+            )
+
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.action, "file-read-blocked")
+        self.assertEqual(result.terminal_state, "blocked")
+        self.assertEqual(result.violation_kind, "blocked")
+        self.assertIn("notes/secret.txt", result.reason)
+
+    def test_local_text_file_reader_can_truncate_large_content(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "demo.txt").write_text("abcdefghij", encoding="utf-8")
+            reader = LocalTextFileReader(base_dir=tmpdir)
+            result = reader.read_text(
+                path="notes/demo.txt",
+                workspace_id="file-read-demo",
+                max_characters=4,
+            )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.output_payload["content"], "abcd")
+        self.assertTrue(result.output_payload["truncated"])
+        self.assertEqual(result.output_payload["max_characters"], 4)
 
     def test_local_text_file_writer_can_be_blocked_by_write_policy(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1649,6 +2199,142 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(write_response.payload["result"]["action"], "file-written")
         self.assertEqual(written, "from http")
 
+    def test_http_service_can_execute_platform_workspace_overview_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            case_store = default_store(tmpdir)
+            workspace_store = default_workspace_store(tmpdir)
+            case_state = create_case(
+                raw_input="前台希望减少漏提醒。",
+                context_profile={"business_model": "tob"},
+                store=case_store,
+            )
+            workspace = get_or_create_workspace("platform-http", store=workspace_store)
+            activate_workspace_case(workspace, case_state.case_id)
+            save_workspace(workspace, store=workspace_store)
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-workspace-overview",
+                        "workspace_id": "platform-http",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.payload["tool_name"], "platform-workspace-overview")
+        self.assertEqual(response.payload["result"]["action"], "platform-workspace-loaded")
+        self.assertEqual(response.payload["result"]["output_payload"]["workspace"]["active_case_id"], case_state.case_id)
+        self.assertIsNotNone(response.payload["result"]["runtime_session"])
+
+    def test_http_service_can_execute_local_text_file_read_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "http-read.txt").write_text("from http read", encoding="utf-8")
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            read_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "local-text-file-read",
+                        "workspace_id": "file-http-read",
+                        "path": "notes/http-read.txt",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(read_response.status_code, 200)
+        self.assertEqual(read_response.payload["tool_name"], "local-text-file-read")
+        self.assertEqual(read_response.payload["result"]["action"], "file-read")
+        self.assertEqual(read_response.payload["result"]["output_payload"]["content"], "from http read")
+
+    def test_http_service_can_execute_local_text_search_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "http-search.txt").write_text("alpha\nbeta\nalpha", encoding="utf-8")
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            search_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "local-text-search",
+                        "workspace_id": "search-http",
+                        "path": "notes",
+                        "query": "alpha",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(search_response.status_code, 200)
+        self.assertEqual(search_response.payload["tool_name"], "local-text-search")
+        self.assertEqual(search_response.payload["result"]["action"], "text-searched")
+        self.assertEqual(search_response.payload["result"]["output_payload"]["match_count"], 2)
+
+    def test_http_service_can_execute_local_directory_list_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "http-list.txt").write_text("ok", encoding="utf-8")
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            list_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "local-directory-list",
+                        "workspace_id": "dir-http",
+                        "path": "notes",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.payload["tool_name"], "local-directory-list")
+        self.assertEqual(list_response.payload["result"]["action"], "directory-listed")
+        self.assertEqual(list_response.payload["result"]["output_payload"]["entries"][0]["name"], "http-list.txt")
+
+    def test_http_service_policy_evaluate_can_check_read_paths(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allowed_read_roots": ["docs"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            evaluate_response = service.handle(
+                method="POST",
+                path="/runtime/policy/evaluate",
+                body=json.dumps(
+                    {
+                        "action_name": "text-file-reader.read",
+                        "read_paths": ["README.md"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(evaluate_response.status_code, 200)
+        self.assertFalse(evaluate_response.payload["decision"]["allowed"])
+        self.assertEqual(evaluate_response.payload["decision"]["checks"][1]["check_type"], "read-path")
+
     def test_cli_tool_command_can_execute_local_text_file_write_tool(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1693,6 +2379,786 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(payload["tool_name"], "local-text-file-write")
         self.assertEqual(payload["action"], "file-written")
         self.assertEqual(written, "from cli")
+
+    def test_cli_tool_command_can_list_and_describe_tools(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            list_stdout = StringIO()
+            with redirect_stdout(list_stdout):
+                list_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--list",
+                    ]
+                )
+            describe_stdout = StringIO()
+            with redirect_stdout(describe_stdout):
+                describe_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--describe",
+                        "local-text-file-read",
+                    ]
+                )
+
+        list_payload = json.loads(list_stdout.getvalue())
+        describe_payload = json.loads(describe_stdout.getvalue())
+        tool_names = [item["tool_name"] for item in list_payload["tools"]]
+
+        self.assertEqual(list_exit_code, 0)
+        self.assertIn("local-directory-list", tool_names)
+        self.assertIn("local-text-file-read", tool_names)
+        self.assertIn("local-text-search", tool_names)
+        self.assertIn("platform-workspace-overview", tool_names)
+        self.assertEqual(describe_exit_code, 0)
+        self.assertEqual(describe_payload["tool_name"], "local-text-file-read")
+        self.assertEqual(describe_payload["kind"], "file-read")
+        self.assertEqual(describe_payload["execution_scope"], "local")
+        self.assertIn("path", describe_payload["input_schema"]["required"])
+
+    def test_cli_tool_command_can_execute_platform_case_read_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            case_store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="想提升新用户发帖率。",
+                context_profile={"business_model": "toc", "primary_platform": "native-app"},
+                store=case_store,
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "platform-case-read",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "case_id": case_state.case_id,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "platform-case-read")
+        self.assertEqual(payload["action"], "platform-case-loaded")
+        self.assertEqual(payload["output_payload"]["case"]["case_id"], case_state.case_id)
+        self.assertIsNotNone(payload["runtime_session"])
+
+    def test_cli_tool_command_can_execute_platform_project_profile_upsert_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "platform-project-profile-upsert",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "platform-upsert-cli",
+                                "project_name": "医疗服务平台",
+                                "context_profile": {
+                                    "business_model": "tob",
+                                    "primary_platform": "mobile-web",
+                                },
+                                "notes": ["当前主要面向诊所场景"],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "platform-project-profile-upsert")
+        self.assertEqual(payload["action"], "platform-project-profile-created")
+        self.assertEqual(payload["output_payload"]["project_profile"]["project_name"], "医疗服务平台")
+        self.assertIsNotNone(payload["runtime_session"])
+
+    def test_platform_project_profile_upsert_tool_can_be_blocked_by_action_policy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "platform-project-profile-upsert",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "platform-upsert-cli",
+                                "project_name": "医疗服务平台",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "platform-project-profile-upsert")
+        self.assertEqual(payload["action"], "platform-project-profile-upsert-blocked")
+        self.assertEqual(payload["terminal_state"], "blocked")
+        self.assertEqual(payload["violation_kind"], "approval-required")
+        self.assertEqual(payload["output_payload"]["pending_approval"]["tool_name"], "platform-project-profile-upsert")
+        self.assertEqual(payload["runtime_session"]["pending_approvals"][0]["approval_id"], "approval-0001")
+
+    def test_http_service_can_list_and_approve_pending_platform_write_operation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            blocked_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "platform-approval-http",
+                        "project_name": "医疗服务平台",
+                        "context_profile": {
+                            "business_model": "tob",
+                        },
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            approval_id = blocked_response.payload["result"]["output_payload"]["pending_approval"]["approval_id"]
+            list_response = service.handle(
+                method="GET",
+                path="/workspaces/platform-approval-http/runtime/approvals",
+            )
+            approve_response = service.handle(
+                method="POST",
+                path=f"/workspaces/platform-approval-http/runtime/approvals/{approval_id}/approve",
+                body=b"",
+            )
+
+        self.assertEqual(blocked_response.status_code, 200)
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(len(list_response.payload["pending_approvals"]), 1)
+        self.assertEqual(approve_response.status_code, 200)
+        self.assertEqual(approve_response.payload["result"]["action"], "platform-project-profile-created")
+        self.assertEqual(
+            approve_response.payload["result"]["output_payload"]["project_profile"]["project_name"],
+            "医疗服务平台",
+        )
+        runtime_session = approve_response.payload["result"]["runtime_session"]
+        self.assertEqual(runtime_session["pending_approvals"], [])
+        event_types = [item["event_type"] for item in runtime_session["event_log"]]
+        self.assertIn("approval-requested", event_types)
+        self.assertIn("approval-approved", event_types)
+        self.assertIn("approval-override-applied", event_types)
+
+    def test_http_service_can_reject_pending_platform_write_operation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            blocked_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "platform-reject-http",
+                        "project_name": "医疗服务平台",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            approval_id = blocked_response.payload["result"]["output_payload"]["pending_approval"]["approval_id"]
+            reject_response = service.handle(
+                method="POST",
+                path=f"/workspaces/platform-reject-http/runtime/approvals/{approval_id}/reject",
+                body=json.dumps({"reason": "暂不投入这项能力"}, ensure_ascii=False).encode("utf-8"),
+            )
+
+        self.assertEqual(reject_response.status_code, 200)
+        self.assertEqual(reject_response.payload["result"]["action"], "approval-rejected")
+        self.assertEqual(reject_response.payload["result"]["status"], "rejected")
+        self.assertEqual(reject_response.payload["result"]["runtime_session"]["pending_approvals"], [])
+        self.assertEqual(
+            reject_response.payload["result"]["runtime_session"]["approval_ledger"][0]["status"],
+            "rejected",
+        )
+
+    def test_http_service_can_return_already_approved_semantics_for_duplicate_approve(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            blocked_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "platform-duplicate-http",
+                        "project_name": "医疗服务平台",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            approval_id = blocked_response.payload["result"]["output_payload"]["pending_approval"]["approval_id"]
+            first_approve_response = service.handle(
+                method="POST",
+                path=f"/workspaces/platform-duplicate-http/runtime/approvals/{approval_id}/approve",
+                body=b"",
+            )
+            duplicate_approve_response = service.handle(
+                method="POST",
+                path=f"/workspaces/platform-duplicate-http/runtime/approvals/{approval_id}/approve",
+                body=b"",
+            )
+
+        self.assertEqual(first_approve_response.status_code, 200)
+        self.assertEqual(duplicate_approve_response.status_code, 200)
+        self.assertEqual(duplicate_approve_response.payload["result"]["action"], "approval-already-approved")
+        self.assertEqual(duplicate_approve_response.payload["result"]["status"], "approved")
+
+    def test_workspace_approval_preferences_can_auto_approve_runtime_action(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            workspace_store = default_workspace_store(tmpdir)
+            workspace = get_or_create_workspace("workspace-auto-approve", store=workspace_store)
+            update_workspace_approval_preferences(
+                workspace,
+                auto_approve_actions=["project-profile-service.*"],
+            )
+            save_workspace(workspace, store=workspace_store)
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "workspace-auto-approve",
+                        "project_name": "自动批准项目背景",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.payload["result"]["action"], "platform-project-profile-created")
+        runtime_session = response.payload["result"]["runtime_session"]
+        self.assertEqual(runtime_session["pending_approvals"], [])
+        self.assertEqual(runtime_session["approval_ledger"][0]["status"], "approved")
+        event_types = [item["event_type"] for item in runtime_session["event_log"]]
+        self.assertIn("approval-auto-approved", event_types)
+
+    def test_runtime_policy_can_auto_expire_approval_required_action(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                            "auto_expire_approval_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "approval-auto-expire",
+                        "project_name": "自动过期项目背景",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.payload["result"]["action"], "approval-expired")
+        self.assertEqual(response.payload["result"]["terminal_state"], "cancelled")
+        runtime_session = response.payload["result"]["runtime_session"]
+        self.assertEqual(runtime_session["pending_approvals"], [])
+        self.assertEqual(runtime_session["approval_ledger"][0]["status"], "expired")
+        event_types = [item["event_type"] for item in runtime_session["event_log"]]
+        self.assertIn("approval-auto-expired", event_types)
+
+    def test_manual_approval_only_action_cannot_be_expired(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                            "manual_approval_only_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            blocked_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "approval-manual-only",
+                        "project_name": "必须人工处理项目背景",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            approval_id = blocked_response.payload["result"]["output_payload"]["pending_approval"]["approval_id"]
+            expire_response = service.handle(
+                method="POST",
+                path=f"/workspaces/approval-manual-only/runtime/approvals/{approval_id}/expire",
+                body=b"",
+            )
+            list_response = service.handle(
+                method="GET",
+                path="/workspaces/approval-manual-only/runtime/approvals",
+            )
+
+        self.assertEqual(expire_response.status_code, 200)
+        self.assertEqual(expire_response.payload["result"]["action"], "approval-expire-not-allowed")
+        self.assertEqual(expire_response.payload["result"]["status"], "pending")
+        self.assertEqual(len(list_response.payload["pending_approvals"]), 1)
+
+    def test_cli_can_reject_and_expire_pending_runtime_operation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            blocked_stdout = StringIO()
+            with redirect_stdout(blocked_stdout):
+                main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "platform-project-profile-upsert",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "platform-reject-cli",
+                                "project_name": "诊所工作台",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+            blocked_payload = json.loads(blocked_stdout.getvalue())
+            reject_approval_id = blocked_payload["output_payload"]["pending_approval"]["approval_id"]
+
+            reject_stdout = StringIO()
+            with redirect_stdout(reject_stdout):
+                reject_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "reject",
+                        "--workspace-id",
+                        "platform-reject-cli",
+                        "--reason",
+                        "当前先不做",
+                        reject_approval_id,
+                    ]
+                )
+
+            blocked_stdout_2 = StringIO()
+            with redirect_stdout(blocked_stdout_2):
+                main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "platform-project-profile-upsert",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "platform-expire-cli",
+                                "project_name": "诊所工作台",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+            blocked_payload_2 = json.loads(blocked_stdout_2.getvalue())
+            expire_approval_id = blocked_payload_2["output_payload"]["pending_approval"]["approval_id"]
+
+            expire_stdout = StringIO()
+            with redirect_stdout(expire_stdout):
+                expire_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "expire",
+                        "--workspace-id",
+                        "platform-expire-cli",
+                        expire_approval_id,
+                    ]
+                )
+
+        reject_payload = json.loads(reject_stdout.getvalue())
+        expire_payload = json.loads(expire_stdout.getvalue())
+
+        self.assertEqual(reject_exit_code, 0)
+        self.assertEqual(expire_exit_code, 0)
+        self.assertEqual(reject_payload["action"], "approval-rejected")
+        self.assertEqual(reject_payload["status"], "rejected")
+        self.assertEqual(expire_payload["action"], "approval-expired")
+        self.assertEqual(expire_payload["status"], "expired")
+
+    def test_workspace_command_can_update_approval_preferences(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "workspace",
+                        "workspace-pref-cli",
+                        "--approval-preferences-json",
+                        json.dumps(
+                            {
+                                "auto_approve_actions": ["project-profile-service.*"],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            payload["approval_preferences"]["auto_approve_actions"],
+            ["project-profile-service.*"],
+        )
+
+    def test_http_service_can_update_workspace_approval_preferences(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            update_response = service.handle(
+                method="POST",
+                path="/workspaces/workspace-pref-http/approval-preferences",
+                body=json.dumps(
+                    {
+                        "auto_approve_actions": ["project-profile-service.*"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            get_response = service.handle(
+                method="GET",
+                path="/workspaces/workspace-pref-http/approval-preferences",
+            )
+
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(
+            get_response.payload["approval_preferences"]["auto_approve_actions"],
+            ["project-profile-service.*"],
+        )
+
+    def test_cli_can_list_and_approve_pending_runtime_operation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            blocked_stdout = StringIO()
+            with redirect_stdout(blocked_stdout):
+                blocked_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "platform-project-profile-upsert",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "platform-approval-cli",
+                                "project_name": "诊所工作台",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+            blocked_payload = json.loads(blocked_stdout.getvalue())
+            approval_id = blocked_payload["output_payload"]["pending_approval"]["approval_id"]
+
+            list_stdout = StringIO()
+            with redirect_stdout(list_stdout):
+                list_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "approvals",
+                        "--workspace-id",
+                        "platform-approval-cli",
+                    ]
+                )
+
+            approve_stdout = StringIO()
+            with redirect_stdout(approve_stdout):
+                approve_exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "approve",
+                        "--workspace-id",
+                        "platform-approval-cli",
+                        approval_id,
+                    ]
+                )
+
+        list_payload = json.loads(list_stdout.getvalue())
+        approve_payload = json.loads(approve_stdout.getvalue())
+
+        self.assertEqual(blocked_exit_code, 0)
+        self.assertEqual(list_exit_code, 0)
+        self.assertEqual(approve_exit_code, 0)
+        self.assertEqual(list_payload["pending_approvals"][0]["approval_id"], approval_id)
+        self.assertEqual(approve_payload["action"], "platform-project-profile-created")
+        self.assertEqual(approve_payload["runtime_session"]["pending_approvals"], [])
+
+    def test_cli_tool_command_can_execute_local_directory_list_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "cli-list.txt").write_text("ok", encoding="utf-8")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "local-directory-list",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "dir-cli",
+                                "path": "notes",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "local-directory-list")
+        self.assertEqual(payload["action"], "directory-listed")
+        self.assertEqual(payload["output_payload"]["entries"][0]["name"], "cli-list.txt")
+
+    def test_cli_tool_command_can_execute_local_text_file_read_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "cli-read.txt").write_text("from cli read", encoding="utf-8")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "local-text-file-read",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "file-cli-read",
+                                "path": "notes/cli-read.txt",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "local-text-file-read")
+        self.assertEqual(payload["action"], "file-read")
+        self.assertEqual(payload["output_payload"]["content"], "from cli read")
+
+    def test_cli_tool_command_can_execute_local_text_search_tool(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes").mkdir(parents=True, exist_ok=True)
+            (root / "notes" / "cli-search.txt").write_text("focus\nalpha\nfocus", encoding="utf-8")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "tool",
+                        "--format",
+                        "json",
+                        "--tool-name",
+                        "local-text-search",
+                        "--payload-json",
+                        json.dumps(
+                            {
+                                "workspace_id": "search-cli",
+                                "path": "notes",
+                                "query": "focus",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["tool_name"], "local-text-search")
+        self.assertEqual(payload["action"], "text-searched")
+        self.assertEqual(payload["output_payload"]["match_count"], 2)
 
     def test_local_tool_runtime_can_execute_generic_tool_handler(self) -> None:
         with TemporaryDirectory() as tmpdir:

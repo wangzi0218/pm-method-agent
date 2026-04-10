@@ -8,6 +8,7 @@ from pm_method_agent.runtime_policy import (
     RuntimePolicyViolation,
     check_runtime_action_policy,
     check_runtime_command_policy,
+    check_runtime_read_policy,
     check_runtime_write_policy,
 )
 
@@ -56,6 +57,7 @@ def evaluate_operation_enforcement(
     *,
     action_name: str = "",
     command_args: Optional[List[str]] = None,
+    read_paths: Optional[List[str]] = None,
     write_paths: Optional[List[str]] = None,
 ) -> OperationEnforcementDecision:
     checks: List[OperationCheck] = []
@@ -89,6 +91,22 @@ def evaluate_operation_enforcement(
                 violation=violation,
             )
         checks.append(OperationCheck(check_type="command", subject=command_preview, decision="allowed"))
+
+    normalized_read_paths = [item for item in (read_paths or []) if str(item).strip()]
+    if normalized_read_paths:
+        violation = check_runtime_read_policy(policy, read_paths=normalized_read_paths)
+        if violation is not None:
+            checks.append(_build_violation_check("read-path", violation.read_path or normalized_read_paths[0], violation))
+            return OperationEnforcementDecision(
+                allowed=False,
+                terminal_state=violation.terminal_state,
+                reason=violation.reason,
+                violation_kind=violation.violation_kind,
+                checks=checks,
+                violation=violation,
+            )
+        for item in normalized_read_paths:
+            checks.append(OperationCheck(check_type="read-path", subject=item, decision="allowed"))
 
     normalized_write_paths = [item for item in (write_paths or []) if str(item).strip()]
     if normalized_write_paths:

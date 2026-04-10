@@ -13,23 +13,23 @@ from pm_method_agent.tool_runtime import (
 )
 
 
-LOCAL_TEXT_FILE_WRITE_TOOL_NAME = "local-text-file-write"
-TEXT_FILE_WRITER_ACTION = "text-file-writer.write"
+LOCAL_TEXT_FILE_READ_TOOL_NAME = "local-text-file-read"
+TEXT_FILE_READER_ACTION = "text-file-reader.read"
 
 
 @dataclass
-class TextFileWriteResult(LocalToolExecutionResult):
+class TextFileReadResult(LocalToolExecutionResult):
     pass
 
 
-class LocalTextFileWriteHandler(LocalToolHandler):
-    name = LOCAL_TEXT_FILE_WRITE_TOOL_NAME
+class LocalTextFileReadHandler(LocalToolHandler):
+    name = LOCAL_TEXT_FILE_READ_TOOL_NAME
 
     def execute(self, request: LocalToolRequest) -> LocalToolExecutionOutcome:
         path = str(request.request_payload.get("path", "")).strip()
         if not path:
             return LocalToolExecutionOutcome(
-                action="file-write-failed",
+                action="file-read-failed",
                 terminal_state="failed",
                 success=False,
                 error={
@@ -37,10 +37,9 @@ class LocalTextFileWriteHandler(LocalToolHandler):
                     "message": "Missing path.",
                 },
             )
-        content = str(request.request_payload.get("content", ""))
-        append = bool(request.request_payload.get("append", False))
-        create_dirs = bool(request.request_payload.get("create_dirs", True))
+
         encoding = str(request.request_payload.get("encoding", "utf-8")).strip() or "utf-8"
+        max_characters = int(request.request_payload.get("max_characters", 20000))
 
         target_path = Path(path)
         if not target_path.is_absolute():
@@ -49,48 +48,55 @@ class LocalTextFileWriteHandler(LocalToolHandler):
         else:
             target_path = target_path.resolve()
 
-        if create_dirs:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
+        if not target_path.exists():
+            return LocalToolExecutionOutcome(
+                action="file-read-failed",
+                terminal_state="failed",
+                success=False,
+                error={
+                    "type": "FileNotFoundError",
+                    "message": f"File not found: {target_path}",
+                },
+            )
 
-        if append and target_path.exists():
-            existing = target_path.read_text(encoding=encoding)
-            target_path.write_text(existing + content, encoding=encoding)
-        else:
-            target_path.write_text(content, encoding=encoding)
+        content = target_path.read_text(encoding=encoding)
+        truncated = False
+        if max_characters >= 0 and len(content) > max_characters:
+            content = content[:max_characters]
+            truncated = True
 
         return LocalToolExecutionOutcome(
-            action="file-written",
+            action="file-read",
             terminal_state="completed",
             success=True,
             result_ref=f"file:{target_path}",
             output_payload={
                 "path": str(target_path),
-                "bytes_written": len(content.encode(encoding)),
-                "characters_written": len(content),
-                "append": append,
+                "content": content,
                 "encoding": encoding,
+                "characters_read": len(content),
+                "truncated": truncated,
+                "max_characters": max_characters,
             },
         )
 
 
-class LocalTextFileWriter:
+class LocalTextFileReader:
     def __init__(self, base_dir: Optional[str] = None) -> None:
         self._base_dir = str(Path(base_dir or ".").resolve())
         self._runtime = LocalToolRuntime(base_dir=self._base_dir)
-        self._handler = LocalTextFileWriteHandler()
+        self._handler = LocalTextFileReadHandler()
 
-    def write_text(
+    def read_text(
         self,
         *,
         path: str,
-        content: str,
         workspace_id: str = "default",
         cwd: Optional[str] = None,
-        append: bool = False,
-        create_dirs: bool = True,
         encoding: str = "utf-8",
+        max_characters: int = 20000,
         approval_id: str = "",
-    ) -> TextFileWriteResult:
+    ) -> TextFileReadResult:
         resolved_cwd = str(Path(cwd or self._base_dir).resolve())
         resolved_path = Path(path)
         if not resolved_path.is_absolute():
@@ -100,24 +106,22 @@ class LocalTextFileWriter:
 
         request = LocalToolRequest(
             tool_name=self._handler.name,
-            action_name=TEXT_FILE_WRITER_ACTION,
+            action_name=TEXT_FILE_READER_ACTION,
             workspace_id=workspace_id,
-            summary=f"写入文件：{resolved_path}",
+            summary=f"读取文件：{resolved_path}",
             request_payload={
                 "path": str(resolved_path),
-                "content": content,
-                "append": append,
-                "create_dirs": create_dirs,
                 "encoding": encoding,
+                "max_characters": max_characters,
             },
-            write_paths=[str(resolved_path)],
+            read_paths=[str(resolved_path)],
             cwd=resolved_cwd,
-            blocked_action="file-write-blocked",
-            resume_from=TEXT_FILE_WRITER_ACTION,
+            blocked_action="file-read-blocked",
+            resume_from=TEXT_FILE_READER_ACTION,
             approval_id=approval_id,
         )
         result = self._runtime.execute_tool(request, handler=self._handler)
-        return TextFileWriteResult(
+        return TextFileReadResult(
             allowed=result.allowed,
             tool_name=result.tool_name,
             action=result.action,

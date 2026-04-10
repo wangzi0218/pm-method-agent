@@ -12,6 +12,7 @@ from pm_method_agent.models import RuntimeSession
 RUNTIME_SESSION_STORE_DIRNAME = ".pm_method_agent/runtime_sessions"
 RUNTIME_EVENT_LOG_LIMIT = 50
 RUNTIME_LEDGER_LIMIT = 100
+RUNTIME_APPROVAL_LEDGER_LIMIT = 100
 DEFAULT_CONTEXT_BUDGET = {
     "raw_history_budget": 40,
     "working_memory_budget": 12,
@@ -219,9 +220,10 @@ def append_runtime_event(
     event_type: str,
     payload: Optional[Dict[str, object]] = None,
 ) -> RuntimeSession:
+    event_index = _next_runtime_counter(runtime_session, "next_event_index")
     runtime_session.event_log.append(
         {
-            "event_id": f"evt-{len(runtime_session.event_log) + 1:04d}",
+            "event_id": f"evt-{event_index:04d}",
             "event_type": event_type,
             "payload": payload or {},
         }
@@ -236,7 +238,7 @@ def request_tool_call(
     tool_name: str,
     request_payload: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
-    call_id = f"call-{len(runtime_session.execution_ledger) + 1:04d}"
+    call_id = f"call-{_next_runtime_counter(runtime_session, 'next_call_index'):04d}"
     entry = {
         "call_id": call_id,
         "query_id": runtime_session.current_query_id,
@@ -268,6 +270,123 @@ def request_tool_call(
     return entry
 
 
+def request_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    tool_name: str,
+    action_name: str,
+    request_payload: Optional[Dict[str, object]] = None,
+    command_args: Optional[list[str]] = None,
+    read_paths: Optional[list[str]] = None,
+    write_paths: Optional[list[str]] = None,
+    cwd: str = "",
+    timeout_seconds: float = 15.0,
+    blocked_action: str = "",
+    resume_from: str = "",
+    violation: Optional[Dict[str, object]] = None,
+) -> Dict[str, object]:
+    approval_id = f"approval-{_next_runtime_counter(runtime_session, 'next_approval_index'):04d}"
+    entry = {
+        "approval_id": approval_id,
+        "query_id": runtime_session.current_query_id,
+        "tool_name": tool_name,
+        "action_name": action_name,
+        "request_payload": request_payload or {},
+        "command_args": list(command_args or []),
+        "read_paths": list(read_paths or []),
+        "write_paths": list(write_paths or []),
+        "cwd": cwd,
+        "timeout_seconds": timeout_seconds,
+        "blocked_action": blocked_action,
+        "resume_from": resume_from,
+        "violation": dict(violation or {}),
+        "status": "pending",
+    }
+    runtime_session.pending_approvals.append(dict(entry))
+    runtime_session.approval_ledger.append(dict(entry))
+    runtime_session.approval_ledger = runtime_session.approval_ledger[-RUNTIME_APPROVAL_LEDGER_LIMIT:]
+    append_runtime_event(
+        runtime_session,
+        "approval-requested",
+        {
+            "approval_id": approval_id,
+            "query_id": runtime_session.current_query_id,
+            "tool_name": tool_name,
+            "action_name": action_name,
+            "violation": dict(violation or {}),
+        },
+    )
+    return entry
+
+
+def get_pending_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+) -> Dict[str, object]:
+    for item in runtime_session.pending_approvals:
+        if str(item.get("approval_id")) == approval_id:
+            return item
+    raise KeyError(f"Pending approval '{approval_id}' does not exist.")
+
+
+def get_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+) -> Dict[str, object]:
+    for item in runtime_session.approval_ledger:
+        if str(item.get("approval_id")) == approval_id:
+            return item
+    raise KeyError(f"Approval '{approval_id}' does not exist.")
+
+
+def approve_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+    actor: str = "user",
+) -> Dict[str, object]:
+    return _resolve_runtime_approval(
+        runtime_session,
+        approval_id=approval_id,
+        status="approved",
+        actor=actor,
+    )
+
+
+def reject_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+    actor: str = "user",
+    reason: str = "",
+) -> Dict[str, object]:
+    return _resolve_runtime_approval(
+        runtime_session,
+        approval_id=approval_id,
+        status="rejected",
+        actor=actor,
+        reason=reason,
+    )
+
+
+def expire_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+    actor: str = "runtime",
+    reason: str = "",
+) -> Dict[str, object]:
+    return _resolve_runtime_approval(
+        runtime_session,
+        approval_id=approval_id,
+        status="expired",
+        actor=actor,
+        reason=reason,
+    )
+
+
 def request_hook_call(
     runtime_session: RuntimeSession,
     *,
@@ -275,7 +394,7 @@ def request_hook_call(
     hook_stage: str,
     request_payload: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
-    hook_call_id = f"hook-{len(runtime_session.event_log) + len(runtime_session.pending_hooks) + 1:04d}"
+    hook_call_id = f"hook-{_next_runtime_counter(runtime_session, 'next_hook_index'):04d}"
     entry = {
         "hook_call_id": hook_call_id,
         "query_id": runtime_session.current_query_id,
@@ -483,6 +602,67 @@ def _update_pending_hook_entry(
         item["status"] = status
         item["result_payload"] = result_payload
         item["error"] = error
+        return
+
+
+def _next_runtime_counter(runtime_session: RuntimeSession, key: str) -> int:
+    current_value = int(runtime_session.runtime_metadata.get(key, 0) or 0)
+    next_value = current_value + 1
+    runtime_session.runtime_metadata[key] = next_value
+    return next_value
+
+
+def _resolve_runtime_approval(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+    status: str,
+    actor: str,
+    reason: str = "",
+) -> Dict[str, object]:
+    entry = get_pending_runtime_approval(runtime_session, approval_id=approval_id)
+    runtime_session.pending_approvals = [
+        item for item in runtime_session.pending_approvals if str(item.get("approval_id")) != approval_id
+    ]
+    _update_approval_ledger_entry(
+        runtime_session,
+        approval_id=approval_id,
+        status=status,
+        actor=actor,
+        reason=reason,
+    )
+    append_runtime_event(
+        runtime_session,
+        f"approval-{status}",
+        {
+            "approval_id": approval_id,
+            "tool_name": entry.get("tool_name", ""),
+            "action_name": entry.get("action_name", ""),
+            "actor": actor,
+            "reason": reason,
+        },
+    )
+    resolved_entry = dict(entry)
+    resolved_entry["status"] = status
+    resolved_entry["actor"] = actor
+    resolved_entry["reason"] = reason
+    return resolved_entry
+
+
+def _update_approval_ledger_entry(
+    runtime_session: RuntimeSession,
+    *,
+    approval_id: str,
+    status: str,
+    actor: str,
+    reason: str,
+) -> None:
+    for item in runtime_session.approval_ledger:
+        if str(item.get("approval_id")) != approval_id:
+            continue
+        item["status"] = status
+        item["actor"] = actor
+        item["reason"] = reason
         return
 
 

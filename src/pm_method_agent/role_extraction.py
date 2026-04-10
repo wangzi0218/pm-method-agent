@@ -81,6 +81,8 @@ ROLE_SIGNAL_PATTERNS = [
 ROLE_RELATION_PATTERNS = {
     "proposers": [
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})提出(?:了)?需求",
+        r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})提出(?:了)?这个想法",
+        r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})提出(?:了)?这个方向",
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})提(?:了)?需求",
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})提(?:了)?这个需求",
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})提(?:的|了这个事)",
@@ -103,6 +105,9 @@ ROLE_RELATION_PATTERNS = {
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})直接操作",
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})直接使用",
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})来处理",
+        r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})是实际使用者",
+        r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})是实际使用的人",
+        r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})是使用者",
     ],
     "outcome_owners": [
         r"(?P<role>[\u4e00-\u9fffA-Za-z]{1,12})对结果负责",
@@ -150,6 +155,12 @@ ROLE_CLEANUP_PREFIXES = [
     "核心是",
     "不是",
     "是",
+    "提升",
+    "提高",
+    "增加",
+    "新增",
+    "优化",
+    "改善",
     "一线",
     "这是",
     "最近",
@@ -185,6 +196,7 @@ ROLE_INVALID_PARTS = [
     "漏掉",
     "提醒",
     "影响",
+    "实际",
     "处理",
     "通过",
     "提供",
@@ -425,7 +437,19 @@ def _cleanup_role_candidate(candidate: str) -> str:
 
     normalized = normalized.strip("，。；：、,.!?！？()（）[]【】 ")
     normalized = ROLE_NORMALIZATION.get(normalized, normalized)
-    for suffix in ["在操作", "在用", "在处理", "在负责", "操作", "在"]:
+    for suffix in [
+        "自己",
+        "是实际使用者",
+        "是实际使用的人",
+        "是使用者",
+        "使用者",
+        "在操作",
+        "在用",
+        "在处理",
+        "在负责",
+        "操作",
+        "在",
+    ]:
         if normalized.endswith(suffix):
             normalized = normalized[: -len(suffix)].strip()
     if normalized.endswith("会") and any(normalized[:-1].endswith(suffix) for suffix in ROLE_SUFFIXES):

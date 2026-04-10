@@ -16,7 +16,7 @@ from pm_method_agent.renderers import (
     render_case_state,
     render_workspace_overview,
 )
-from pm_method_agent.local_tools import LocalToolRegistry
+from pm_method_agent.runtime_tools import RuntimeToolRegistry
 from pm_method_agent.rule_loader import load_rule_set
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_policy import load_runtime_policy
@@ -26,7 +26,9 @@ from pm_method_agent.workspace_service import (
     activate_workspace_case,
     default_workspace_store,
     get_or_create_workspace,
+    get_workspace_approval_preferences,
     save_workspace,
+    update_workspace_approval_preferences,
 )
 
 
@@ -141,6 +143,10 @@ def build_session_parser() -> argparse.ArgumentParser:
     workspace_parser = subparsers.add_parser("workspace", help="查看或切换当前工作区。")
     workspace_parser.add_argument("workspace_id", help="工作区标识。")
     workspace_parser.add_argument("--switch-case-id", help="切换当前活跃案例。")
+    workspace_parser.add_argument(
+        "--approval-preferences-json",
+        help="以 JSON 字符串更新工作区审批偏好，例如 auto_approve_actions。",
+    )
 
     serve_parser = subparsers.add_parser("serve", help="启动本地 HTTP 服务。")
     serve_parser.add_argument("--host", default="127.0.0.1", help="监听地址。默认 127.0.0.1。")
@@ -149,6 +155,23 @@ def build_session_parser() -> argparse.ArgumentParser:
     agent_parser = subparsers.add_parser("agent", help="通过统一入口模拟 agent/skill 交互。")
     agent_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
     agent_parser.add_argument("message", help="用户当前输入。")
+
+    approvals_parser = subparsers.add_parser("approvals", help="查看当前工作区待确认的运行时操作。")
+    approvals_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+
+    approve_parser = subparsers.add_parser("approve", help="批准一个待确认操作并继续执行。")
+    approve_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+    approve_parser.add_argument("approval_id", help="待确认操作编号。")
+
+    reject_parser = subparsers.add_parser("reject", help="拒绝一个待确认操作。")
+    reject_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+    reject_parser.add_argument("--reason", default="", help="拒绝原因。")
+    reject_parser.add_argument("approval_id", help="待确认操作编号。")
+
+    expire_parser = subparsers.add_parser("expire", help="将一个待确认操作标记为过期。")
+    expire_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+    expire_parser.add_argument("--reason", default="", help="过期原因。")
+    expire_parser.add_argument("approval_id", help="待确认操作编号。")
 
     rules_parser = subparsers.add_parser("rules", help="查看当前目录生效的规则和运行时策略。")
     rules_parser.add_argument(
@@ -189,17 +212,30 @@ def build_session_parser() -> argparse.ArgumentParser:
         help="要执行的命令参数。建议在子命令后用 -- 开始。",
     )
 
-    tool_parser = subparsers.add_parser("tool", help="通过通用本地工具入口执行一个已注册工具。")
+    tool_parser = subparsers.add_parser("tool", help="查看或执行已注册的本地工具。")
     tool_parser.add_argument(
         "--format",
         default="markdown",
         choices=["markdown", "json"],
         help="输出格式。默认 markdown。",
     )
-    tool_parser.add_argument("--tool-name", required=True, help="工具名称，例如 local-command。")
+    tool_mode_group = tool_parser.add_mutually_exclusive_group(required=True)
+    tool_mode_group.add_argument(
+        "--list",
+        action="store_true",
+        help="列出当前已经注册的本地工具。",
+    )
+    tool_mode_group.add_argument(
+        "--describe",
+        metavar="TOOL_NAME",
+        help="查看指定工具的元数据说明。",
+    )
+    tool_mode_group.add_argument(
+        "--tool-name",
+        help="工具名称，例如 local-command。与 --payload-json 一起用于执行工具。",
+    )
     tool_parser.add_argument(
         "--payload-json",
-        required=True,
         help="工具请求体，使用 JSON 字符串传入。",
     )
 
@@ -234,7 +270,7 @@ def _run_session_command(argv: List[str]) -> int:
     store = default_store(args.store_dir)
     workspace_store = default_workspace_store(args.store_dir)
     agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
-    local_tools = LocalToolRegistry(base_dir=args.store_dir)
+    local_tools = RuntimeToolRegistry(base_dir=args.store_dir)
 
     try:
         if args.command == "start":
@@ -256,6 +292,31 @@ def _run_session_command(argv: List[str]) -> int:
             case_state = get_case(case_id=args.case_id, store=store)
         elif args.command == "workspace":
             workspace = get_or_create_workspace(args.workspace_id, store=workspace_store)
+            if args.approval_preferences_json:
+                preferences_payload = json.loads(args.approval_preferences_json)
+                if not isinstance(preferences_payload, dict):
+                    raise ValueError("approval-preferences-json must be a JSON object.")
+                update_workspace_approval_preferences(
+                    workspace,
+                    auto_approve_actions=_ensure_string_list_or_empty(
+                        preferences_payload.get("auto_approve_actions")
+                    ),
+                )
+                save_workspace(workspace, store=workspace_store)
+                if args.format == "json":
+                    print(
+                        json.dumps(
+                            {
+                                "workspace": workspace.to_dict(),
+                                "approval_preferences": get_workspace_approval_preferences(workspace),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(f"已更新工作区 {workspace.workspace_id} 的审批偏好。")
+                return 0
             if args.switch_case_id:
                 case_state = get_case(case_id=args.switch_case_id, store=store)
                 activate_workspace_case(workspace, case_state.case_id)
@@ -289,6 +350,7 @@ def _run_session_command(argv: List[str]) -> int:
                         {
                             "workspace": workspace.to_dict(),
                             "cases": build_workspace_cases_payload(workspace, recent_cases),
+                            "approval_preferences": get_workspace_approval_preferences(workspace),
                         },
                         ensure_ascii=False,
                         indent=2,
@@ -332,6 +394,79 @@ def _run_session_command(argv: List[str]) -> int:
                 elif response.rendered_card:
                     print("")
                     print(response.rendered_card)
+            return 0
+        elif args.command == "approvals":
+            approvals = local_tools.list_pending_approvals(workspace_id=args.workspace_id)
+            if args.format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "workspace_id": args.workspace_id,
+                            "pending_approvals": approvals,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+            else:
+                print(f"工作区：{args.workspace_id}")
+                if not approvals:
+                    print("当前没有待确认操作。")
+                else:
+                    for item in approvals:
+                        print(f"- {item['approval_id']} / {item['tool_name']}")
+                        print(f"  动作：{item['action_name']}")
+                        violation = item.get("violation") or {}
+                        reason = str(violation.get("reason", "")).strip()
+                        if reason:
+                            print(f"  原因：{reason}")
+            return 0
+        elif args.command == "approve":
+            result = local_tools.approve_pending_approval(
+                workspace_id=args.workspace_id,
+                approval_id=args.approval_id,
+            )
+            if args.format == "json":
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(f"已批准：{args.approval_id}")
+                print(f"工具：{result.tool_name}")
+                print(f"动作：{result.action}")
+                print(f"终止语义：{result.terminal_state}")
+                if result.reason:
+                    print(f"原因：{result.reason}")
+                if result.output_payload:
+                    print("")
+                    print("## 输出")
+                    print(json.dumps(result.output_payload, ensure_ascii=False, indent=2))
+            return 0
+        elif args.command == "reject":
+            result = local_tools.reject_pending_approval(
+                workspace_id=args.workspace_id,
+                approval_id=args.approval_id,
+                reason=args.reason,
+            )
+            if args.format == "json":
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(f"已拒绝：{args.approval_id}")
+                print(f"状态：{result.status}")
+                if result.reason:
+                    print(f"原因：{result.reason}")
+            return 0
+        elif args.command == "expire":
+            result = local_tools.expire_pending_approval(
+                workspace_id=args.workspace_id,
+                approval_id=args.approval_id,
+                reason=args.reason,
+            )
+            if args.format == "json":
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(f"已标记过期：{args.approval_id}")
+                print(f"状态：{result.status}")
+                if result.reason:
+                    print(f"原因：{result.reason}")
             return 0
         elif args.command == "rules":
             base_dir = str(Path(args.base_dir).resolve())
@@ -389,6 +524,55 @@ def _run_session_command(argv: List[str]) -> int:
                     print(result.stderr.rstrip())
             return 0
         elif args.command == "tool":
+            if args.list:
+                payload = {"tools": local_tools.list_tools()}
+                if args.format == "json":
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                else:
+                    for item in payload["tools"]:
+                        print(f"- {item['tool_name']} [{item['kind']} / {item['execution_scope']}]")
+                        print(f"  {item['summary']}")
+                return 0
+
+            if args.describe:
+                descriptor = local_tools.describe_tool(args.describe)
+                if args.format == "json":
+                    print(json.dumps(descriptor, ensure_ascii=False, indent=2))
+                else:
+                    print(f"工具：{descriptor['tool_name']}")
+                    print(f"类型：{descriptor['kind']}")
+                    print(f"执行范围：{descriptor['execution_scope']}")
+                    print(f"说明：{descriptor['summary']}")
+                    print(f"支持读取路径声明：{'是' if descriptor['supports_read_paths'] else '否'}")
+                    print(f"支持命令参数：{'是' if descriptor['supports_command_args'] else '否'}")
+                    print(f"支持写入路径声明：{'是' if descriptor['supports_write_paths'] else '否'}")
+                    if descriptor["default_timeout_seconds"] is not None:
+                        print(f"默认超时：{descriptor['default_timeout_seconds']} 秒")
+                    schema = descriptor.get("input_schema") or {}
+                    required_fields = schema.get("required") or []
+                    properties = schema.get("properties") or {}
+                    if required_fields:
+                        print("")
+                        print("必填字段：")
+                        for field_name in required_fields:
+                            print(f"- {field_name}")
+                    if properties:
+                        print("")
+                        print("参数说明：")
+                        for field_name, definition in properties.items():
+                            description = ""
+                            if isinstance(definition, dict):
+                                description = str(definition.get("description", "")).strip()
+                            line = f"- {field_name}"
+                            if description:
+                                line += f"：{description}"
+                            print(line)
+                return 0
+
+            if not args.tool_name:
+                raise ValueError("Missing tool-name.")
+            if not args.payload_json:
+                raise ValueError("Missing payload-json.")
             payload = json.loads(args.payload_json)
             if not isinstance(payload, dict):
                 raise ValueError("payload-json must be a JSON object.")
@@ -447,6 +631,19 @@ def _build_context_profile(args: argparse.Namespace) -> dict:
     return context_profile
 
 
+def _ensure_string_list_or_empty(payload: object) -> list[str]:
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise ValueError("Expected a list payload.")
+    normalized = []
+    for item in payload:
+        text = str(item).strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
 def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--business-model",
@@ -485,7 +682,22 @@ def _add_context_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _is_session_command(args_list: List[str]) -> bool:
-    session_commands = {"start", "reply", "show", "history", "workspace", "serve", "agent", "rules", "command", "tool"}
+    session_commands = {
+        "start",
+        "reply",
+        "show",
+        "history",
+        "workspace",
+        "serve",
+        "agent",
+        "approvals",
+        "approve",
+        "reject",
+        "expire",
+        "rules",
+        "command",
+        "tool",
+    }
     index = 0
     while index < len(args_list):
         token = args_list[index]

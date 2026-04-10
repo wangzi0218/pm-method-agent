@@ -39,6 +39,7 @@ def run_pre_operation_hooks(
     *,
     action_name: str = "",
     command_args: Optional[List[str]] = None,
+    read_paths: Optional[List[str]] = None,
     write_paths: Optional[List[str]] = None,
 ) -> HookExecutionResult:
     entry = request_hook_call(
@@ -48,6 +49,7 @@ def run_pre_operation_hooks(
         request_payload={
             "action_name": action_name,
             "command_args": list(command_args or []),
+            "read_paths": list(read_paths or []),
             "write_paths": list(write_paths or []),
         },
     )
@@ -56,6 +58,7 @@ def run_pre_operation_hooks(
             policy,
             action_name=action_name,
             command_args=command_args,
+            read_paths=read_paths,
             write_paths=write_paths,
         )
     except Exception as exc:

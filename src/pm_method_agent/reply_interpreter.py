@@ -60,12 +60,9 @@ class HeuristicReplyInterpreter:
         extracted: Dict[str, object] = {}
         lowered = text.lower()
 
-        if any(keyword in lowered for keyword in ["tob", "企业产品", "b端", "b 端", "saas", "商家端"]):
-            extracted["business_model"] = "tob"
-        elif any(keyword in lowered for keyword in ["toc", "消费者产品", "c端", "c 端", "用户端"]):
-            extracted["business_model"] = "toc"
-        elif any(keyword in lowered for keyword in ["internal", "内部产品", "内部工具", "中后台", "后台系统"]):
-            extracted["business_model"] = "internal"
+        business_model = _infer_business_model(text, lowered)
+        if business_model:
+            extracted["business_model"] = business_model
 
         platform_hints: List[str] = []
         if any(keyword in lowered for keyword in ["桌面端", "pc", "网页端", "web", "浏览器", "管理后台", "后台", "管理台"]):
@@ -203,6 +200,31 @@ def build_reply_interpreter_from_env() -> ReplyInterpreter:
     heuristic = HeuristicReplyInterpreter()
     llm = LLMReplyInterpreter(adapter=OpenAICompatibleAdapter(config=config), fallback=heuristic)
     return HybridReplyInterpreter(llm_interpreter=llm, fallback=heuristic)
+
+
+def _infer_business_model(text: str, lowered: str) -> Optional[str]:
+    if any(keyword in lowered for keyword in ["tob", "企业产品", "b端", "b 端", "saas", "商家端"]):
+        return "tob"
+    if any(keyword in lowered for keyword in ["internal", "内部产品", "内部工具", "中后台", "后台系统"]):
+        return "internal"
+    if any(keyword in lowered for keyword in ["toc", "消费者产品", "c端", "c 端", "用户端"]):
+        return "toc"
+
+    consumer_signals = [
+        "内容社区",
+        "社区app",
+        "社区 app",
+        "社区产品",
+        "发帖",
+        "首帖",
+        "注册后",
+        "新用户",
+    ]
+    if any(signal in lowered for signal in consumer_signals):
+        return "toc"
+
+    del text
+    return None
 
 
 def _build_interpretation_request(reply_text: str, previous_case: Optional[CaseState]) -> LLMRequest:
@@ -418,6 +440,8 @@ def _has_explicit_proposer_signal_for_role(role: str, reply_text: str) -> bool:
         re.search(pattern.format(role=escaped), reply_text)
         for pattern in [
             r"{role}提出(?:了)?需求",
+            r"{role}提出(?:了)?这个想法",
+            r"{role}提出(?:了)?这个方向",
             r"{role}提(?:了)?需求",
             r"{role}提(?:的|了这个事|了这个需求)",
             r"{role}反馈",
@@ -437,7 +461,7 @@ def _has_explicit_user_signal(role: str, reply_text: str) -> bool:
             r"{role}在使用(?:产品|系统|服务)?",
             r"{role}使用(?:产品|系统|服务)?",
             r"{role}会使用(?:产品|系统|服务)?",
-            r"{role}在[^，。；]{0,8}操作",
+            r"{role}在[^，。；]{{0,8}}操作",
             r"{role}操作(?:这个动作|这一步|这个流程|提醒动作|流程)?",
             r"{role}自己.*操作",
             r"{role}在日常操作里",
@@ -448,6 +472,9 @@ def _has_explicit_user_signal(role: str, reply_text: str) -> bool:
             r"{role}直接操作",
             r"{role}直接使用",
             r"{role}来处理",
+            r"{role}是实际使用者",
+            r"{role}是实际使用的人",
+            r"{role}是使用者",
         ]
     )
 

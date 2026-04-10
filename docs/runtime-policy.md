@@ -39,9 +39,15 @@
 - `blocked_intents`
 - `blocked_actions`
 - `approval_required_actions`
+- `auto_approve_actions`
+- `auto_expire_approval_actions`
+- `manual_approval_only_actions`
 - `command_allowlist_prefixes`
 - `blocked_command_patterns`
 - `approval_required_command_patterns`
+- `allowed_read_roots`
+- `blocked_read_paths`
+- `approval_required_read_paths`
 - `allowed_write_roots`
 - `blocked_write_paths`
 - `approval_required_write_paths`
@@ -83,9 +89,10 @@
 当前还补上了两类更通用的约束骨架：
 
 - 命令级策略
+- 读取路径级策略
 - 写入路径级策略
 
-这两层当前已经通过统一的 `operation enforcement` 层对外暴露判断结果，但还没有直接接到真实 hook 或外部命令执行器上。
+这三层当前已经通过统一的 `operation enforcement` 层对外暴露判断结果，并且读取路径、写入路径都已经接到了本地工具运行时的真实 hook 链路上。
 
 ## 示例
 
@@ -97,9 +104,15 @@
     "blocked_intents": ["switch-case"],
     "blocked_actions": ["session-service.create-case"],
     "approval_required_actions": ["project-profile-service.*"],
+    "auto_approve_actions": ["workspace-service.*"],
+    "auto_expire_approval_actions": ["renderer.case-state"],
+    "manual_approval_only_actions": ["project-profile-service.delete"],
     "command_allowlist_prefixes": ["git status", "python -m unittest"],
     "blocked_command_patterns": ["rm *"],
     "approval_required_command_patterns": ["git push*"],
+    "allowed_read_roots": ["docs", "examples"],
+    "blocked_read_paths": [".env*", "secrets/*"],
+    "approval_required_read_paths": ["docs/internal/*"],
     "allowed_write_roots": ["src", "tests"],
     "blocked_write_paths": [".env*", "secrets/*"],
     "approval_required_write_paths": ["docs/releases/*"],
@@ -114,9 +127,15 @@
 - 不允许切换案例
 - 不允许直接执行 `session-service.create-case`
 - 所有 `project-profile-service.*` 动作都需要先人工确认
+- `workspace-service.*` 这类动作命中审批后可以直接自动批准
+- `renderer.case-state` 这类动作命中审批后会自动过期，不进入待处理队列
+- `project-profile-service.delete` 这类动作即使进入审批流，也必须人工处理，不能自动批准或自动过期
 - 只有 `git status`、`python -m unittest` 这类前缀命令默认允许继续往下走
 - `rm *` 这类命令直接阻断
 - `git push*` 这类命令要求先人工确认
+- 读取范围默认收敛到 `docs`、`examples`
+- `.env*` 和 `secrets/*` 这类读取路径直接阻断
+- `docs/internal/*` 这类读取路径要求先人工确认
 - 写入范围默认收敛到 `src`、`tests`
 - `.env*` 和 `secrets/*` 这类路径直接阻断
 - `docs/releases/*` 这类路径要求先人工确认
@@ -133,17 +152,32 @@
 2. 需要人工确认的命令
 3. 通用命令白名单
 
+### 读取路径策略
+
+1. 明确禁用的路径
+2. 需要人工确认的路径
+3. 通用允许读取根目录
+
 ### 写入路径策略
 
 1. 明确禁用的路径
 2. 需要人工确认的路径
 3. 通用允许写入根目录
 
+### 审批默认处理策略
+
+1. 必须人工处理的动作
+2. 工作区自动批准偏好
+3. 项目级自动批准动作
+4. 项目级自动过期动作
+5. 默认进入待确认队列
+
 这个顺序的意思是：
 
 - 具体例外优先于通用白名单
 - 需要人工确认比“默认不允许”更具体
 - 后续接 hook 时，不需要再重复发明一套优先级
+- 工作区偏好只负责更快批准，不覆盖“必须人工处理”
 
 ## 为什么先做这一层，而不是直接做 hook
 
@@ -173,7 +207,7 @@
 - 多步写入事务与回滚
 - sub-agent 生命周期约束
 
-也就是说，当前已经站住了“入口级 + 内部动作级 + 命令/路径骨架”的最小硬约束，但还没有进到真正的 hook enforcement 和外部命令执行闭环。
+也就是说，当前已经站住了“入口级 + 内部动作级 + 命令/路径约束 + 本地工具 hook 闭环”的最小硬约束，但还没有进到更细的目录模板、审批来源或多步事务控制。
 
 ## 和 prompt 的关系
 

@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.command_executor import LOCAL_COMMAND_TOOL_NAME
-from pm_method_agent.local_tools import LocalToolRegistry
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -25,12 +24,15 @@ from pm_method_agent.renderers import (
 )
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.runtime_policy import load_runtime_policy, runtime_policy_to_dict
+from pm_method_agent.runtime_tools import RuntimeToolRegistry
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 from pm_method_agent.workspace_service import (
     activate_workspace_case,
     default_workspace_store,
     get_or_create_workspace,
+    get_workspace_approval_preferences,
     save_workspace,
+    update_workspace_approval_preferences,
 )
 
 
@@ -51,7 +53,7 @@ class PMMethodHTTPService:
         self._workspace_store = default_workspace_store(store_dir)
         self._runtime_policy = load_runtime_policy(base_dir=store_dir)
         self._agent_shell = PMMethodAgentShell(base_dir=store_dir)
-        self._local_tools = LocalToolRegistry(base_dir=store_dir)
+        self._local_tools = RuntimeToolRegistry(base_dir=store_dir)
 
     def handle(self, method: str, path: str, body: Optional[bytes] = None) -> HTTPResponse:
         try:
@@ -67,12 +69,17 @@ class PMMethodHTTPService:
             if method == "GET" and normalized_path == "/runtime/tools":
                 return HTTPResponse(200, {"tools": self._local_tools.list_tools()})
 
+            tool_name = _extract_runtime_tool_name(normalized_path)
+            if method == "GET" and tool_name:
+                return HTTPResponse(200, {"tool": self._local_tools.describe_tool(tool_name)})
+
             if method == "POST" and normalized_path == "/runtime/policy/evaluate":
                 payload = _parse_json_body(body)
                 decision = evaluate_operation_enforcement(
                     self._runtime_policy,
                     action_name=str(payload.get("action_name", "")).strip(),
                     command_args=_ensure_string_list(payload.get("command_args")),
+                    read_paths=_ensure_string_list(payload.get("read_paths")),
                     write_paths=_ensure_string_list(payload.get("write_paths")),
                 )
                 return HTTPResponse(
@@ -131,7 +138,13 @@ class PMMethodHTTPService:
             if workspace_id:
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
-                    return HTTPResponse(200, {"workspace": workspace.to_dict()})
+                    return HTTPResponse(
+                        200,
+                        {
+                            "workspace": workspace.to_dict(),
+                            "approval_preferences": get_workspace_approval_preferences(workspace),
+                        },
+                    )
 
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/cases":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
@@ -142,6 +155,75 @@ class PMMethodHTTPService:
                             "workspace": workspace.to_dict(),
                             "cases": build_workspace_cases_payload(workspace, recent_cases),
                             "rendered_workspace": render_workspace_overview(workspace, recent_cases),
+                        },
+                    )
+
+                if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/approval-preferences":
+                    workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    return HTTPResponse(
+                        200,
+                        {
+                            "workspace_id": workspace_id,
+                            "approval_preferences": get_workspace_approval_preferences(workspace),
+                        },
+                    )
+
+                if method == "POST" and normalized_path == f"/workspaces/{workspace_id}/approval-preferences":
+                    payload = _parse_json_body(body)
+                    workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    update_workspace_approval_preferences(
+                        workspace,
+                        auto_approve_actions=_ensure_string_list(payload.get("auto_approve_actions")),
+                    )
+                    save_workspace(workspace, store=self._workspace_store)
+                    return HTTPResponse(
+                        200,
+                        {
+                            "workspace": workspace.to_dict(),
+                            "approval_preferences": get_workspace_approval_preferences(workspace),
+                        },
+                    )
+
+                if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/runtime/approvals":
+                    return HTTPResponse(
+                        200,
+                        {
+                            "workspace_id": workspace_id,
+                            "pending_approvals": self._local_tools.list_pending_approvals(
+                                workspace_id=workspace_id,
+                            ),
+                        },
+                    )
+
+                approval_id = _extract_workspace_runtime_approval_id(normalized_path, workspace_id)
+                if method == "POST" and approval_id:
+                    payload = _parse_json_body(body)
+                    action = _extract_workspace_runtime_approval_action(normalized_path, workspace_id)
+                    if action == "approve":
+                        result = self._local_tools.approve_pending_approval(
+                            workspace_id=workspace_id,
+                            approval_id=approval_id,
+                        )
+                    elif action == "reject":
+                        result = self._local_tools.reject_pending_approval(
+                            workspace_id=workspace_id,
+                            approval_id=approval_id,
+                            reason=str(payload.get("reason", "")).strip(),
+                        )
+                    elif action == "expire":
+                        result = self._local_tools.expire_pending_approval(
+                            workspace_id=workspace_id,
+                            approval_id=approval_id,
+                            reason=str(payload.get("reason", "")).strip(),
+                        )
+                    else:
+                        raise HTTPServiceError(404, "Not found.")
+                    return HTTPResponse(
+                        200,
+                        {
+                            "workspace_id": workspace_id,
+                            "approval_id": approval_id,
+                            "result": result.to_dict(),
                         },
                     )
 
@@ -358,6 +440,33 @@ def _extract_project_profile_id(path: str) -> Optional[str]:
     if len(parts) < 2 or parts[0] != "project-profiles":
         return None
     return parts[1]
+
+
+def _extract_workspace_runtime_approval_id(path: str, workspace_id: str) -> Optional[str]:
+    parts = [part for part in path.strip("/").split("/") if part]
+    expected_prefix = ["workspaces", workspace_id, "runtime", "approvals"]
+    if parts[:4] != expected_prefix:
+        return None
+    if len(parts) != 6 or parts[5] not in {"approve", "reject", "expire"}:
+        return None
+    return parts[4]
+
+
+def _extract_workspace_runtime_approval_action(path: str, workspace_id: str) -> Optional[str]:
+    parts = [part for part in path.strip("/").split("/") if part]
+    expected_prefix = ["workspaces", workspace_id, "runtime", "approvals"]
+    if parts[:4] != expected_prefix or len(parts) != 6:
+        return None
+    if parts[5] not in {"approve", "reject", "expire"}:
+        return None
+    return parts[5]
+
+
+def _extract_runtime_tool_name(path: str) -> Optional[str]:
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) != 3 or parts[0] != "runtime" or parts[1] != "tools":
+        return None
+    return parts[2]
 
 
 def _ensure_dict(payload: object) -> Optional[JsonDict]:

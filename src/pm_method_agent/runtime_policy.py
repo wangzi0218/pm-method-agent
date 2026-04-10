@@ -14,9 +14,15 @@ class RuntimePolicy:
     blocked_intents: List[str] = field(default_factory=list)
     blocked_actions: List[str] = field(default_factory=list)
     approval_required_actions: List[str] = field(default_factory=list)
+    auto_approve_actions: List[str] = field(default_factory=list)
+    auto_expire_approval_actions: List[str] = field(default_factory=list)
+    manual_approval_only_actions: List[str] = field(default_factory=list)
     command_allowlist_prefixes: List[str] = field(default_factory=list)
     blocked_command_patterns: List[str] = field(default_factory=list)
     approval_required_command_patterns: List[str] = field(default_factory=list)
+    allowed_read_roots: List[str] = field(default_factory=list)
+    blocked_read_paths: List[str] = field(default_factory=list)
+    approval_required_read_paths: List[str] = field(default_factory=list)
     allowed_write_roots: List[str] = field(default_factory=list)
     blocked_write_paths: List[str] = field(default_factory=list)
     approval_required_write_paths: List[str] = field(default_factory=list)
@@ -35,6 +41,14 @@ class RuntimePolicyViolation:
     action_name: str = ""
     command_preview: str = ""
     write_path: str = ""
+    read_path: str = ""
+
+
+@dataclass
+class RuntimeApprovalHandlingDecision:
+    mode: str
+    source: str = ""
+    reason: str = ""
 
 
 def load_runtime_policy(base_dir: Optional[str] = None) -> RuntimePolicy:
@@ -47,11 +61,20 @@ def load_runtime_policy(base_dir: Optional[str] = None) -> RuntimePolicy:
         blocked_intents=_normalize_string_list(raw_policy.get("blocked_intents")),
         blocked_actions=_normalize_string_list(raw_policy.get("blocked_actions")),
         approval_required_actions=_normalize_string_list(raw_policy.get("approval_required_actions")),
+        auto_approve_actions=_normalize_string_list(raw_policy.get("auto_approve_actions")),
+        auto_expire_approval_actions=_normalize_string_list(raw_policy.get("auto_expire_approval_actions")),
+        manual_approval_only_actions=_normalize_string_list(raw_policy.get("manual_approval_only_actions")),
         command_allowlist_prefixes=_normalize_string_list(raw_policy.get("command_allowlist_prefixes")),
         blocked_command_patterns=_normalize_string_list(raw_policy.get("blocked_command_patterns")),
         approval_required_command_patterns=_normalize_string_list(
             raw_policy.get("approval_required_command_patterns")
         ),
+        allowed_read_roots=_normalize_path_list(
+            raw_policy.get("allowed_read_roots"),
+            base_dir=resolved_base_dir,
+        ),
+        blocked_read_paths=_normalize_string_list(raw_policy.get("blocked_read_paths")),
+        approval_required_read_paths=_normalize_string_list(raw_policy.get("approval_required_read_paths")),
         allowed_write_roots=_normalize_path_list(
             raw_policy.get("allowed_write_roots"),
             base_dir=resolved_base_dir,
@@ -74,9 +97,15 @@ def runtime_policy_to_dict(policy: RuntimePolicy) -> dict:
         "blocked_intents": list(policy.blocked_intents),
         "blocked_actions": list(policy.blocked_actions),
         "approval_required_actions": list(policy.approval_required_actions),
+        "auto_approve_actions": list(policy.auto_approve_actions),
+        "auto_expire_approval_actions": list(policy.auto_expire_approval_actions),
+        "manual_approval_only_actions": list(policy.manual_approval_only_actions),
         "command_allowlist_prefixes": list(policy.command_allowlist_prefixes),
         "blocked_command_patterns": list(policy.blocked_command_patterns),
         "approval_required_command_patterns": list(policy.approval_required_command_patterns),
+        "allowed_read_roots": list(policy.allowed_read_roots),
+        "blocked_read_paths": list(policy.blocked_read_paths),
+        "approval_required_read_paths": list(policy.approval_required_read_paths),
         "allowed_write_roots": list(policy.allowed_write_roots),
         "blocked_write_paths": list(policy.blocked_write_paths),
         "approval_required_write_paths": list(policy.approval_required_write_paths),
@@ -143,6 +172,39 @@ def check_runtime_action_policy(
             action_name=action_name,
         )
     return None
+
+
+def resolve_runtime_approval_handling(
+    policy: RuntimePolicy,
+    *,
+    action_name: str,
+    workspace_auto_approve_actions: Optional[List[str]] = None,
+) -> RuntimeApprovalHandlingDecision:
+    if _matches_policy_items(action_name, policy.manual_approval_only_actions):
+        return RuntimeApprovalHandlingDecision(
+            mode="manual-only",
+            source="runtime-policy.manual-approval-only-actions",
+            reason=f"这个动作必须人工处理，不允许自动批准或自动过期：{action_name}。",
+        )
+    if _matches_policy_items(action_name, workspace_auto_approve_actions or []):
+        return RuntimeApprovalHandlingDecision(
+            mode="auto-approve",
+            source="workspace.approval-preferences.auto-approve-actions",
+            reason=f"当前工作区已把这个动作设为自动批准：{action_name}。",
+        )
+    if _matches_policy_items(action_name, policy.auto_approve_actions):
+        return RuntimeApprovalHandlingDecision(
+            mode="auto-approve",
+            source="runtime-policy.auto-approve-actions",
+            reason=f"当前项目规则已把这个动作设为自动批准：{action_name}。",
+        )
+    if _matches_policy_items(action_name, policy.auto_expire_approval_actions):
+        return RuntimeApprovalHandlingDecision(
+            mode="auto-expire",
+            source="runtime-policy.auto-expire-approval-actions",
+            reason=f"当前项目规则已把这个动作设为自动过期：{action_name}。",
+        )
+    return RuntimeApprovalHandlingDecision(mode="pending")
 
 
 def check_runtime_command_policy(
@@ -215,6 +277,44 @@ def check_runtime_write_policy(
                 reason=f"当前项目规则不允许写入这个路径：{normalized_path}。",
                 violation_kind="blocked",
                 write_path=normalized_path,
+            )
+    return None
+
+
+def check_runtime_read_policy(
+    policy: RuntimePolicy,
+    *,
+    read_paths: List[str],
+) -> Optional[RuntimePolicyViolation]:
+    for raw_path in read_paths:
+        normalized_path = _normalize_candidate_path(raw_path, base_dir=policy.base_dir)
+        if _matches_path_patterns(normalized_path, policy.blocked_read_paths, base_dir=policy.base_dir):
+            return RuntimePolicyViolation(
+                terminal_state="blocked",
+                reason=f"当前项目规则不允许读取这个路径：{normalized_path}。",
+                violation_kind="blocked",
+                read_path=normalized_path,
+            )
+        if _matches_path_patterns(
+            normalized_path,
+            policy.approval_required_read_paths,
+            base_dir=policy.base_dir,
+        ):
+            return RuntimePolicyViolation(
+                terminal_state="blocked",
+                reason=f"这个路径在当前项目规则里需要先人工确认：{normalized_path}。",
+                violation_kind="approval-required",
+                read_path=normalized_path,
+            )
+        if policy.allowed_read_roots and not _is_under_allowed_roots(
+            normalized_path,
+            policy.allowed_read_roots,
+        ):
+            return RuntimePolicyViolation(
+                terminal_state="blocked",
+                reason=f"当前项目规则不允许读取这个路径：{normalized_path}。",
+                violation_kind="blocked",
+                read_path=normalized_path,
             )
     return None
 

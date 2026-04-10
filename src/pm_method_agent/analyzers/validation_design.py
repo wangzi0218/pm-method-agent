@@ -19,7 +19,8 @@ def analyze_validation_design(case_state: CaseState) -> None:
             base_text = base_text.split(marker, 1)[0].strip()
             break
 
-    hypothesis = f"可以先按这个假设去验证：如果解决“{base_text}”背后的关键阻塞，核心行为指标会改善。"
+    focus_text = _summarize_validation_focus(base_text)
+    hypothesis = f"可以先按这个假设去验证：如果解决“{focus_text}”背后的关键阻塞，核心行为指标会改善。"
     falsification = "如果现状数据并不支持问题成立，或非产品手段已能低成本解决，这条产品方向就应降级。"
     min_validation = "先收集 3 到 5 个真实案例，再设计最小验证动作。"
 
@@ -72,3 +73,59 @@ def analyze_validation_design(case_state: CaseState) -> None:
     )
     case_state.metadata["falsifiable_hypothesis"] = hypothesis
     case_state.metadata["falsification_signal"] = falsification
+
+
+def _summarize_validation_focus(text: str) -> str:
+    normalized = " ".join(text.split()).strip("。！？!? ")
+    if len(normalized) <= 36:
+        return normalized
+    candidate_clauses = [item.strip() for item in normalized.replace("。", "，").split("，") if item.strip()]
+    focus_keywords = [
+        "漏",
+        "提醒",
+        "发帖",
+        "转化",
+        "留存",
+        "审批",
+        "跟进",
+        "复诊",
+        "预约",
+        "影响",
+        "卡在",
+        "没发出",
+        "没完成",
+        "问题",
+    ]
+    context_keywords = [
+        "这是一个",
+        "属于",
+        "产品",
+        "app",
+        "App",
+        "网页端",
+        "小程序",
+        "通过网页端",
+        "主要通过",
+        "主要使用",
+    ]
+    relationship_keywords = [
+        "提出",
+        "提出来",
+        "在操作",
+        "使用者",
+        "对结果负责",
+        "负责结果",
+    ]
+    for clause in candidate_clauses:
+        if any(keyword in clause for keyword in focus_keywords):
+            return clause
+    for clause in candidate_clauses:
+        if any(keyword in clause for keyword in context_keywords):
+            continue
+        if any(keyword in clause for keyword in relationship_keywords):
+            continue
+        if 8 <= len(clause) <= 28:
+            return clause
+    if candidate_clauses:
+        return "当前这件事"
+    return f"{normalized[:32].rstrip()}..."

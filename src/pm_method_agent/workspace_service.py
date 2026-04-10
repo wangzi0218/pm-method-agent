@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from pm_method_agent.models import WorkspaceState
 
@@ -73,3 +73,34 @@ def activate_workspace_case(
     workspace_state.recent_case_ids.insert(0, case_id)
     workspace_state.recent_case_ids = workspace_state.recent_case_ids[:RECENT_CASE_LIMIT]
     return workspace_state
+
+
+def get_workspace_approval_preferences(workspace_state: WorkspaceState) -> Dict[str, object]:
+    raw_preferences = workspace_state.metadata.get("approval_preferences")
+    if not isinstance(raw_preferences, dict):
+        return {"auto_approve_actions": []}
+    return {
+        "auto_approve_actions": _normalize_string_list(raw_preferences.get("auto_approve_actions")),
+    }
+
+
+def update_workspace_approval_preferences(
+    workspace_state: WorkspaceState,
+    *,
+    auto_approve_actions: Optional[list[str]] = None,
+) -> WorkspaceState:
+    workspace_state.metadata["approval_preferences"] = {
+        "auto_approve_actions": _normalize_string_list(auto_approve_actions),
+    }
+    return workspace_state
+
+
+def _normalize_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        rendered = str(item).strip()
+        if rendered and rendered not in normalized:
+            normalized.append(rendered)
+    return normalized

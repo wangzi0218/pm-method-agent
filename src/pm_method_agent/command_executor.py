@@ -89,6 +89,7 @@ class LocalCommandExecutor:
         cwd: Optional[str] = None,
         write_paths: Optional[List[str]] = None,
         timeout_seconds: float = 15.0,
+        approval_id: str = "",
     ) -> CommandExecutionResult:
         normalized_args = [str(item).strip() for item in command_args if str(item).strip()]
         if not normalized_args:
@@ -112,6 +113,7 @@ class LocalCommandExecutor:
             timeout_seconds=timeout_seconds,
             blocked_action="command-blocked",
             resume_from=COMMAND_EXECUTOR_ACTION,
+            approval_id=approval_id,
         )
         result = self._runtime.execute_tool(request, handler=self._handler)
         return CommandExecutionResult(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from pm_method_agent.models import CaseState, WorkspaceState
+from pm_method_agent.models import AnalyzerFinding, CaseState, WorkspaceState
 from pm_method_agent.prompting import PromptComposition
 from pm_method_agent.rule_loader import LoadedRuleSet
 from pm_method_agent.runtime_config import get_llm_runtime_status
@@ -195,9 +195,15 @@ def build_rule_diagnostics_payload(
             "blocked_intents": list(runtime_policy.blocked_intents),
             "blocked_actions": list(runtime_policy.blocked_actions),
             "approval_required_actions": list(runtime_policy.approval_required_actions),
+            "auto_approve_actions": list(runtime_policy.auto_approve_actions),
+            "auto_expire_approval_actions": list(runtime_policy.auto_expire_approval_actions),
+            "manual_approval_only_actions": list(runtime_policy.manual_approval_only_actions),
             "command_allowlist_prefixes": list(runtime_policy.command_allowlist_prefixes),
             "blocked_command_patterns": list(runtime_policy.blocked_command_patterns),
             "approval_required_command_patterns": list(runtime_policy.approval_required_command_patterns),
+            "allowed_read_roots": list(runtime_policy.allowed_read_roots),
+            "blocked_read_paths": list(runtime_policy.blocked_read_paths),
+            "approval_required_read_paths": list(runtime_policy.approval_required_read_paths),
             "allowed_write_roots": list(runtime_policy.allowed_write_roots),
             "blocked_write_paths": list(runtime_policy.blocked_write_paths),
             "approval_required_write_paths": list(runtime_policy.approval_required_write_paths),
@@ -263,6 +269,15 @@ def render_rule_diagnostics(
         f"- 需要人工确认的动作：{_render_inline_list(runtime_policy_payload['approval_required_actions'])}"
     )
     lines.append(
+        f"- 自动批准动作：{_render_inline_list(runtime_policy_payload['auto_approve_actions'])}"
+    )
+    lines.append(
+        f"- 自动过期动作：{_render_inline_list(runtime_policy_payload['auto_expire_approval_actions'])}"
+    )
+    lines.append(
+        f"- 必须人工处理的动作：{_render_inline_list(runtime_policy_payload['manual_approval_only_actions'])}"
+    )
+    lines.append(
         f"- 命令白名单前缀：{_render_inline_list(runtime_policy_payload['command_allowlist_prefixes'])}"
     )
     lines.append(
@@ -271,6 +286,16 @@ def render_rule_diagnostics(
     lines.append(
         f"- 需要人工确认的命令："
         f"{_render_inline_list(runtime_policy_payload['approval_required_command_patterns'])}"
+    )
+    lines.append(
+        f"- 允许读取根目录：{_render_inline_list(runtime_policy_payload['allowed_read_roots'])}"
+    )
+    lines.append(
+        f"- 禁用读取路径：{_render_inline_list(runtime_policy_payload['blocked_read_paths'])}"
+    )
+    lines.append(
+        f"- 需要人工确认的读取路径："
+        f"{_render_inline_list(runtime_policy_payload['approval_required_read_paths'])}"
     )
     lines.append(
         f"- 允许写入根目录：{_render_inline_list(runtime_policy_payload['allowed_write_roots'])}"
@@ -309,7 +334,7 @@ def _render_markdown(case_state: CaseState) -> str:
         return _render_block_card(case_state)
 
     lines: List[str] = []
-    lines.append("# PM Method Agent 审查卡")
+    lines.append("# PM Method Agent 分析卡")
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
@@ -332,28 +357,17 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("## 输入")
     lines.append(case_state.raw_input)
     lines.append("")
-    lines.append("## 当前判断")
+    lines.append("## 我现在的判断")
     lines.append(case_state.normalized_summary or "暂无")
     lines.append("")
-    lines.append("## 关键判断")
-    for finding in case_state.findings:
+    lines.append("## 我主要看到这几个点")
+    for finding in _collect_render_findings(case_state):
         _append_finding(lines, finding)
     lines.append("")
-    lines.append("## 需要确认")
-    if case_state.decision_gates:
-        for gate in case_state.decision_gates:
-            recommended_option = OPTION_LABELS.get(gate.recommended_option, gate.recommended_option)
-            option_labels = [OPTION_LABELS.get(option, option) for option in gate.options]
-            lines.append(
-                f"- {_polish_gate_question(gate.question)} "
-                f"(建议={recommended_option}，阻塞={'是' if gate.blocking else '否'})"
-            )
-            lines.append(f"  选项：{' / '.join(option_labels)}")
-            lines.append(f"  原因：{_polish_gate_reason(gate.reason)}")
-    else:
-        lines.append("- 无")
+    lines.append("## 这一步还想先确认")
+    _append_gate_items(lines, case_state)
     lines.append("")
-    lines.append("## 建议先做")
+    lines.append("## 更建议先做")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
     lines.append("")
@@ -448,19 +462,19 @@ def _render_context_question_card(case_state: CaseState) -> str:
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
     lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
     lines.append("")
-    lines.append("## 当前判断")
+    lines.append("## 我现在的判断")
     lines.append(case_state.normalized_summary or "信息还不够，建议先补几项基础信息。")
     lines.append("")
-    lines.append("## 先补原因")
+    lines.append("## 为什么先补")
     lines.append(case_state.blocking_reason or "这几个信息会直接影响后面的判断口径。")
     lines.append("")
     lines.append("## 先补这几项")
     for question in case_state.pending_questions:
         lines.append(f"- {question}")
     lines.append("")
-    lines.append("## 补完后继续")
+    lines.append("## 补完后我再继续")
     next_stage = case_state.metadata.get("next_stage", "problem-definition")
-    lines.append(f"- `{_label_for(STAGE_LABELS, str(next_stage))}`")
+    lines.append(f"- 我会先继续到`{_label_for(STAGE_LABELS, str(next_stage))}`。")
     lines.append("")
     lines.append("## 下一步")
     for action in _collect_next_actions(case_state, limit=3):
@@ -477,32 +491,21 @@ def _render_block_card(case_state: CaseState) -> str:
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
     lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
     lines.append("")
-    lines.append("## 当前判断")
+    lines.append("## 我现在的判断")
     lines.append(case_state.normalized_summary or "当前阶段暂不建议继续推进。")
     lines.append("")
-    lines.append("## 当前卡点")
+    lines.append("## 这一步先卡在这里")
     lines.append(case_state.blocking_reason or "当前条件还不够，先别急着往下走。")
     lines.append("")
     if case_state.findings:
-        lines.append("## 关键判断")
+        lines.append("## 我主要看到这几个点")
         for finding in case_state.findings:
             _append_finding(lines, finding)
         lines.append("")
-    lines.append("## 继续前确认")
-    if case_state.decision_gates:
-        for gate in case_state.decision_gates:
-            recommended_option = OPTION_LABELS.get(gate.recommended_option, gate.recommended_option)
-            option_labels = [OPTION_LABELS.get(option, option) for option in gate.options]
-            lines.append(
-                f"- {_polish_gate_question(gate.question)} "
-                f"(建议={recommended_option}，阻塞={'是' if gate.blocking else '否'})"
-            )
-            lines.append(f"  选项：{' / '.join(option_labels)}")
-            lines.append(f"  原因：{_polish_gate_reason(gate.reason)}")
-    else:
-        lines.append("- 当前没有需要立即拍板的决策点。")
+    lines.append("## 继续前还想先确认")
+    _append_gate_items(lines, case_state, empty_message="当前没有需要立刻拍板的决策点。")
     lines.append("")
-    lines.append("## 下一步")
+    lines.append("## 更建议先做")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
     if case_state.unknowns:
@@ -555,26 +558,39 @@ def _render_pre_framing_card(case_state: CaseState) -> str:
     lines.append("## 当前判断")
     lines.append(case_state.normalized_summary or "先把这句话收一收，再继续推进。")
     lines.append("")
-    lines.append("## 更像哪几类问题")
-    for direction in result.candidate_directions:
-        recommended = "，更建议先看" if direction.direction_id == result.recommended_direction_id else ""
-        lines.append(f"- {direction.label}{recommended}")
-        lines.append(f"  说明：{direction.summary}")
-        if direction.assumptions:
-            lines.append(f"  假设：{_join_limited(direction.assumptions, limit=2)}")
+    lines.append("## 我先按这几个方向理解")
+    for index, direction in enumerate(result.candidate_directions):
+        prefix = "更像" if direction.direction_id == result.recommended_direction_id else "也可能是"
+        rendered = f"{prefix}「{direction.label}」：{direction.summary}"
+        if index > 0 and direction.assumptions:
+            rendered = f"{rendered} {_render_pre_framing_assumption(direction)}"
+        lines.append(f"- {rendered}")
     lines.append("")
-    lines.append("## 先确认这几件事")
+    lines.append("## 现在更值得先补")
     for question in result.priority_questions:
         lines.append(f"- {question}")
     lines.append("")
-    lines.append("## 更建议先沿哪条继续")
+    lines.append("## 如果先按这个方向继续")
     recommended = _find_recommended_direction(case_state)
-    lines.append(f"- {recommended}")
-    lines.append("")
-    lines.append("## 补完后继续")
     next_stage = case_state.metadata.get("next_stage", "problem-definition")
-    lines.append(f"- `{_label_for(STAGE_LABELS, str(next_stage))}`")
+    lines.append(f"- 我会先按「{recommended}」往下看。")
+    lines.append(f"- {_render_pre_framing_follow_up(str(next_stage))}")
     return "\n".join(lines)
+
+
+def _render_pre_framing_assumption(direction) -> str:
+    assumptions = [item.strip() for item in direction.assumptions if item.strip()]
+    if not assumptions:
+        return ""
+    return f"我先留一个备选判断：{assumptions[0]}。"
+
+
+def _render_pre_framing_follow_up(next_stage: str) -> str:
+    if next_stage == "context-alignment":
+        return "这轮补完后，我先把场景信息对齐，再继续往下看。"
+    if next_stage == "problem-definition":
+        return "这轮补完后，我再继续把问题本身收稳。"
+    return f"这轮补完后，我再继续往`{_label_for(STAGE_LABELS, next_stage)}`走。"
 
 
 def _label_for(mapping: dict, key: str) -> str:
@@ -583,22 +599,134 @@ def _label_for(mapping: dict, key: str) -> str:
 
 def _append_finding(lines: List[str], finding) -> None:
     claim = _polish_display_text(finding.claim)
-    lines.append(
-        f"- [{_label_for(DIMENSION_LABELS, finding.dimension)}] {claim} "
-        f"(证据={_label_for(EVIDENCE_LEVEL_LABELS, finding.evidence_level)}，"
-        f"风险={_label_for(RISK_LABELS, finding.risk_if_wrong)})"
+    lines.append(f"- [{_label_for(DIMENSION_LABELS, finding.dimension)}] {claim}")
+    compact = _should_render_finding_compact(finding)
+    summary = _render_finding_strength_line(
+        finding.evidence_level,
+        finding.risk_if_wrong,
+        compact=compact,
     )
-    if finding.evidence:
+    if summary:
+        lines.append(f"  {summary}")
+    if finding.evidence and not compact:
         evidence = _join_limited([_polish_display_text(item) for item in finding.evidence], limit=1)
-        lines.append(f"  信号：{evidence}")
+        lines.append(f"  我看到的信号：{evidence}")
     if finding.unknowns:
-        unknowns = _join_limited([_polish_display_text(item) for item in finding.unknowns], limit=2)
-        lines.append(f"  要补：{unknowns}")
+        unknown_limit = 1 if compact else 2
+        unknowns = _join_limited([_polish_display_text(item) for item in finding.unknowns], limit=unknown_limit)
+        prefix = "  先顺手补：" if compact else "  还想补："
+        lines.append(f"{prefix}{unknowns}")
+
+
+def _collect_render_findings(case_state: CaseState) -> List[AnalyzerFinding]:
+    findings = list(case_state.findings)
+    compact_decision_facts = [
+        item
+        for item in findings
+        if item.dimension == "decision-challenge" and _should_render_finding_compact(item)
+    ]
+    if len(compact_decision_facts) < 2:
+        return findings
+
+    merged_fact = AnalyzerFinding(
+        dimension="decision-challenge",
+        claim=_build_compact_decision_fact_claim(compact_decision_facts),
+        claim_type="fact",
+        evidence_level="medium",
+        evidence=["场景基础信息中已标记当前存在多个需要一起看的场景前提。"],
+        unknowns=_merge_finding_unknowns(compact_decision_facts),
+        risk_if_wrong="medium",
+        suggested_next_action="",
+        owner="decision-challenge",
+    )
+
+    rendered: List[AnalyzerFinding] = []
+    inserted = False
+    for item in findings:
+        if item in compact_decision_facts:
+            if not inserted:
+                rendered.append(merged_fact)
+                inserted = True
+            continue
+        rendered.append(item)
+    return rendered
+
+
+def _build_compact_decision_fact_claim(findings: List[AnalyzerFinding]) -> str:
+    clauses: List[str] = []
+    for finding in findings:
+        claim = _shorten_compact_decision_claim(_polish_display_text(finding.claim))
+        if claim and claim not in clauses:
+            clauses.append(claim)
+    if not clauses:
+        return "还有几个场景前提会直接影响后面的判断。"
+    if len(clauses) == 1:
+        return f"{clauses[0]}，这会直接影响后面的判断。"
+    return f"还有几个场景前提会直接影响后面的判断：{'；'.join(clauses)}。"
+
+
+def _merge_finding_unknowns(findings: List[AnalyzerFinding]) -> List[str]:
+    merged: List[str] = []
+    for finding in findings:
+        for item in finding.unknowns:
+            rendered = _polish_display_text(str(item).strip())
+            if rendered and rendered not in merged:
+                merged.append(rendered)
+    return merged
+
+
+def _shorten_compact_decision_claim(claim: str) -> str:
+    shortened = claim.strip().strip("。")
+    replacements = [
+        ("这是企业产品场景，价值判断还要把组织流程、权限链和角色关系一起看", "这是企业产品场景"),
+        ("现在主要是非桌面端场景，后面评估时还得把展示空间和操作打断成本一起算进去", "现在主要是非桌面端场景"),
+    ]
+    for source, target in replacements:
+        shortened = shortened.replace(source, target)
+    return shortened.strip("。")
+
+
+def _should_render_finding_compact(finding) -> bool:
+    if str(getattr(finding, "claim_type", "")) != "fact":
+        return False
+    evidence_items = list(getattr(finding, "evidence", []) or [])
+    if not evidence_items:
+        return False
+    return all("场景基础信息中已标记" in str(item) for item in evidence_items)
+
+
+def _render_finding_strength_line(evidence_level: str, risk_level: str, compact: bool = False) -> str:
+    if compact:
+        compact_map = {
+            "low": "这条影响相对可控。",
+            "medium": "这条会影响后面怎么判断，但不用单独放大。",
+            "high": "这条会明显影响后面的判断口径。",
+        }
+        return compact_map.get(str(risk_level), "")
+    evidence_map = {
+        "none": "这条现在还没有明确证据，",
+        "weak": "这条现在证据还比较弱，",
+        "medium": "这条已经有一些依据，",
+        "strong": "这条已经有比较扎实的依据，",
+    }
+    risk_map = {
+        "low": "就算看偏了，影响也相对可控。",
+        "medium": "如果看偏了，后面可能会多走一点弯路。",
+        "high": "如果看偏了，后面很容易把力气花错地方。",
+    }
+    evidence_text = evidence_map.get(str(evidence_level), "")
+    risk_text = risk_map.get(str(risk_level), "")
+    if not evidence_text and not risk_text:
+        return ""
+    return f"{evidence_text}{risk_text}".strip()
 
 
 def _append_unknowns(lines: List[str], case_state: CaseState) -> None:
-    lines.append("## 建议补充")
-    grouped_unknowns = _group_unknowns(case_state.unknowns)
+    grouped_unknowns = _group_unknowns(_filter_unknowns_for_render(case_state))
+    has_items = any(grouped_unknowns.get(group_name) for group_name in UNKNOWN_GROUP_ORDER)
+    if not has_items:
+        return
+    lines.append("## 后面还值得补")
     for group_name in UNKNOWN_GROUP_ORDER:
         items = grouped_unknowns.get(group_name, [])
         if not items:
@@ -623,6 +751,19 @@ def _append_role_relationships(lines: List[str], case_state: CaseState) -> None:
             lines.append(f"- {label}：{'，'.join(str(item) for item in items)}")
 
 
+def _append_gate_items(lines: List[str], case_state: CaseState, empty_message: str = "这一步暂时没有额外确认项。") -> None:
+    if not case_state.decision_gates:
+        lines.append(f"- {empty_message}")
+        return
+    for gate in case_state.decision_gates:
+        recommended_option = OPTION_LABELS.get(gate.recommended_option, gate.recommended_option)
+        option_labels = [OPTION_LABELS.get(option, option) for option in gate.options]
+        lines.append(f"- {_polish_gate_question(gate.question)}")
+        lines.append(f"  倾向：{recommended_option}{'；这一步会卡住' if gate.blocking else ''}")
+        lines.append(f"  可选：{' / '.join(option_labels)}")
+        lines.append(f"  这么判断：{_polish_gate_reason(gate.reason)}")
+
+
 def _collect_next_actions(case_state: CaseState, limit: int = 5) -> List[str]:
     actions: List[str] = []
     for candidate in case_state.next_actions:
@@ -645,6 +786,72 @@ def _collect_next_actions(case_state: CaseState, limit: int = 5) -> List[str]:
         if len(actions) >= limit:
             break
     return actions
+
+
+def _filter_unknowns_for_render(case_state: CaseState) -> List[str]:
+    rendered_actions = _collect_next_actions(case_state, limit=8)
+    filtered: List[str] = []
+    for item in case_state.unknowns:
+        normalized = _polish_display_text(str(item).strip())
+        if not normalized:
+            continue
+        if _is_unknown_covered_by_actions(normalized, rendered_actions):
+            continue
+        if normalized not in filtered:
+            filtered.append(normalized)
+    return filtered
+
+
+def _is_unknown_covered_by_actions(unknown: str, actions: List[str]) -> bool:
+    compact_unknown = _semantic_compact_text(unknown)
+    for action in actions:
+        compact_action = _semantic_compact_text(action)
+        if compact_unknown and (compact_unknown in compact_action or compact_action in compact_unknown):
+            return True
+        if _action_unknown_semantically_overlap(unknown, action):
+            return True
+    return False
+
+
+def _action_unknown_semantically_overlap(unknown: str, action: str) -> bool:
+    semantic_pairs = [
+        (["当前流程", "流程是怎么运行"], ["现状流程", "流程"]),
+        (["替代方案", "绕路方式"], ["替代做法", "四类路径", "非产品路径", "粗比较"]),
+        (["目标和约束是否一致", "目标是否一致", "协作边界"], ["目标差异", "角色关系", "协作边界"]),
+        (["时间窗口", "机会成本"], ["为什么现在做", "机会成本"]),
+        (["产品类型", "企业产品", "消费者产品", "内部产品"], ["产品类型"]),
+        (["主要交付和使用平台", "主要使用平台"], ["主要平台"]),
+        (["成功指标", "护栏指标", "停止条件"], ["成功指标", "护栏指标", "停止条件"]),
+        (["最小验证动作", "基线指标"], ["最小验证动作", "真实案例", "可证伪假设"]),
+        (["非产品解法"], ["非产品路径", "四类路径", "粗比较"]),
+        (["关键角色", "提出需求的人", "实际使用的人", "最终业务结果"], ["核心角色", "角色关系", "提出者", "使用者", "结果责任人"]),
+    ]
+    for unknown_markers, action_markers in semantic_pairs:
+        if any(marker in unknown for marker in unknown_markers) and any(marker in action for marker in action_markers):
+            return True
+    return False
+
+
+def _semantic_compact_text(text: str) -> str:
+    compact = text.strip()
+    replacements = [
+        ("当前", ""),
+        ("是否", ""),
+        ("是什么", ""),
+        ("怎么运行的", ""),
+        ("是什么", ""),
+        ("并和", ""),
+        ("一起看", ""),
+        ("先", ""),
+        ("至少", ""),
+        ("。", ""),
+        ("，", ""),
+        ("、", ""),
+        (" ", ""),
+    ]
+    for source, target in replacements:
+        compact = compact.replace(source, target)
+    return compact
 
 
 def _polish_display_text(text: str) -> str:
@@ -797,11 +1004,8 @@ def _classify_unknown(item: str) -> str:
 
 
 def _join_limited(items: List[str], limit: int) -> str:
-    visible_items = items[:limit]
-    rendered = "；".join(visible_items)
-    if len(items) > limit:
-        rendered = f"{rendered}；另有 {len(items) - limit} 项"
-    return rendered
+    visible_items = [item.strip() for item in items if item.strip()][:limit]
+    return "；".join(visible_items)
 
 
 def _append_case_id(lines: List[str], case_state: CaseState) -> None:

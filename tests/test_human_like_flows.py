@@ -27,17 +27,17 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(first_response.case_state.output_kind, "continue-guidance-card")
         self.assertEqual(first_response.case_state.stage, "pre-framing")
-        self.assertIn("更像哪几类问题", first_response.rendered_card)
+        self.assertIn("我先按这几个方向理解", first_response.rendered_card)
 
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(second_response.case_state.output_kind, "review-card")
         self.assertEqual(second_response.case_state.workflow_state, "done")
-        self.assertIn("## 关键判断", second_response.rendered_card)
+        self.assertIn("## 我主要看到这几个点", second_response.rendered_card)
 
         self.assertEqual(third_response.action, "reply-case")
         self.assertEqual(third_response.case_state.output_kind, "decision-gate-card")
         self.assertEqual(third_response.case_state.workflow_state, "blocked")
-        self.assertIn("建议=暂缓", third_response.rendered_card)
+        self.assertIn("倾向：暂缓", third_response.rendered_card)
 
     def test_mid_level_pm_toc_growth_case_can_go_directly_to_review_card(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -51,7 +51,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIsNotNone(response.case_state)
         self.assertEqual(response.case_state.output_kind, "review-card")
         self.assertEqual(response.case_state.workflow_state, "done")
-        self.assertIn("## 建议补充", response.rendered_card)
+        self.assertIn("## 后面还值得补", response.rendered_card)
         self.assertIn("成功指标是什么", response.rendered_card)
         self.assertNotIn("输入里已经带出方案", response.rendered_card)
 
@@ -73,7 +73,7 @@ class HumanLikeFlowTest(unittest.TestCase):
 
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(first_response.case_state.output_kind, "continue-guidance-card")
-        self.assertIn("更建议先沿哪条继续", first_response.rendered_card)
+        self.assertIn("如果先按这个方向继续", first_response.rendered_card)
 
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(second_response.case_state.output_kind, "decision-gate-card")
@@ -106,6 +106,49 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(second_response.action, "reply-case")
         self.assertIn(second_response.case_state.output_kind, {"review-card", "decision-gate-card"})
         self.assertIn("店长", second_response.rendered_card)
+
+    def test_colloquial_process_efficiency_issue_can_trigger_process_pre_framing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "最近门店店员老反馈 H5 上核销后还要回头查订单，我感觉这事有点影响效率，但还没想清楚是不是要做。",
+                workspace_id="process-efficiency-flow",
+            )
+
+        self.assertEqual(response.case_state.output_kind, "continue-guidance-card")
+        self.assertIn("流程执行或责任链不稳定", response.rendered_card)
+        self.assertIn("平时到底是谁在执行这个动作，谁会对结果负责？", response.rendered_card)
+
+    def test_scattered_colloquial_inputs_can_still_converge(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这个事我还没想太清楚，就是最近老有人说审批容易漏。",
+                workspace_id="scattered-flow",
+            )
+            second_response = shell.handle_message(
+                "偏 ToB，主要还是网页上在跑。",
+                workspace_id="scattered-flow",
+            )
+            third_response = shell.handle_message(
+                "一线审批专员在用，负责人盯时效，最近投诉多了一点，所以我才开始想看这个。",
+                workspace_id="scattered-flow",
+            )
+
+        self.assertIn(first_response.case_state.output_kind, {"continue-guidance-card", "context-question-card"})
+        self.assertTrue(
+            "现在更值得先补" in first_response.rendered_card
+            or "先补这几项" in first_response.rendered_card
+        )
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertIn(
+            second_response.case_state.output_kind,
+            {"continue-guidance-card", "context-question-card", "review-card"},
+        )
+        self.assertEqual(third_response.action, "reply-case")
+        self.assertIn(third_response.case_state.output_kind, {"review-card", "decision-gate-card", "stage-block-card"})
+        self.assertNotIn("证据=", third_response.rendered_card)
+        self.assertIn("我看到的信号", third_response.rendered_card)
 
 
 if __name__ == "__main__":

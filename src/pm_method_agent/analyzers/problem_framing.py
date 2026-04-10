@@ -125,20 +125,23 @@ def analyze_problem_framing(case_state: CaseState) -> None:
         )
     )
 
-    if not context_profile.get("business_model") or not context_profile.get("primary_platform"):
+    missing_context_items = []
+    if not context_profile.get("business_model"):
+        missing_context_items.append("产品类型")
+    if not context_profile.get("primary_platform"):
+        missing_context_items.append("主要平台")
+
+    if missing_context_items:
         case_state.add_finding(
             AnalyzerFinding(
                 dimension="problem-framing",
                 claim="场景基础信息还不够，后面的判断容易跑偏。",
                 claim_type="missing-information",
                 evidence_level="none",
-                evidence=["产品类型或主要平台还没有补齐。"],
-                unknowns=[
-                    "这是企业产品、消费者产品还是内部产品",
-                    "主要交付和使用平台是什么",
-                ],
+                evidence=[f"{'、'.join(missing_context_items)}还没有补齐。"],
+                unknowns=_build_missing_context_unknowns(missing_context_items),
                 risk_if_wrong="high",
-                suggested_next_action="先补齐最小场景信息，再继续往下看。",
+                suggested_next_action=_build_missing_context_next_action(missing_context_items),
                 human_decision_needed=True,
                 owner="problem-framing",
             )
@@ -149,13 +152,13 @@ def analyze_problem_framing(case_state: CaseState) -> None:
         "补充现状流程、失败案例和现有替代做法。",
         "标出核心角色，以及他们的目标差异。",
     ]
-    if not context_profile.get("business_model") or not context_profile.get("primary_platform"):
-        next_actions.insert(0, "先补齐最小场景信息，至少包括产品类型、主要平台和关键用户角色。")
+    if missing_context_items:
+        next_actions.insert(0, _build_missing_context_next_step(missing_context_items))
     case_state.extend_next_actions(next_actions)
 
     gate_needed = is_solution_led or len(text) < 30
     if gate_needed:
-        gate_blocking = len(text) < 30 or not context_profile.get("business_model") or not context_profile.get("primary_platform")
+        gate_blocking = len(text) < 30 or bool(missing_context_items)
         case_state.add_gate(
             DecisionGate(
                 gate_id=f"G-{len(case_state.decision_gates) + 1:03d}",
@@ -189,3 +192,26 @@ def _relationship_items(role_relationships: dict[str, object], key: str) -> list
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _build_missing_context_unknowns(missing_context_items: list[str]) -> list[str]:
+    unknowns: list[str] = []
+    if "产品类型" in missing_context_items:
+        unknowns.append("这是企业产品、消费者产品还是内部产品")
+    if "主要平台" in missing_context_items:
+        unknowns.append("主要交付和使用平台是什么")
+    return unknowns
+
+
+def _build_missing_context_next_action(missing_context_items: list[str]) -> str:
+    if len(missing_context_items) == 2:
+        return "先把产品类型和主要平台补齐，再继续往下看。"
+    return f"先把{missing_context_items[0]}补齐，再继续往下看。"
+
+
+def _build_missing_context_next_step(missing_context_items: list[str]) -> str:
+    if len(missing_context_items) == 2:
+        return "先补齐最小场景信息，至少包括产品类型、主要平台和关键用户角色。"
+    if missing_context_items[0] == "产品类型":
+        return "先补充产品类型，再继续看角色关系和现状问题。"
+    return "先补充主要平台，再继续看角色关系和现状问题。"
