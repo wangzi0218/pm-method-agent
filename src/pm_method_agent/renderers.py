@@ -195,6 +195,12 @@ def build_rule_diagnostics_payload(
             "blocked_intents": list(runtime_policy.blocked_intents),
             "blocked_actions": list(runtime_policy.blocked_actions),
             "approval_required_actions": list(runtime_policy.approval_required_actions),
+            "command_allowlist_prefixes": list(runtime_policy.command_allowlist_prefixes),
+            "blocked_command_patterns": list(runtime_policy.blocked_command_patterns),
+            "approval_required_command_patterns": list(runtime_policy.approval_required_command_patterns),
+            "allowed_write_roots": list(runtime_policy.allowed_write_roots),
+            "blocked_write_paths": list(runtime_policy.blocked_write_paths),
+            "approval_required_write_paths": list(runtime_policy.approval_required_write_paths),
             "allow_new_cases": runtime_policy.allow_new_cases,
             "allow_case_switching": runtime_policy.allow_case_switching,
             "allow_project_profile_updates": runtime_policy.allow_project_profile_updates,
@@ -255,6 +261,26 @@ def render_rule_diagnostics(
     lines.append(f"- 禁用动作：{_render_inline_list(runtime_policy_payload['blocked_actions'])}")
     lines.append(
         f"- 需要人工确认的动作：{_render_inline_list(runtime_policy_payload['approval_required_actions'])}"
+    )
+    lines.append(
+        f"- 命令白名单前缀：{_render_inline_list(runtime_policy_payload['command_allowlist_prefixes'])}"
+    )
+    lines.append(
+        f"- 禁用命令：{_render_inline_list(runtime_policy_payload['blocked_command_patterns'])}"
+    )
+    lines.append(
+        f"- 需要人工确认的命令："
+        f"{_render_inline_list(runtime_policy_payload['approval_required_command_patterns'])}"
+    )
+    lines.append(
+        f"- 允许写入根目录：{_render_inline_list(runtime_policy_payload['allowed_write_roots'])}"
+    )
+    lines.append(
+        f"- 禁用写入路径：{_render_inline_list(runtime_policy_payload['blocked_write_paths'])}"
+    )
+    lines.append(
+        f"- 需要人工确认的写入路径："
+        f"{_render_inline_list(runtime_policy_payload['approval_required_write_paths'])}"
     )
     lines.append(
         f"- 允许新建案例：{'是' if runtime_policy_payload['allow_new_cases'] else '否'}"

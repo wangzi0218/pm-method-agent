@@ -49,7 +49,12 @@ from pm_method_agent.reply_interpreter import (
 )
 from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
-from pm_method_agent.runtime_policy import check_runtime_action_policy, load_runtime_policy
+from pm_method_agent.runtime_policy import (
+    check_runtime_action_policy,
+    check_runtime_command_policy,
+    check_runtime_write_policy,
+    load_runtime_policy,
+)
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 
 
@@ -962,6 +967,12 @@ class OrchestratorSmokeTest(unittest.TestCase):
                             "blocked_intents": ["switch-case"],
                             "blocked_actions": ["session-service.create-case"],
                             "approval_required_actions": ["project-profile-service.*"],
+                            "command_allowlist_prefixes": ["git status", "python -m unittest"],
+                            "blocked_command_patterns": ["rm *"],
+                            "approval_required_command_patterns": ["git push*"],
+                            "allowed_write_roots": ["src", "tests"],
+                            "blocked_write_paths": [".env*", "secrets/*"],
+                            "approval_required_write_paths": ["docs/releases/*"],
                             "allow_new_cases": False,
                             "allow_project_profile_updates": False,
                         }
@@ -975,6 +986,12 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(policy.blocked_intents, ["switch-case"])
         self.assertEqual(policy.blocked_actions, ["session-service.create-case"])
         self.assertEqual(policy.approval_required_actions, ["project-profile-service.*"])
+        self.assertEqual(policy.command_allowlist_prefixes, ["git status", "python -m unittest"])
+        self.assertEqual(policy.blocked_command_patterns, ["rm *"])
+        self.assertEqual(policy.approval_required_command_patterns, ["git push*"])
+        self.assertTrue(policy.allowed_write_roots[0].endswith("/src"))
+        self.assertEqual(policy.blocked_write_paths, [".env*", "secrets/*"])
+        self.assertEqual(policy.approval_required_write_paths, ["docs/releases/*"])
         self.assertFalse(policy.allow_new_cases)
         self.assertFalse(policy.allow_project_profile_updates)
 
@@ -1006,6 +1023,70 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("需要先人工确认", approval.reason)
         self.assertIsNone(allowed)
 
+    def test_runtime_command_policy_can_enforce_allowlist_blocklist_and_approval(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "command_allowlist_prefixes": ["git status", "python -m unittest"],
+                            "blocked_command_patterns": ["rm *"],
+                            "approval_required_command_patterns": ["git push*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        allowed = check_runtime_command_policy(policy, command_args=["git", "status"])
+        blocked = check_runtime_command_policy(policy, command_args=["rm", "-rf", "tmp"])
+        approval = check_runtime_command_policy(policy, command_args=["git", "push", "origin", "main"])
+        disallowed = check_runtime_command_policy(policy, command_args=["git", "commit", "-m", "x"])
+
+        self.assertIsNone(allowed)
+        self.assertIsNotNone(blocked)
+        self.assertIn("rm -rf tmp", blocked.reason)
+        self.assertIsNotNone(approval)
+        self.assertIn("需要先人工确认", approval.reason)
+        self.assertIsNotNone(disallowed)
+        self.assertIn("git commit -m x", disallowed.reason)
+
+    def test_runtime_write_policy_can_enforce_roots_blocklist_and_approval(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "allowed_write_roots": ["src", "tests"],
+                            "blocked_write_paths": [".env*", "secrets/*"],
+                            "approval_required_write_paths": ["docs/releases/*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            policy = load_runtime_policy(base_dir=tmpdir)
+
+        allowed = check_runtime_write_policy(policy, write_paths=["src/pm_method_agent/runtime_policy.py"])
+        blocked = check_runtime_write_policy(policy, write_paths=[".env.local"])
+        approval = check_runtime_write_policy(policy, write_paths=["docs/releases/v0.2.0.md"])
+        outside = check_runtime_write_policy(policy, write_paths=["README.md"])
+
+        self.assertIsNone(allowed)
+        self.assertIsNotNone(blocked)
+        self.assertIn(".env.local", blocked.reason)
+        self.assertIsNotNone(approval)
+        self.assertIn("需要先人工确认", approval.reason)
+        self.assertIsNotNone(outside)
+        self.assertIn("README.md", outside.reason)
+
     def test_cli_rules_command_can_render_effective_rule_layers(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1021,6 +1102,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
                         "runtime_policy": {
                             "blocked_intents": ["switch-case"],
                             "approval_required_actions": ["project-profile-service.*"],
+                            "command_allowlist_prefixes": ["git status"],
+                            "allowed_write_roots": ["src"],
                             "allow_new_cases": False,
                         },
                     },
@@ -1040,6 +1123,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("允许新建案例：否", rendered)
         self.assertIn("`switch-case`", rendered)
         self.assertIn("`project-profile-service.*`", rendered)
+        self.assertIn("`git status`", rendered)
         self.assertIn("[身份描述]", rendered)
 
     def test_agent_shell_can_block_new_case_by_runtime_policy(self) -> None:

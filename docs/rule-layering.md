@@ -207,6 +207,7 @@ PYTHONPATH=src python3 -m pm_method_agent.cli rules \
 - 当前到底加载了哪些规则文件
 - 当前 prompt 最终吃进了哪些行为规则、工具约束和输出纪律
 - 当前 runtime policy 的有效值是什么
+- 当前命令白名单、禁用命令和写入范围策略是什么
 
 这样后面无论是接 `AGENTS.md`、`.pmma/rules.md`，还是接更细的目录策略，都先能看见，再调整。
 
