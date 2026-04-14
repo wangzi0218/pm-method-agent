@@ -13,4 +13,6 @@ venv/
 dist/
 build/
 *.egg-info/
+.playwright-cli/
+accept-after-*.yml
 .DS_Store

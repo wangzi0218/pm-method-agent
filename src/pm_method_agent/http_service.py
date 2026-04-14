@@ -26,6 +26,7 @@ from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runt
 from pm_method_agent.runtime_policy import load_runtime_policy, runtime_policy_to_dict
 from pm_method_agent.runtime_tools import RuntimeToolRegistry
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
+from pm_method_agent.web_demo_assets import get_web_demo_asset, get_web_demo_html
 from pm_method_agent.workspace_service import (
     activate_workspace_case,
     default_workspace_store,
@@ -42,7 +43,22 @@ JsonDict = Dict[str, object]
 @dataclass
 class HTTPResponse:
     status_code: int
-    payload: JsonDict
+    payload: Optional[JsonDict] = None
+    body: Optional[bytes] = None
+    content_type: str = "application/json; charset=utf-8"
+
+    @classmethod
+    def json(cls, status_code: int, payload: JsonDict) -> "HTTPResponse":
+        return cls(status_code=status_code, payload=payload)
+
+    @classmethod
+    def content(cls, status_code: int, body: bytes, content_type: str) -> "HTTPResponse":
+        return cls(status_code=status_code, body=body, content_type=content_type)
+
+    def encoded_body(self) -> bytes:
+        if self.body is not None:
+            return self.body
+        return json.dumps(self.payload or {}, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 class PMMethodHTTPService:
@@ -60,18 +76,27 @@ class PMMethodHTTPService:
             parsed_url = urlparse(path)
             normalized_path = parsed_url.path.rstrip("/") or "/"
 
+            if method == "GET" and normalized_path in {"/", "/demo"}:
+                return HTTPResponse.content(200, get_web_demo_html(), "text/html; charset=utf-8")
+
+            if method == "GET":
+                asset = get_web_demo_asset(normalized_path)
+                if asset:
+                    content_type, content_body = asset
+                    return HTTPResponse.content(200, content_body, content_type)
+
             if method == "GET" and normalized_path == "/health":
-                return HTTPResponse(200, {"status": "ok", "llm_runtime": get_llm_runtime_status()})
+                return HTTPResponse.json(200, {"status": "ok", "llm_runtime": get_llm_runtime_status()})
 
             if method == "GET" and normalized_path == "/runtime/policy":
-                return HTTPResponse(200, {"runtime_policy": runtime_policy_to_dict(self._runtime_policy)})
+                return HTTPResponse.json(200, {"runtime_policy": runtime_policy_to_dict(self._runtime_policy)})
 
             if method == "GET" and normalized_path == "/runtime/tools":
-                return HTTPResponse(200, {"tools": self._local_tools.list_tools()})
+                return HTTPResponse.json(200, {"tools": self._local_tools.list_tools()})
 
             tool_name = _extract_runtime_tool_name(normalized_path)
             if method == "GET" and tool_name:
-                return HTTPResponse(200, {"tool": self._local_tools.describe_tool(tool_name)})
+                return HTTPResponse.json(200, {"tool": self._local_tools.describe_tool(tool_name)})
 
             if method == "POST" and normalized_path == "/runtime/policy/evaluate":
                 payload = _parse_json_body(body)
@@ -82,7 +107,7 @@ class PMMethodHTTPService:
                     read_paths=_ensure_string_list(payload.get("read_paths")),
                     write_paths=_ensure_string_list(payload.get("write_paths")),
                 )
-                return HTTPResponse(
+                return HTTPResponse.json(
                     200,
                     {
                         "decision": decision.to_dict(),
@@ -96,13 +121,13 @@ class PMMethodHTTPService:
                     tool_name=LOCAL_COMMAND_TOOL_NAME,
                     payload=payload,
                 )
-                return HTTPResponse(200, {"result": result.to_dict()})
+                return HTTPResponse.json(200, {"result": result.to_dict()})
 
             if method == "POST" and normalized_path == "/runtime/tools/execute":
                 payload = _parse_json_body(body)
                 tool_name = str(payload.get("tool_name", "")).strip()
                 result = self._local_tools.execute(tool_name=tool_name, payload=payload)
-                return HTTPResponse(
+                return HTTPResponse.json(
                     200,
                     {
                         "tool_name": tool_name,
@@ -121,7 +146,7 @@ class PMMethodHTTPService:
                     project_profile_id=_optional_string(payload.get("project_profile_id")),
                     store=self._project_profile_store,
                 )
-                return HTTPResponse(201, {"project_profile": project_profile.to_dict()})
+                return HTTPResponse.json(201, {"project_profile": project_profile.to_dict()})
 
             if method == "POST" and normalized_path == "/cases":
                 payload = _parse_json_body(body)
@@ -132,13 +157,13 @@ class PMMethodHTTPService:
                     case_id=_optional_string(payload.get("case_id")),
                     store=self._store,
                 )
-                return HTTPResponse(201, _build_case_response_payload(case_state))
+                return HTTPResponse.json(201, _build_case_response_payload(case_state))
 
             workspace_id = _extract_workspace_id(normalized_path)
             if workspace_id:
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
@@ -149,7 +174,7 @@ class PMMethodHTTPService:
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/cases":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
                     recent_cases = self._load_recent_cases(workspace)
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
@@ -160,7 +185,7 @@ class PMMethodHTTPService:
 
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/approval-preferences":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace_id": workspace_id,
@@ -176,7 +201,7 @@ class PMMethodHTTPService:
                         auto_approve_actions=_ensure_string_list(payload.get("auto_approve_actions")),
                     )
                     save_workspace(workspace, store=self._workspace_store)
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
@@ -185,7 +210,7 @@ class PMMethodHTTPService:
                     )
 
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/runtime/approvals":
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace_id": workspace_id,
@@ -218,7 +243,7 @@ class PMMethodHTTPService:
                         )
                     else:
                         raise HTTPServiceError(404, "Not found.")
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace_id": workspace_id,
@@ -236,7 +261,7 @@ class PMMethodHTTPService:
                     case_state = self._load_case(target_case_id)
                     activate_workspace_case(workspace, target_case_id)
                     save_workspace(workspace, store=self._workspace_store)
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
@@ -251,17 +276,17 @@ class PMMethodHTTPService:
                         message=str(payload.get("message", "")).strip(),
                         workspace_id=workspace_id,
                     )
-                    return HTTPResponse(200, _build_agent_response_payload(response))
+                    return HTTPResponse.json(200, _build_agent_response_payload(response))
 
             case_id = _extract_case_id(normalized_path)
             if case_id:
                 if method == "GET" and normalized_path == f"/cases/{case_id}":
                     case_state = self._load_case(case_id)
-                    return HTTPResponse(200, _build_case_response_payload(case_state))
+                    return HTTPResponse.json(200, _build_case_response_payload(case_state))
 
                 if method == "GET" and normalized_path == f"/cases/{case_id}/history":
                     case_state = self._load_case(case_id)
-                    return HTTPResponse(
+                    return HTTPResponse.json(
                         200,
                         {
                             "case_id": case_id,
@@ -278,13 +303,13 @@ class PMMethodHTTPService:
                         context_profile_updates=_ensure_dict(payload.get("context_profile_updates")),
                         store=self._store,
                     )
-                    return HTTPResponse(200, _build_case_response_payload(case_state))
+                    return HTTPResponse.json(200, _build_case_response_payload(case_state))
 
             project_profile_id = _extract_project_profile_id(normalized_path)
             if project_profile_id:
                 if method == "GET" and normalized_path == f"/project-profiles/{project_profile_id}":
                     project_profile = self._load_project_profile(project_profile_id)
-                    return HTTPResponse(200, {"project_profile": project_profile.to_dict()})
+                    return HTTPResponse.json(200, {"project_profile": project_profile.to_dict()})
 
                 if method == "POST" and normalized_path == f"/project-profiles/{project_profile_id}":
                     payload = _parse_json_body(body)
@@ -297,7 +322,7 @@ class PMMethodHTTPService:
                         notes=_ensure_string_list(payload.get("notes")),
                         store=self._project_profile_store,
                     )
-                    return HTTPResponse(200, {"project_profile": project_profile.to_dict()})
+                    return HTTPResponse.json(200, {"project_profile": project_profile.to_dict()})
 
             if method == "POST" and normalized_path == "/agent/messages":
                 payload = _parse_json_body(body)
@@ -305,13 +330,13 @@ class PMMethodHTTPService:
                     message=str(payload.get("message", "")).strip(),
                     workspace_id=_optional_string(payload.get("workspace_id")) or "default",
                 )
-                return HTTPResponse(200, _build_agent_response_payload(response))
+                return HTTPResponse.json(200, _build_agent_response_payload(response))
 
-            return HTTPResponse(404, {"error": "Not found."})
+            return HTTPResponse.json(404, {"error": "Not found."})
         except HTTPServiceError as exc:
-            return HTTPResponse(exc.status_code, {"error": exc.message})
+            return HTTPResponse.json(exc.status_code, {"error": exc.message})
         except ValueError as exc:
-            return HTTPResponse(400, {"error": str(exc)})
+            return HTTPResponse.json(400, {"error": str(exc)})
 
     def _load_case(self, case_id: str):
         try:
@@ -373,13 +398,13 @@ def _build_handler(service: PMMethodHTTPService) -> Callable[..., BaseHTTPReques
             try:
                 response = service.handle(method=method, path=self.path, body=body)
             except HTTPServiceError as exc:
-                response = HTTPResponse(exc.status_code, {"error": exc.message})
+                response = HTTPResponse.json(exc.status_code, {"error": exc.message})
             except ValueError as exc:
-                response = HTTPResponse(400, {"error": str(exc)})
+                response = HTTPResponse.json(400, {"error": str(exc)})
 
-            encoded = json.dumps(response.payload, ensure_ascii=False, indent=2).encode("utf-8")
+            encoded = response.encoded_body()
             self.send_response(response.status_code)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)

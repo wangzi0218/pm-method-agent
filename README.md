@@ -119,6 +119,14 @@
 
 这些入口应共用同一套方法内核、状态机和规则层，而不是维护多套独立逻辑。部署形态的详细说明见 [docs/deployment-modes.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/deployment-modes.md)。
 
+如果你关心网页 demo 第一版到底负责什么、不负责什么，可以继续看：
+
+- [docs/web-demo-boundaries.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-demo-boundaries.md)
+
+如果你现在只想知道“我到底该从哪里开始”，建议直接看：
+
+- [docs/getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
+
 当前仓库默认仍使用规则解释器来承接多轮回复，但已经补上了 LLM 适配骨架，后续可以按用户环境切换到“用户自带模型”或“托管模型”模式，而不需要重写状态机。
 
 当前推荐优先使用 OpenAI-compatible 配置方式，也就是只需要：
@@ -174,6 +182,10 @@
 ### 推荐快速开始
 
 如果你只是想先体验当前方法内核，最稳的方式仍然是直接源码运行。
+
+如果你不想先记命令，推荐先看这一页：
+
+- [docs/getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
 
 单轮直跑：
 
@@ -271,6 +283,9 @@ export PMMA_LLM_MODEL=deepseek-chat
 
 更完整的入口、HTTP 示例和接入方式，建议直接看：
 
+- [docs/getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
+- [docs/integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
+- [docs/README.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/README.md)
 - [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)
 - [docs/deployment-modes.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/deployment-modes.md)
 - [docs/agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)
@@ -292,35 +307,11 @@ export PMMA_LLM_MODEL=deepseek-chat
 
 ## 文档导航
 
-- [docs/architecture.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/architecture.md)：系统架构、升级口和交付适配层
-- [docs/agent-architecture.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-architecture.md)：主代理、专项代理和内部协作方式
-- [docs/agent-interaction.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-interaction.md)：主代理状态机、追问规则和阶段推进逻辑
-- [docs/agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)：最小 agent 外壳、工作区状态和统一入口运行时
-- [docs/advanced-agent-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/advanced-agent-runtime.md)：更完整的 agent runtime 设计，包括 query loop、终止语义、prompt 治理和 sub-agent 编排
-- [docs/brainstorm-integration.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/brainstorm-integration.md)：如何把 brainstorm 作为前置思考层融合进主代理，而不退化成普通聊天
-- [docs/command-executor.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/command-executor.md)：本地命令执行壳、hook 接入点和运行时结果语义
-- [docs/context-profile.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/context-profile.md)：场景和产品基础信息的定义方式
-- [docs/contracts.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/contracts.md)：案例状态、结论项、决策关口和证据分级契约
-- [docs/deployment-modes.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/deployment-modes.md)：本地、云端与混合模式的部署形态，以及为什么当前先做本地底座
-- [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例与验证方式
-- [docs/method-uncertainty-framework.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/method-uncertainty-framework.md)：五类方法不确定性框架，以及 agent 当前如何在前置收敛层识别它们
-- [docs/manual-smoke.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/manual-smoke.md)：一键手动冒烟脚本的使用方式
-- [docs/real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：真实问题试跑方法、记录模板与体验判断标准
-- [docs/output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)：默认输出风格与审查卡结构
-- [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：里程碑、实现阶段和后续发展计划
-- [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)：本地 HTTP 服务层、接口定义和与 MCP 的关系
-- [docs/hook-enforcement.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/hook-enforcement.md)：最小 hook 生命周期、运行时挂接方式和后续扩展方向
-- [docs/interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)：用户触发、持续互动、记忆层与主动建议设计
-- [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：LLM 适配层、解释器注入点和未来接入方式
-- [docs/operation-enforcement.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/operation-enforcement.md)：统一的动作、命令和写入路径前置校验层
-- [docs/prompt-layering.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/prompt-layering.md)：Prompt 分层、优先级和项目级追加规则的最小实现
-- [docs/rule-layering.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/rule-layering.md)：规则分层、规则来源、目录作用域和规则加载器的设计
-- [docs/runtime-policy.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/runtime-policy.md)：规则从“被看见”到“被执行”的最小硬约束层
-- [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：首次公开前的提交流程与版本建议
-- [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：GitHub 首次公开发布的标准
-- [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)：多轮会话与服务层设计
-- [docs/tool-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/tool-runtime.md)：本地工具运行时、handler 分层和通用执行链路
-- [docs/releases/v0.1.0.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/releases/v0.1.0.md)：首个公开版本说明
+- [docs/getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)：第一次使用时该从哪里开始
+- [docs/integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)：不同外壳和脚本的最小接法
+- [docs/README.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/README.md)：按主题整理过的完整文档索引
+- [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：当前做到哪一步，以及后续计划
+- [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：首次公开发布前的检查项
 
 ## 当前状态
 

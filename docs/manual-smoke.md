@@ -21,6 +21,12 @@
 bash scripts/manual_smoke.sh
 ```
 
+如果你要单独验收网页 demo，可以再跑：
+
+```bash
+bash scripts/web_demo_acceptance.sh
+```
+
 脚本会自动：
 
 - 创建临时目录
@@ -32,6 +38,15 @@ bash scripts/manual_smoke.sh
 - 跑一遍平台工具概览读取
 - 跑 `tests.test_human_like_flows`
 - 跑全量测试
+
+网页验收脚本会另外自动：
+
+- 启动本地网页 demo 服务
+- 用 Playwright 打开浏览器
+- 创建第一个案例
+- 补一轮场景信息
+- 再创建第二个案例
+- 切回第一个案例并检查三处状态是否一致
 
 ## 适合什么时候跑
 
@@ -51,4 +66,4 @@ bash scripts/manual_smoke.sh
 - CI 工作流定义
 - 网页 / 云端入口的集成测试
 
-如果后面继续扩平台工具或混合部署，再补对应的冒烟脚本会更合适。
+当前新增的 `scripts/web_demo_acceptance.sh` 更接近网页入口验收，但它仍然默认面向本地环境，不负责托管部署或云端多用户场景。

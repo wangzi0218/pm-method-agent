@@ -527,6 +527,261 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("这次最先要收敛的到底是哪一个问题", rendered)
         self.assertIn("现在最大的卡点其实是「核心问题还没收住」", rendered)
 
+    def test_pre_framing_can_identify_colloquial_core_problem_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近很多微信用户都在抱怨群消息太多，重要消息容易被淹没。我现在没想清楚，这次到底该优先解决消息过载、通知打扰，还是群消息筛选问题。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("核心问题还没收住", rendered)
+        self.assertNotIn("关键行为门槛或动机不足", rendered)
+
+    def test_pre_framing_can_identify_colloquial_competing_problem_frames(self) -> None:
+        case_state = run_analysis_with_context(
+            "有些微信用户会在手机切账号时把平板也一起挤下线，很多人抱怨正在看的会话和文档会被打断。我现在没想清楚，这次到底是在解决多设备独立登录场景，还是在解决账号体系和登录安全边界的问题。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "multi-platform",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("核心问题还没收住", rendered)
+        self.assertNotIn("关键行为门槛或动机不足", rendered)
+
+    def test_pre_framing_can_handle_alipay_like_competing_problem_frames(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近不少支付宝用户在抱怨活动体验很怪，明明是在领红包或摇现金，页面却老是跳到自己没想去的地方，花了时间最后奖励还不一定到账。我现在没想清楚，这次到底是在解决活动规则不透明、页面跳转打断，还是奖励到账机制本身不稳定。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("这次最先要收敛的到底是哪一个问题", rendered)
+
+    def test_pre_framing_can_handle_jd_merchant_like_competing_problem_frames(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近一些京东秒送商家对接单体验意见很大，单一多电话提醒就一直响，订单里又塞了很多不必要的信息，立即配送和预约单的时间展示也不直观。我现在没想清楚，这次到底是在解决提醒打扰、订单信息过载，还是履约时间标记不清的问题。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("核心问题还没收住", rendered)
+        self.assertNotIn("流程执行或责任链不稳定", rendered)
+
+    def test_pre_framing_can_handle_taobao_after_sales_like_competing_problem_frames(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近淘宝用户对售后和会员权益意见很大，有人下单后才发现不支持七天无理由，提示埋得很深；真去退货时，88VIP 的退货包运费又兑现不了，客服还一直绕。我现在没想清楚，这次到底是在解决下单前提示不清、售后履约断层，还是会员权益兑现机制的问题。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("如果这轮只解决一件事", rendered)
+
+    def test_pre_framing_can_handle_alipay_like_user_scene_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近支付宝里和账单提醒相关的抱怨变多了，但我现在没想清楚，这轮到底更该面向经常记账的个人用户、帮家里人管钱的中年用户，还是小商家老板。大家对提醒打扰和账目清晰度的在意点明显不一样。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("用户与场景还没钉住", rendered)
+        self.assertIn("这次最核心的人群到底是谁", rendered)
+
+    def test_pre_framing_can_handle_taobao_like_user_scene_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近淘宝上不少用户在抱怨首页信息太杂，但我现在没想清楚，这轮到底主要是在服务高频逛街的老用户、低频但目标明确的搜索用户，还是只在大促时进来的活动用户。几类人的浏览路径差得挺远。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("用户与场景还没钉住", rendered)
+        self.assertNotIn("关键行为门槛或动机不足", rendered)
+
+    def test_pre_framing_can_handle_jd_like_b_side_user_scene_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近京东秒送商家侧对接单体验意见挺多，但我现在没想清楚，这轮到底更该优先照顾店员、店长，还是区域运营。不同角色都在看订单，但最在意的信息完全不是一回事。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("用户与场景还没钉住", rendered)
+        self.assertNotIn("分析卡", rendered)
+
+    def test_pre_framing_can_handle_alipay_like_goal_value_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近支付宝活动页的抱怨不少，但我现在没想清楚，这轮优化到底是要优先提升活动参与率、减少中途退出，还是降低用户对套路感和投诉量。几个目标都能讲通，但不是一回事。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("目标与价值还没钉住", rendered)
+        self.assertIn("这次最想优先拉动的目标到底是什么", rendered)
+
+    def test_pre_framing_can_handle_taobao_like_goal_value_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近淘宝售后相关反馈不少，但我现在没想清楚，这次到底是想提升退货发起率、降低售后投诉率，还是提升 88VIP 用户对权益兑现的感知。后面拿什么判断值不值得做，我现在还没有锚点。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("目标与价值还没钉住", rendered)
+        self.assertNotIn("分析卡", rendered)
+
+    def test_pre_framing_can_handle_jd_like_b_side_goal_value_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近京东秒送商家侧一直在提接单体验，但我现在没想清楚，这轮到底是要优先提升履约时效、减少漏单，还是先让一线门店觉得系统更好用。如果目标没先定，后面方案很容易越做越散。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("目标与价值还没钉住", rendered)
+        self.assertNotIn("流程执行或责任链不稳定", rendered)
+
+    def test_pre_framing_can_handle_alipay_like_scope_boundary_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近支付宝首页入口越做越多，但我现在没想清楚，这次改动到底要不要把账单、出行、借还、活动入口都一起纳进来，还是先只收最常用的那一层。如果一版范围没锁住，后面很容易越改越大。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("范围与边界还没锁住", rendered)
+        self.assertIn("这次准备先覆盖哪些对象，不覆盖哪些对象", rendered)
+
+    def test_pre_framing_can_handle_taobao_like_scope_boundary_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近淘宝售后入口的抱怨不少，但我现在没想清楚，这次到底只优化退款申请这一段，还是要把换货、补差价、再次申诉这些链路一起带上。要不要动整个售后主链路，我现在也没锁。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("范围与边界还没锁住", rendered)
+        self.assertNotIn("流程执行或责任链不稳定", rendered)
+
+    def test_pre_framing_can_handle_jd_like_b_side_scope_boundary_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近京东秒送商家侧有人提想把接单页重做，但我现在没想清楚，这次只是补充几个状态标记和筛选能力，还是允许直接改掉现有接单主流程。如果边界不先锁住，这个需求很容易长成半次重构。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("范围与边界还没锁住", rendered)
+        self.assertNotIn("决策关口卡", rendered)
+
+    def test_pre_framing_can_handle_alipay_like_constraint_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近支付宝活动奖励到账慢的抱怨不少，但我现在没想清楚，这到底是活动服务本身不稳定，还是资金发放、风控校验和账号状态这些底层条件卡住了。现有能力到底支不支持即时到账，我现在也不确定。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("条件与约束还没摸清", rendered)
+        self.assertIn("现有底层能力到底支不支持这件事成立", rendered)
+
+    def test_pre_framing_can_handle_taobao_like_constraint_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近淘宝商家和用户都在抱怨售后时效不稳定，但我现在没想清楚，这次想做的能力会不会碰到平台规则、商家履约约束和逆向物流节点这些硬限制。方案看起来能做，不代表条件真的成立。",
+            context_profile={
+                "business_model": "toc",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("条件与约束还没摸清", rendered)
+        self.assertNotIn("分析卡", rendered)
+
+    def test_pre_framing_can_handle_jd_like_b_side_constraint_uncertainty(self) -> None:
+        case_state = run_analysis_with_context(
+            "最近京东秒送商家侧一直在提接单效率，但我现在没想清楚，这次如果想做自动催单和履约优先级，会不会先碰到门店设备能力、定位精度和骑手侧系统依赖。底层条件如果不成立，前面讨论再顺也没用。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "native-app",
+            },
+        )
+
+        rendered = render_case_state(case_state)
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertIn("条件与约束还没摸清", rendered)
+        self.assertNotIn("分析卡", rendered)
+
     def test_pre_framing_can_identify_user_scene_uncertainty(self) -> None:
         case_state = run_analysis_with_context(
             "本次要优化的消息提醒体验，核心面向的是职场用户、学生用户，还是中老年用户？不同人群的痛点强度与使用场景差异极大。",
@@ -1824,6 +2079,36 @@ class OrchestratorSmokeTest(unittest.TestCase):
             response = service.handle(method="GET", path="/cases/case-missing")
 
         self.assertEqual(response.status_code, 404)
+
+    def test_http_service_can_serve_web_demo_shell_and_assets(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            html_response = service.handle(method="GET", path="/")
+            css_response = service.handle(method="GET", path="/assets/web-demo.css")
+            js_response = service.handle(method="GET", path="/assets/web-demo.js")
+            favicon_response = service.handle(method="GET", path="/assets/favicon.svg")
+            favicon_ico_response = service.handle(method="GET", path="/favicon.ico")
+
+        self.assertEqual(html_response.status_code, 200)
+        self.assertEqual(html_response.content_type, "text/html; charset=utf-8")
+        self.assertIn("PM Method Agent", html_response.encoded_body().decode("utf-8"))
+        self.assertIn("/assets/web-demo.js", html_response.encoded_body().decode("utf-8"))
+        self.assertIn("/assets/favicon.svg", html_response.encoded_body().decode("utf-8"))
+
+        self.assertEqual(css_response.status_code, 200)
+        self.assertEqual(css_response.content_type, "text/css; charset=utf-8")
+        self.assertIn(".page-shell", css_response.encoded_body().decode("utf-8"))
+
+        self.assertEqual(js_response.status_code, 200)
+        self.assertEqual(js_response.content_type, "application/javascript; charset=utf-8")
+        self.assertIn("loadWorkspace", js_response.encoded_body().decode("utf-8"))
+
+        self.assertEqual(favicon_response.status_code, 200)
+        self.assertEqual(favicon_response.content_type, "image/svg+xml")
+        self.assertIn("<svg", favicon_response.encoded_body().decode("utf-8"))
+
+        self.assertEqual(favicon_ico_response.status_code, 200)
+        self.assertEqual(favicon_ico_response.content_type, "image/svg+xml")
 
     def test_http_service_health_can_expose_llm_runtime(self) -> None:
         with TemporaryDirectory() as tmpdir:

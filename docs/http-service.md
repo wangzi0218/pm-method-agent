@@ -43,7 +43,95 @@
 
 也就是说，HTTP 服务不是新的分析器，而是对现有运行时的一层统一暴露。
 
+当前还顺手挂上了一个最小网页 demo：
+
+- `GET /`
+- `GET /demo`
+
+这两个入口默认返回同一个本地网页壳，适合直接在浏览器里体验：
+
+- 发消息
+- 看主卡片
+- 继续补充
+- 切换最近案例
+- 查看历史和待处理审批
+
+## 最小开始方式
+
+如果你只是想确认这一层怎么接，不需要先把所有接口都看完。
+
+更推荐按下面三步直接跑：
+
+### 1. 启动服务
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli serve
+```
+
+### 2. 发第一条消息
+
+如果你更想直接用网页，而不是先发 `curl`，这时可以直接打开：
+
+```text
+http://127.0.0.1:8000/
+```
+
+网页 demo 和下面这些接口共用同一个服务层，不会额外维护第二套状态。
+
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。"
+  }'
+```
+
+### 3. 再补一条背景
+
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "这是一个 ToB 的 HIS 产品，主要通过网页端使用，前台在操作，店长会看结果。"
+  }'
+```
+
+如果你只想先知道“我该从哪个入口开始”，建议先看：
+
+- [getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
+
+如果你已经确定要做 IDE、skill、网页或脚本接入，建议继续看：
+
+- [integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
+
 ## 当前接口
+
+### `GET /`
+
+用途：
+
+- 返回最小网页 demo
+- 作为本地浏览器入口，直接承接当前工作区体验
+
+### `GET /demo`
+
+用途：
+
+- 返回与 `/` 相同的网页 demo
+- 给后续可能的入口路由预留一个更明确的别名
+
+### `GET /assets/web-demo.css`
+
+用途：
+
+- 返回网页 demo 的静态样式
+
+### `GET /assets/web-demo.js`
+
+用途：
+
+- 返回网页 demo 的前端逻辑
+- 负责消息发送、案例切换、历史和审批展示
 
 ### `GET /health`
 

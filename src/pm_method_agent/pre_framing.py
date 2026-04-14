@@ -80,6 +80,16 @@ CORE_PROBLEM_HINTS = [
     "切入点",
 ]
 
+CORE_PROBLEM_COMPARISON_HINTS = [
+    "到底该先解决",
+    "到底该优先解决",
+    "到底是在解决",
+    "这更像",
+    "还是在解决",
+    "优先解决",
+    "先解决",
+]
+
 USER_SCENE_HINTS = [
     "核心面向的是",
     "什么真实高频场景",
@@ -97,6 +107,17 @@ USER_SCENE_HINTS = [
     "场景边界",
 ]
 
+USER_SCENE_COMPARISON_HINTS = [
+    "更该面向",
+    "主要是在服务",
+    "更该优先照顾",
+    "优先照顾",
+    "几类人",
+    "不同角色",
+    "不同人群",
+    "不是一回事",
+]
+
 GOAL_VALUE_HINTS = [
     "核心目标是",
     "成功指标",
@@ -107,6 +128,18 @@ GOAL_VALUE_HINTS = [
     "降低卸载率",
     "提升关键操作效率",
     "活跃度",
+]
+
+GOAL_VALUE_COMPARISON_HINTS = [
+    "优先提升",
+    "优先看",
+    "先让",
+    "目标没先定",
+    "目标没先",
+    "后面拿什么判断",
+    "还没有锚点",
+    "几个目标",
+    "不是一回事",
 ]
 
 SCOPE_BOUNDARY_HINTS = [
@@ -122,6 +155,18 @@ SCOPE_BOUNDARY_HINTS = [
     "覆盖所有消息类型",
 ]
 
+SCOPE_BOUNDARY_COMPARISON_HINTS = [
+    "都一起纳进来",
+    "还是先只",
+    "只优化",
+    "一起带上",
+    "要不要动",
+    "没锁",
+    "边界不先锁住",
+    "越改越大",
+    "半次重构",
+]
+
 CONSTRAINT_HINTS = [
     "是否支持",
     "底层能力",
@@ -135,6 +180,20 @@ CONSTRAINT_HINTS = [
     "兼容问题",
     "特定机型",
     "版本兼容",
+]
+
+CONSTRAINT_COMPARISON_HINTS = [
+    "支不支持",
+    "会不会碰到",
+    "会不会先碰到",
+    "硬限制",
+    "条件真的成立",
+    "底层条件如果不成立",
+    "现有能力到底",
+    "系统依赖",
+    "风控校验",
+    "设备能力",
+    "定位精度",
 ]
 
 
@@ -539,7 +598,7 @@ def _build_method_uncertainty_directions(text: str) -> List[PreFramingDirection]
         ),
     ]
     for label, hints, summary, assumptions in category_specs:
-        if any(hint in text for hint in hints):
+        if _matches_method_uncertainty(label, text, hints):
             directions.append(
                 PreFramingDirection(
                     direction_id=f"D-{len(directions) + 1:03d}",
@@ -550,6 +609,162 @@ def _build_method_uncertainty_directions(text: str) -> List[PreFramingDirection]
                 )
             )
     return directions
+
+
+def _matches_method_uncertainty(label: str, text: str, hints: List[str]) -> bool:
+    if any(hint in text for hint in hints):
+        return True
+    if label == "用户与场景还没钉住":
+        return _looks_like_user_scene_uncertainty(text)
+    if label == "目标与价值还没钉住":
+        return _looks_like_goal_value_uncertainty(text)
+    if label == "范围与边界还没锁住":
+        return _looks_like_scope_boundary_uncertainty(text)
+    if label == "条件与约束还没摸清":
+        return _looks_like_constraint_uncertainty(text)
+    if label == "核心问题还没收住":
+        return _looks_like_competing_problem_frames(text)
+    return False
+
+
+def _looks_like_competing_problem_frames(text: str) -> bool:
+    if (
+        _looks_like_user_scene_uncertainty(text)
+        or _looks_like_goal_value_uncertainty(text)
+        or _looks_like_scope_boundary_uncertainty(text)
+        or _looks_like_constraint_uncertainty(text)
+    ):
+        return False
+
+    if "还是" not in text:
+        return False
+
+    if not any(marker in text for marker in CORE_PROBLEM_COMPARISON_HINTS):
+        return False
+
+    comparison_nouns = [
+        "问题",
+        "过载",
+        "打扰",
+        "筛选",
+        "场景",
+        "边界",
+        "体系",
+        "安全",
+        "机制",
+        "链路",
+        "兼容",
+        "弱网",
+        "根因",
+        "原因",
+    ]
+    has_problem_noun = any(noun in text for noun in comparison_nouns)
+    has_multiple_candidates = text.count("还是") >= 1 and (
+        text.count("、") >= 1 or "，还是" in text or "还是" in text
+    )
+    return has_problem_noun and has_multiple_candidates
+
+
+def _looks_like_user_scene_uncertainty(text: str) -> bool:
+    if "还是" not in text:
+        return False
+
+    if not any(marker in text for marker in USER_SCENE_COMPARISON_HINTS):
+        return False
+
+    role_or_scene_nouns = [
+        "老用户",
+        "新用户",
+        "活动用户",
+        "搜索用户",
+        "商家",
+        "店员",
+        "店长",
+        "运营",
+        "老板",
+        "个人用户",
+        "中年用户",
+        "小商家",
+        "角色",
+        "人群",
+    ]
+    explicit_audience_markers = ["面向", "服务", "照顾", "角色", "人群"]
+    has_audience_marker = any(marker in text for marker in explicit_audience_markers)
+    has_specific_role = any(noun in text for noun in role_or_scene_nouns)
+    return has_audience_marker and has_specific_role
+
+
+def _looks_like_goal_value_uncertainty(text: str) -> bool:
+    if "还是" not in text:
+        return False
+
+    if not any(marker in text for marker in GOAL_VALUE_COMPARISON_HINTS):
+        return False
+
+    goal_nouns = [
+        "参与率",
+        "退出",
+        "投诉",
+        "时效",
+        "漏单",
+        "好用",
+        "效率",
+        "感知",
+        "指标",
+        "目标",
+        "锚点",
+        "值不值得",
+        "满意度",
+    ]
+    return any(noun in text for noun in goal_nouns)
+
+
+def _looks_like_scope_boundary_uncertainty(text: str) -> bool:
+    if not any(marker in text for marker in SCOPE_BOUNDARY_COMPARISON_HINTS):
+        return False
+
+    boundary_nouns = [
+        "入口",
+        "账单",
+        "出行",
+        "借还",
+        "活动入口",
+        "退款申请",
+        "换货",
+        "补差价",
+        "再次申诉",
+        "主链路",
+        "主流程",
+        "状态标记",
+        "筛选能力",
+        "范围",
+        "边界",
+        "重构",
+    ]
+    return any(noun in text for noun in boundary_nouns)
+
+
+def _looks_like_constraint_uncertainty(text: str) -> bool:
+    if not any(marker in text for marker in CONSTRAINT_COMPARISON_HINTS):
+        return False
+
+    constraint_nouns = [
+        "活动服务",
+        "资金发放",
+        "风控校验",
+        "账号状态",
+        "平台规则",
+        "履约约束",
+        "逆向物流",
+        "设备能力",
+        "定位精度",
+        "骑手侧系统依赖",
+        "系统依赖",
+        "条件",
+        "能力",
+        "限制",
+    ]
+    return any(noun in text for noun in constraint_nouns)
 
 
 def _dedupe_strings(items: List[str]) -> List[str]:
