@@ -63,6 +63,7 @@ WEB_DEMO_HTML = """<!doctype html>
               <p id="systemMessage" class="muted">
                 直接输入一个想法、抱怨、指标异常或带方案倾向的需求描述都可以。
               </p>
+              <div id="composerMeta" class="composer-meta"></div>
             </div>
             <button id="clearComposerButton" class="ghost-button" type="button">清空</button>
           </div>
@@ -93,9 +94,15 @@ WEB_DEMO_HTML = """<!doctype html>
             <span id="activeCaseBadge" class="case-badge">未加载</span>
           </div>
           <div id="cardMeta" class="card-meta"></div>
-          <div id="cardDigest" class="card-digest empty-list">
-            <p>这里会先收一层当前阶段最值得看的重点。</p>
+          <p class="section-kicker">快速导航</p>
+          <div id="cardOutline" class="card-outline empty-list">
+            <p>卡片展开后，这里会列出重点章节。</p>
           </div>
+          <p class="section-kicker">本轮摘要</p>
+          <div id="cardDigest" class="card-digest empty-list">
+            <p>当前阶段最值得先看的内容，会先收在这里。</p>
+          </div>
+          <p class="section-kicker">主卡正文</p>
           <div id="cardContent" class="render-surface empty-surface">
             <p>这里会显示当前案例的主卡片。</p>
           </div>
@@ -113,9 +120,15 @@ WEB_DEMO_HTML = """<!doctype html>
             <h2>案例历史</h2>
             <button id="refreshHistoryButton" class="ghost-button" type="button">刷新</button>
           </div>
-          <div id="historyDigest" class="history-digest empty-list">
-            <p>选中案例后，这里会先告诉你这一段历史最值得看什么。</p>
+          <p class="section-kicker">关键动作</p>
+          <div id="historyTimeline" class="history-timeline empty-list">
+            <p>选中案例后，会先把关键动作按顺序收起来。</p>
           </div>
+          <p class="section-kicker">过程概览</p>
+          <div id="historyDigest" class="history-digest empty-list">
+            <p>这里会先概览这段过程推进到了哪里。</p>
+          </div>
+          <p class="section-kicker">完整记录</p>
           <div id="historyContent" class="render-surface empty-surface">
             <p>选中案例后，这里会显示历史记录。</p>
           </div>
@@ -274,6 +287,13 @@ textarea {
   padding: 18px;
 }
 
+.card-panel,
+.detail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -355,6 +375,13 @@ textarea {
   font-size: 13px;
 }
 
+.section-kicker {
+  margin: 2px 0 -2px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
 .workspace-input-row {
   margin-top: 10px;
 }
@@ -425,6 +452,32 @@ button:disabled {
   padding: 0 12px;
 }
 
+.composer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.soft-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(61, 52, 41, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.soft-pill.is-accent {
+  border-color: rgba(179, 77, 47, 0.18);
+  background: rgba(255, 244, 238, 0.72);
+  color: #8f442e;
+}
+
 .example-row {
   display: flex;
   flex-wrap: wrap;
@@ -448,6 +501,8 @@ button:disabled {
 
 .recent-case {
   width: 100%;
+  display: grid;
+  gap: 8px;
   border-radius: 18px;
   padding: 14px;
   text-align: left;
@@ -459,37 +514,117 @@ button:disabled {
 }
 
 .recent-case-meta,
+.recent-case-footer,
 .recent-case-summary,
 .approval-reason {
   display: block;
 }
 
 .recent-case-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   color: var(--muted);
   font-size: 12px;
 }
 
-.recent-case-title {
-  display: block;
-  margin: 6px 0;
-  font-weight: 700;
+.recent-case-stage {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(36, 31, 26, 0.06);
 }
 
-.recent-case-summary {
+.recent-case-state {
+  color: var(--muted);
+}
+
+.recent-case-flag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.12);
+  color: var(--accent);
+}
+
+.recent-case-title {
+  display: block;
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.recent-case-footer {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recent-case-summary,
+.recent-case-footer {
   color: var(--muted);
   line-height: 1.6;
   font-size: 13px;
 }
 
 .render-surface {
+  border: 1px solid rgba(61, 52, 41, 0.08);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(250, 246, 239, 0.9));
+  padding: 18px 18px 20px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
   line-height: 1.8;
 }
 
+.card-outline,
+.history-timeline,
 .card-digest,
 .history-digest {
   display: grid;
   gap: 10px;
   margin: 16px 0 18px;
+}
+
+.card-outline {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.outline-chip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 52px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.outline-chip:hover {
+  border-color: rgba(179, 77, 47, 0.26);
+  background: rgba(255, 248, 243, 0.84);
+  box-shadow: 0 12px 20px rgba(61, 52, 41, 0.08);
+}
+
+.outline-chip-index {
+  color: var(--accent);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.outline-chip-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .digest-card {
@@ -542,11 +677,16 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.render-surface > * {
+  max-width: 72ch;
+}
+
 .render-surface h1,
 .render-surface h2,
 .render-surface h3 {
   font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
   line-height: 1.2;
+  scroll-margin-top: 18px;
 }
 
 .render-surface h1 {
@@ -555,8 +695,16 @@ button:disabled {
 }
 
 .render-surface h2 {
-  margin: 28px 0 10px;
+  margin: 34px 0 10px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(61, 52, 41, 0.08);
   font-size: 22px;
+}
+
+.render-surface h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .render-surface h3 {
@@ -585,9 +733,9 @@ button:disabled {
 
 .render-surface blockquote {
   margin: 0 0 14px;
-  padding: 12px 14px;
-  border-left: 3px solid rgba(179, 77, 47, 0.4);
-  border-radius: 0 14px 14px 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(179, 77, 47, 0.14);
+  border-radius: 16px;
   background: rgba(179, 77, 47, 0.06);
   color: var(--muted);
 }
@@ -619,6 +767,60 @@ button:disabled {
   border-radius: 18px;
   background: var(--panel-strong);
   padding: 14px;
+}
+
+.timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 13px 14px;
+}
+
+.timeline-item::before {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.22);
+  box-shadow: 0 0 0 4px rgba(179, 77, 47, 0.08);
+  content: "";
+}
+
+.timeline-body {
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.timeline-kind {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.timeline-stage {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.timeline-text {
+  color: var(--text);
+  line-height: 1.65;
 }
 
 .approval-card h3 {
@@ -676,6 +878,10 @@ button:disabled {
   border-color: rgba(179, 77, 47, 0.24);
 }
 
+.composer-panel.is-sending .primary-button {
+  box-shadow: 0 12px 24px rgba(159, 67, 40, 0.16);
+}
+
 .composer-panel.is-sending::after {
   position: absolute;
   right: 18px;
@@ -710,6 +916,10 @@ button:disabled {
 
   .hero {
     flex-direction: column;
+  }
+
+  .render-surface > * {
+    max-width: none;
   }
 }
 
@@ -755,14 +965,17 @@ WEB_DEMO_JS = """\
     heroTitle: document.getElementById("heroTitle"),
     statusPills: document.getElementById("statusPills"),
     systemMessage: document.getElementById("systemMessage"),
+    composerMeta: document.getElementById("composerMeta"),
     composerInput: document.getElementById("composerInput"),
     sendMessageButton: document.getElementById("sendMessageButton"),
     clearComposerButton: document.getElementById("clearComposerButton"),
     composerPanel: document.querySelector(".composer-panel"),
     activeCaseBadge: document.getElementById("activeCaseBadge"),
     cardMeta: document.getElementById("cardMeta"),
+    cardOutline: document.getElementById("cardOutline"),
     cardDigest: document.getElementById("cardDigest"),
     cardContent: document.getElementById("cardContent"),
+    historyTimeline: document.getElementById("historyTimeline"),
     historyDigest: document.getElementById("historyDigest"),
     historyContent: document.getElementById("historyContent"),
     approvalsContent: document.getElementById("approvalsContent"),
@@ -823,15 +1036,20 @@ WEB_DEMO_JS = """\
     return `${normalized.slice(0, limit - 1)}…`;
   }
 
-  function renderMarkdownish(text) {
+  function buildMarkdownSections(text, sectionPrefix = "section") {
     const source = String(text || "").trim();
     if (!source) {
-      return "<p>暂无内容。</p>";
+      return {
+        html: "<p>暂无内容。</p>",
+        headings: [],
+      };
     }
 
     const lines = source.split(/\\r?\\n/);
     const parts = [];
     let listType = "";
+    let headingIndex = 0;
+    const headings = [];
 
     function closeList() {
       if (listType) {
@@ -851,7 +1069,15 @@ WEB_DEMO_JS = """\
       if (headingMatch) {
         closeList();
         const level = Math.min(headingMatch[1].length, 3);
-        parts.push(`<h${level}>${inlineFormat(headingMatch[2])}</h${level}>`);
+        headingIndex += 1;
+        const headingId = `${sectionPrefix}-heading-${headingIndex}`;
+        const headingText = headingMatch[2];
+        headings.push({
+          id: headingId,
+          level,
+          text: headingText,
+        });
+        parts.push(`<h${level} id="${headingId}">${inlineFormat(headingText)}</h${level}>`);
         return;
       }
 
@@ -882,7 +1108,51 @@ WEB_DEMO_JS = """\
     });
 
     closeList();
-    return parts.join("");
+    return {
+      html: parts.join(""),
+      headings,
+    };
+  }
+
+  function renderMarkdownish(text, sectionPrefix = "section") {
+    return buildMarkdownSections(text, sectionPrefix).html;
+  }
+
+  function renderCardOutline(headings) {
+    if (!headings || !headings.length) {
+      els.cardOutline.className = "card-outline empty-list";
+      els.cardOutline.innerHTML = "<p>卡片展开后，这里会列出重点章节。</p>";
+      return;
+    }
+
+    const visibleHeadings = headings.filter((item) => item.level >= 2).slice(0, 6);
+    if (!visibleHeadings.length) {
+      els.cardOutline.className = "card-outline empty-list";
+      els.cardOutline.innerHTML = "<p>这张卡片当前还没有可快速跳转的章节。</p>";
+      return;
+    }
+
+    els.cardOutline.className = "card-outline";
+    els.cardOutline.innerHTML = visibleHeadings
+      .map(
+        (item, index) => `
+          <button class="outline-chip" type="button" data-scroll-target="${escapeHtml(item.id)}">
+            <span class="outline-chip-index">章节 ${index + 1}</span>
+            <span class="outline-chip-text">${inlineFormat(shortText(item.text, 22))}</span>
+          </button>
+        `
+      )
+      .join("");
+
+    els.cardOutline.querySelectorAll("[data-scroll-target]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const targetId = button.getAttribute("data-scroll-target");
+        const target = targetId ? document.getElementById(targetId) : null;
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    });
   }
 
   function setLoading(button, loading) {
@@ -941,10 +1211,31 @@ WEB_DEMO_JS = """\
     els.workspaceMeta.innerHTML = pills.join("");
   }
 
+  function renderComposerMeta({ sending = false } = {}) {
+    const items = [];
+    items.push(`<span class="soft-pill">工作区：${inlineFormat(state.workspaceId || "demo")}</span>`);
+
+    if (state.activeCaseId) {
+      items.push(`<span class="soft-pill is-accent">继续当前案例：${inlineFormat(state.activeCaseId)}</span>`);
+    } else {
+      items.push(`<span class="soft-pill is-accent">当前会新建案例</span>`);
+    }
+
+    if (state.currentCase && state.currentCase.stage) {
+      items.push(`<span class="soft-pill">当前阶段：${inlineFormat(stageLabel(state.currentCase.stage))}</span>`);
+    }
+
+    if (sending) {
+      items.push(`<span class="soft-pill is-accent">正在承接这一轮输入</span>`);
+    }
+
+    els.composerMeta.innerHTML = items.join("");
+  }
+
   function renderCardDigest(casePayload) {
     if (!casePayload) {
       els.cardDigest.className = "card-digest empty-list";
-      els.cardDigest.innerHTML = "<p>这里会先收一层当前阶段最值得看的重点。</p>";
+      els.cardDigest.innerHTML = "<p>当前阶段最值得先看的内容，会先收在这里。</p>";
       return;
     }
 
@@ -998,7 +1289,7 @@ WEB_DEMO_JS = """\
   function renderHistoryDigest(historyPayload) {
     if (!historyPayload) {
       els.historyDigest.className = "history-digest empty-list";
-      els.historyDigest.innerHTML = "<p>选中案例后，这里会先告诉你这一段历史最值得看什么。</p>";
+      els.historyDigest.innerHTML = "<p>这里会先概览这段过程推进到了哪里。</p>";
       return;
     }
 
@@ -1031,6 +1322,57 @@ WEB_DEMO_JS = """\
     `;
   }
 
+  function renderHistoryTimeline(historyPayload) {
+    if (!historyPayload) {
+      els.historyTimeline.className = "history-timeline empty-list";
+      els.historyTimeline.innerHTML = "<p>选中案例后，会先把关键动作按顺序收起来。</p>";
+      return;
+    }
+
+    const conversationTurns = historyPayload.conversation_turns || [];
+    const stageHistory = historyPayload.stage_history || [];
+    const items = [];
+
+    conversationTurns.slice(-4).forEach((turn) => {
+      items.push({
+        kind: turn.kind || "turn",
+        stage: turn.stage || historyPayload.stage || "",
+        text: turn.text || turn.content || "",
+      });
+    });
+
+    stageHistory.slice(-2).forEach((item) => {
+      items.push({
+        kind: "stage-change",
+        stage: item.to_stage || item.stage || "",
+        text: `${item.from_stage || "未知阶段"} -> ${item.to_stage || "未知阶段"}`,
+      });
+    });
+
+    if (!items.length) {
+      els.historyTimeline.className = "history-timeline empty-list";
+      els.historyTimeline.innerHTML = "<p>当前案例还没有足够多的历史动作。</p>";
+      return;
+    }
+
+    els.historyTimeline.className = "history-timeline";
+    els.historyTimeline.innerHTML = items
+      .map(
+        (item) => `
+          <article class="timeline-item">
+            <div class="timeline-body">
+              <div class="timeline-item-head">
+                <span class="timeline-kind">${inlineFormat(item.kind === "stage-change" ? "阶段变化" : "用户输入")}</span>
+                <span class="timeline-stage">${inlineFormat(stageLabel(item.stage || ""))}</span>
+              </div>
+              <div class="timeline-text">${inlineFormat(shortText(item.text || "", 120))}</div>
+            </div>
+          </article>
+        `
+      )
+      .join("");
+  }
+
   function renderRecentCases() {
     els.recentCountBadge.textContent = String(state.recentCases.length);
     if (!state.recentCases.length) {
@@ -1043,13 +1385,17 @@ WEB_DEMO_JS = """\
     els.recentCases.innerHTML = state.recentCases
       .map((item) => {
         const activeClass = item.case_id === state.activeCaseId ? " is-active" : "";
+        const summary = shortText(item.summary || "暂无摘要", 56);
+        const footer = shortText(item.case_id || "", 24);
         return `
           <button class="recent-case${activeClass}" type="button" data-case-id="${escapeHtml(item.case_id)}">
-            <span class="recent-case-meta">${inlineFormat(stageLabel(item.stage))} / ${inlineFormat(
-              stageLabel(item.workflow_state)
-            )}</span>
-            <span class="recent-case-title">${inlineFormat(item.case_id)}</span>
-            <span class="recent-case-summary">${inlineFormat(item.summary || "暂无摘要")}</span>
+            <span class="recent-case-meta">
+              <span class="recent-case-stage">${inlineFormat(stageLabel(item.stage))}</span>
+              <span class="recent-case-state">${inlineFormat(stageLabel(item.workflow_state))}</span>
+              ${item.case_id === state.activeCaseId ? '<span class="recent-case-flag">当前</span>' : ""}
+            </span>
+            <span class="recent-case-title">${inlineFormat(summary)}</span>
+            <span class="recent-case-footer">案例编号：${inlineFormat(footer)}</span>
           </button>
         `;
       })
@@ -1087,11 +1433,14 @@ WEB_DEMO_JS = """\
     els.heroTitle.textContent = state.currentCase
       ? `${stageLabel(state.currentCase.stage)}，先看这轮判断。`
       : "先给一句真实草稿。";
+    renderComposerMeta();
 
     renderCaseMeta(response.case);
     renderCardDigest(response.case);
+    const renderedCard = buildMarkdownSections(response.rendered_card || "", "card");
+    renderCardOutline(renderedCard.headings);
     els.cardContent.className = "render-surface";
-    els.cardContent.innerHTML = renderMarkdownish(response.rendered_card || "");
+    els.cardContent.innerHTML = renderedCard.html;
 
     const statusBits = [];
     if (response.workspace && response.workspace.workspace_id) {
@@ -1129,9 +1478,12 @@ WEB_DEMO_JS = """\
       els.heroTitle.textContent = "先给一句真实草稿。";
       els.statusPills.innerHTML = "";
       els.cardMeta.innerHTML = "";
+      renderComposerMeta();
+      renderCardOutline([]);
       renderCardDigest(null);
       els.cardContent.className = "render-surface empty-surface";
       els.cardContent.innerHTML = "<p>这里会显示当前案例的主卡片。</p>";
+      renderHistoryTimeline(null);
       renderHistoryDigest(null);
       els.historyContent.className = "render-surface empty-surface";
       els.historyContent.innerHTML = "<p>选中案例后，这里会显示历史记录。</p>";
@@ -1163,6 +1515,7 @@ WEB_DEMO_JS = """\
       return;
     }
     const payload = await request(`/cases/${encodeURIComponent(state.activeCaseId)}/history`);
+    renderHistoryTimeline(payload.history || null);
     renderHistoryDigest(payload.history || null);
     els.historyContent.className = "render-surface";
     els.historyContent.innerHTML = renderMarkdownish(payload.rendered_history || "");
@@ -1267,7 +1620,9 @@ WEB_DEMO_JS = """\
 
     setLoading(els.sendMessageButton, true);
     els.composerPanel.classList.add("is-sending");
+    els.sendMessageButton.textContent = "承接中";
     els.systemMessage.textContent = "正在承接这轮输入，稍等一下。";
+    renderComposerMeta({ sending: true });
     try {
       const payload = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/messages`, {
         method: "POST",
@@ -1283,8 +1638,10 @@ WEB_DEMO_JS = """\
     } catch (error) {
       showToast(error.message || "发送失败", true);
       els.systemMessage.textContent = "这一轮没有成功承接，可以再试一次。";
+      renderComposerMeta();
     } finally {
       els.composerPanel.classList.remove("is-sending");
+      els.sendMessageButton.textContent = "发送";
       setLoading(els.sendMessageButton, false);
     }
   }
@@ -1368,6 +1725,7 @@ WEB_DEMO_JS = """\
     bindEvents();
     state.workspaceId = readWorkspaceIdFromUrl();
     els.workspaceIdInput.value = state.workspaceId;
+    renderComposerMeta();
     try {
       await loadWorkspace(state.workspaceId);
     } catch (error) {
