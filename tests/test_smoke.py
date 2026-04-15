@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Optional
 from unittest.mock import patch
 
 os.environ.setdefault("PMMA_DISABLE_ENV_AUTOLOAD", "1")
@@ -15,6 +16,11 @@ from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.case_copywriter import LLMCaseCopywriter, apply_case_copywriting, build_case_copywriter_from_env
 from pm_method_agent.cli import main
 from pm_method_agent.command_executor import LocalCommandExecutor
+from pm_method_agent.demo_seed import (
+    LLMDemoScenarioGenerator,
+    StaticDemoScenarioGenerator,
+    seed_workspace_demo,
+)
 from pm_method_agent.directory_list_tool import LocalDirectoryLister
 from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
 from pm_method_agent.http_service import PMMethodHTTPService
@@ -41,6 +47,7 @@ from pm_method_agent.runtime_session_service import (
     append_runtime_event,
     cancel_runtime_query,
     close_incomplete_hooks,
+    complete_runtime_query,
     complete_hook_call,
     complete_tool_call,
     default_runtime_session_store,
@@ -58,7 +65,8 @@ from pm_method_agent.reply_interpreter import (
     LLMReplyInterpreter,
     build_reply_interpreter_from_env,
 )
-from pm_method_agent.renderers import render_case_history, render_case_state
+from pm_method_agent.renderers import render_case_history, render_case_state, render_runtime_session
+from pm_method_agent.renderers import build_case_runtime_payload
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.runtime_policy import (
     check_runtime_action_policy,
@@ -96,6 +104,16 @@ class StubLLMAdapter:
     def generate(self, request: LLMRequest) -> LLMResponse:
         self.requests.append(request)
         return LLMResponse(content=self.content, provider="stub", model="stub-model")
+
+
+class RaisingLLMAdapter:
+    def __init__(self, error: Optional[Exception] = None) -> None:
+        self.error = error or RuntimeError("llm-unavailable")
+        self.requests: list[LLMRequest] = []
+
+    def generate(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        raise self.error
 
 
 class StubTransport:
@@ -191,6 +209,31 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("[输出纪律]", system_prompt)
         self.assertIn("[任务目标]", system_prompt)
         self.assertIn("prompt_layers", request.metadata)
+
+    def test_llm_reply_interpreter_can_fall_back_to_heuristic_when_adapter_fails(self) -> None:
+        interpreter = LLMReplyInterpreter(adapter=RaisingLLMAdapter(RuntimeError("network-down")))
+
+        analysis = interpreter.analyze_reply("这是一个 ToB 的 HIS 产品，前台在网页端操作提醒。")
+
+        self.assertEqual(analysis.parser_name, "llm-fallback")
+        self.assertTrue(analysis.fallback_used)
+        self.assertIn("RuntimeError", analysis.fallback_reason)
+        self.assertEqual(analysis.context_updates["business_model"], "tob")
+        self.assertEqual(analysis.context_updates["primary_platform"], "pc")
+
+    def test_hybrid_reply_interpreter_can_keep_working_when_llm_fails(self) -> None:
+        interpreter = HybridReplyInterpreter(
+            llm_interpreter=LLMReplyInterpreter(adapter=RaisingLLMAdapter(RuntimeError("timeout"))),
+            fallback=HeuristicReplyInterpreter(),
+        )
+
+        analysis = interpreter.analyze_reply("这个偏 B 端，前台在 H5 上操作，老板盯结果。")
+
+        self.assertEqual(analysis.parser_name, "hybrid-fallback")
+        self.assertTrue(analysis.fallback_used)
+        self.assertEqual(analysis.context_updates["business_model"], "tob")
+        self.assertEqual(analysis.context_updates["primary_platform"], "mobile-web")
+        self.assertIn("老板", analysis.role_relationships["outcome_owners"])
 
     def test_heuristic_reply_interpreter_can_extract_generic_roles_from_sentence(self) -> None:
         interpreter = HeuristicReplyInterpreter()
@@ -1297,6 +1340,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertTrue(result.triggered)
         self.assertEqual(result.recommended_direction_id, "D-102")
         self.assertEqual(len(result.candidate_directions), 2)
+        self.assertEqual(result.generator_name, "llm")
+        self.assertFalse(result.fallback_used)
         self.assertIn("提醒链路本身不稳定", [item.label for item in result.candidate_directions])
         self.assertEqual(len(adapter.requests), 1)
         system_prompt = adapter.requests[0].messages[0].content
@@ -1306,6 +1351,24 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("[输出纪律]", system_prompt)
         self.assertIn("[任务目标]", system_prompt)
         self.assertIn("prompt_layers", adapter.requests[0].metadata)
+
+    def test_llm_pre_framing_generator_can_fall_back_when_adapter_fails(self) -> None:
+        generator = LLMPreFramingGenerator(adapter=RaisingLLMAdapter(RuntimeError("gateway-timeout")))
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="intake",
+            raw_input="想增加一个新手引导浮层，提升新用户发帖率。",
+            context_profile={},
+        )
+
+        result = build_pre_framing_result(case_state, generator=generator)
+
+        self.assertTrue(result.triggered)
+        self.assertGreaterEqual(len(result.candidate_directions), 1)
+        self.assertTrue(result.reason)
+        self.assertEqual(result.generator_name, "llm-fallback")
+        self.assertTrue(result.fallback_used)
+        self.assertIn("RuntimeError", result.fallback_reason)
 
     def test_llm_case_copywriter_can_only_enhance_copy_slots(self) -> None:
         adapter = StubLLMAdapter(
@@ -1335,10 +1398,270 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(enhanced_case.blocking_reason, "这一步还差一个明确选择，系统才能继续往下推进。")
         self.assertEqual(enhanced_case.next_actions, ["先明确你的倾向。", "顺手补一句原因。"])
         self.assertEqual(enhanced_case.metadata["copywriter"], "llm")
+        self.assertEqual(enhanced_case.metadata["llm_enhancements"]["copywriter"]["engine"], "llm")
+        self.assertFalse(enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_used"])
         system_prompt = adapter.requests[0].messages[0].content
         self.assertIn("[角色职责]", system_prompt)
         self.assertIn("[追加要求]", system_prompt)
         self.assertIn("prompt_layers", adapter.requests[0].metadata)
+
+    def test_llm_case_copywriter_can_fall_back_when_adapter_fails(self) -> None:
+        copywriter = LLMCaseCopywriter(adapter=RaisingLLMAdapter(RuntimeError("llm-offline")))
+        case_state = run_analysis_with_context(
+            "我们需要优化权限配置流程，避免前台误操作。",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "pc",
+                "target_user_roles": ["前台", "管理员"],
+            },
+        )
+
+        original_summary = case_state.normalized_summary
+        original_blocking_reason = case_state.blocking_reason
+        original_next_actions = list(case_state.next_actions)
+        enhanced_case = apply_case_copywriting(case_state, copywriter=copywriter)
+
+        self.assertEqual(enhanced_case.normalized_summary, original_summary)
+        self.assertEqual(enhanced_case.blocking_reason, original_blocking_reason)
+        self.assertEqual(enhanced_case.next_actions, original_next_actions)
+        self.assertEqual(enhanced_case.metadata["copywriter"], "llm-fallback")
+        self.assertTrue(enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_used"])
+        self.assertIn("RuntimeError", enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_reason"])
+        rendered_history = render_case_history(enhanced_case)
+        self.assertIn("最近模型回退", rendered_history)
+        self.assertIn("copywriter", rendered_history)
+
+    def test_llm_demo_scenario_generator_can_normalize_generated_scenarios(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=StubLLMAdapter(
+                content=json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "title": "支付宝提醒过载",
+                                "business_model": "toc",
+                                "primary_platform": "native-app",
+                                "product_domain": "支付服务",
+                                "target_user_roles": ["普通用户", "消息运营"],
+                                "initial_message": "最近很多人说支付宝消息太多，但我们还没收住要先解决通知打扰还是消息分层。",
+                                "follow_up_messages": [
+                                    "这个场景主要在 App 里发生，普通用户和消息运营都在盯。",
+                                    "现在只知道有人会手动关提醒，还没拆清到底是哪几类消息最烦。",
+                                ],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="支付宝", scenario_count=2)
+
+        self.assertEqual(result.generator_name, "llm")
+        self.assertFalse(result.fallback_used)
+        self.assertEqual(len(result.scenarios), 1)
+        self.assertEqual(result.scenarios[0].business_model, "toc")
+        self.assertEqual(result.scenarios[0].primary_platform, "native-app")
+        self.assertEqual(result.scenarios[0].target_user_roles, ["普通用户", "消息运营"])
+        self.assertIn("提醒", result.scenarios[0].title)
+        self.assertIn("还没收住", result.scenarios[0].initial_message)
+
+    def test_llm_demo_scenario_generator_can_fall_back_when_adapter_fails(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=RaisingLLMAdapter(RuntimeError("demo-llm-offline")),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="淘宝", scenario_count=2)
+
+        self.assertEqual(result.generator_name, "llm-fallback")
+        self.assertTrue(result.fallback_used)
+        self.assertIn("RuntimeError", result.fallback_reason)
+        self.assertEqual(len(result.scenarios), 2)
+        self.assertTrue(any("淘宝" in item.title for item in result.scenarios))
+
+    def test_llm_demo_scenario_generator_can_pull_solution_like_output_back_to_problem_draft(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=StubLLMAdapter(
+                content=json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "title": "支付宝首页生活缴费入口体验提升",
+                                "business_model": "toc",
+                                "primary_platform": "native-app",
+                                "product_domain": "支付服务",
+                                "target_user_roles": ["普通用户", "运营"],
+                                "initial_message": "建议优化支付宝首页生活缴费入口，提升转化。",
+                                "follow_up_messages": [
+                                    "增加一个更明显的入口按钮。",
+                                    "把生活缴费放到首页金刚位里。",
+                                ],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="支付宝", scenario_count=1)
+
+        self.assertEqual(result.generator_name, "llm")
+        self.assertEqual(len(result.scenarios), 1)
+        self.assertEqual(result.scenarios[0].title, "缴费这块有点不好找")
+        self.assertIn("还没想清楚", result.scenarios[0].initial_message)
+        self.assertIn("总有人说生活缴费这块不太好找", result.scenarios[0].initial_message)
+        self.assertNotIn("入口按钮", result.scenarios[0].follow_up_messages[0])
+        self.assertIn("发生在App里", result.scenarios[0].follow_up_messages[0])
+        self.assertIn("路径太深", result.scenarios[0].follow_up_messages[1])
+
+    def test_llm_demo_scenario_generator_can_humanize_short_noun_titles(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=StubLLMAdapter(
+                content=json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "title": "商家收款码",
+                                "business_model": "tob",
+                                "primary_platform": "multi-platform",
+                                "product_domain": "商户服务",
+                                "target_user_roles": ["小商家店主", "连锁店运营"],
+                                "initial_message": "想优化商家收款码相关体验。",
+                                "follow_up_messages": [
+                                    "完善收款码相关入口和说明。",
+                                    "优化门店操作流程。",
+                                ],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="支付宝", scenario_count=1)
+
+        self.assertEqual(result.scenarios[0].title, "收款码这块老有人来问")
+        self.assertIn("反复来问", result.scenarios[0].initial_message)
+        self.assertIn("入口太绕", result.scenarios[0].follow_up_messages[1])
+
+    def test_llm_demo_scenario_generator_can_align_title_with_live_stream_context(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=StubLLMAdapter(
+                content=json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "title": "首页流量分发",
+                                "business_model": "tob",
+                                "primary_platform": "pc",
+                                "product_domain": "电商直播",
+                                "target_user_roles": ["直播商家运营", "直播场控"],
+                                "initial_message": "最近商家反馈直播间的流量分配不太稳定，有时候开播半小时了，观看人数还是上不去。",
+                                "follow_up_messages": [
+                                    "有些场控说同一场直播前后波动很大。",
+                                    "现在还没拆清是内容不对，还是流量机制有问题。",
+                                ],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="淘宝", scenario_count=1)
+
+        self.assertEqual(result.scenarios[0].title, "直播间流量有点不稳")
+        self.assertIn("流量分配不太稳定", result.scenarios[0].initial_message)
+
+    def test_llm_demo_scenario_generator_can_rewrite_explicit_solution_intent(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=StubLLMAdapter(
+                content=json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "title": "配送员激励方案",
+                                "business_model": "tob",
+                                "primary_platform": "mobile-web",
+                                "product_domain": "本地即时配送",
+                                "target_user_roles": ["配送员", "区域运营经理"],
+                                "initial_message": "最近配送员流失率有点高，想做个激励方案试试看。",
+                                "follow_up_messages": [
+                                    "可以加一点奖励机制。",
+                                    "再做个每周排名。",
+                                ],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="京东", scenario_count=1)
+
+        self.assertEqual(result.scenarios[0].title, "配送员最近有点留不住")
+        self.assertNotIn("想做个激励方案", result.scenarios[0].initial_message)
+        self.assertIn("还没想清楚", result.scenarios[0].initial_message)
+
+    def test_llm_demo_scenario_generator_can_rewrite_solution_intent_for_scheduling(self) -> None:
+        generator = LLMDemoScenarioGenerator(
+            adapter=StubLLMAdapter(
+                content=json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "title": "医生排班那个事儿",
+                                "business_model": "tob",
+                                "primary_platform": "pc",
+                                "product_domain": "医院管理系统",
+                                "target_user_roles": ["科室主任", "行政助理"],
+                                "initial_message": "我们医院现在排班还是靠Excel发来发去，经常有冲突，能不能搞个在线协作的。",
+                                "follow_up_messages": [
+                                    "最好先把排班冲突都自动算出来。",
+                                    "具体是哪些科室最容易撞班。",
+                                ],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            fallback=StaticDemoScenarioGenerator(),
+        )
+
+        result = generator.generate(theme="医疗", scenario_count=1)
+
+        self.assertEqual(result.scenarios[0].title, "排班还是靠表在传")
+        self.assertNotIn("能不能搞个在线协作的", result.scenarios[0].initial_message)
+        self.assertIn("还是靠表在传", result.scenarios[0].initial_message)
+        self.assertIn("现状流程有问题", result.scenarios[0].follow_up_messages[1])
+
+    def test_seed_workspace_demo_can_create_multiple_cases(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            result = seed_workspace_demo(
+                shell,
+                workspace_id="demo-seed",
+                generator=StaticDemoScenarioGenerator(),
+                theme="医疗",
+                scenario_count=2,
+            )
+
+        self.assertEqual(len(result.seeded_case_ids), 2)
+        self.assertEqual(result.generation.generator_name, "fallback")
+        self.assertTrue(result.latest_response.workspace.active_case_id)
+        self.assertEqual(result.latest_response.workspace.workspace_id, "demo-seed")
 
     def test_layered_prompt_can_accept_project_and_append_overrides_from_env(self) -> None:
         adapter = StubLLMAdapter(
@@ -2042,6 +2365,29 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("增强模式", rendered)
         self.assertIn("LLM 混合（回复解释、前置收敛）", rendered)
 
+    def test_build_case_runtime_payload_can_expose_fallback_components(self) -> None:
+        case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
+        case_state.metadata["llm_runtime"] = {"summary": "LLM 混合（回复解释、前置收敛、文案增强）"}
+        case_state.metadata["llm_enhancements"] = {
+            "reply-interpreter": {
+                "engine": "hybrid-fallback",
+                "fallback_used": True,
+                "fallback_reason": "RuntimeError: network-down",
+            },
+            "copywriter": {
+                "engine": "llm",
+                "fallback_used": False,
+                "fallback_reason": "",
+            },
+        }
+
+        payload = build_case_runtime_payload(case_state)
+
+        self.assertEqual(payload["summary"], "LLM 混合（回复解释、前置收敛、文案增强）")
+        self.assertTrue(payload["fallback_active"])
+        self.assertEqual(payload["fallback_count"], 1)
+        self.assertEqual(payload["fallback_components"], ["reply-interpreter"])
+
     def test_http_service_can_create_reply_and_load_history(self) -> None:
         with TemporaryDirectory() as tmpdir:
             service = PMMethodHTTPService(store_dir=tmpdir)
@@ -2069,7 +2415,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(reply_response.status_code, 200)
         self.assertEqual(history_response.status_code, 200)
         self.assertIn("rendered_card", create_response.payload)
+        self.assertIn("case_runtime", create_response.payload)
+        self.assertIn("summary", create_response.payload["case_runtime"])
         self.assertIn("history", history_response.payload)
+        self.assertIn("case_runtime", history_response.payload["history"])
         self.assertIn("rendered_history", history_response.payload)
         self.assertEqual(history_response.payload["case_id"], case_id)
 
@@ -2094,6 +2443,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("PM Method Agent", html_response.encoded_body().decode("utf-8"))
         self.assertIn("/assets/web-demo.js", html_response.encoded_body().decode("utf-8"))
         self.assertIn("/assets/favicon.svg", html_response.encoded_body().decode("utf-8"))
+        self.assertIn("运行时", html_response.encoded_body().decode("utf-8"))
+        self.assertIn("refreshRuntimeButton", html_response.encoded_body().decode("utf-8"))
+        self.assertIn("seedWorkspaceButton", html_response.encoded_body().decode("utf-8"))
 
         self.assertEqual(css_response.status_code, 200)
         self.assertEqual(css_response.content_type, "text/css; charset=utf-8")
@@ -2102,6 +2454,20 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(js_response.status_code, 200)
         self.assertEqual(js_response.content_type, "application/javascript; charset=utf-8")
         self.assertIn("loadWorkspace", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("case_runtime", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("loadRuntimeSession", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("/runtime/session", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("runtimeLoopLabel", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("pickRuntimeHighlights", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("seedWorkspaceDemo", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("renderWorkingMemoryItem", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("需要人工确认", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("历史已收拢", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("最近在接什么", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("之前收过什么", js_response.encoded_body().decode("utf-8"))
+        self.assertNotIn("发起工具调用", js_response.encoded_body().decode("utf-8"))
+        self.assertNotIn("发起 hook", js_response.encoded_body().decode("utf-8"))
+        self.assertNotIn("发出终止事件", js_response.encoded_body().decode("utf-8"))
 
         self.assertEqual(favicon_response.status_code, 200)
         self.assertEqual(favicon_response.content_type, "image/svg+xml")
@@ -2109,6 +2475,31 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(favicon_ico_response.status_code, 200)
         self.assertEqual(favicon_ico_response.content_type, "image/svg+xml")
+
+    def test_http_service_can_seed_demo_workspace_cases(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/workspaces/demo-seed/demo-seed",
+                body=json.dumps(
+                    {
+                        "theme": "医疗",
+                        "scenario_count": 2,
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("workspace", response.payload)
+        self.assertIn("cases", response.payload)
+        self.assertIn("seed_result", response.payload)
+        self.assertIn("runtime_session", response.payload)
+        self.assertIn("case", response.payload)
+        self.assertEqual(response.payload["workspace"]["workspace_id"], "demo-seed")
+        self.assertEqual(len(response.payload["seed_result"]["seeded_case_ids"]), 2)
+        self.assertIn("generation", response.payload["seed_result"])
 
     def test_http_service_health_can_expose_llm_runtime(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -3642,8 +4033,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(first_response.payload["action"], "create-case")
+        self.assertIn("case_runtime", first_response.payload)
         self.assertEqual(second_response.status_code, 200)
         self.assertEqual(second_response.payload["action"], "reply-case")
+        self.assertIn("case_runtime", second_response.payload)
         self.assertEqual(workspace_response.status_code, 200)
         self.assertTrue(workspace_response.payload["workspace"]["active_case_id"])
 
@@ -4013,10 +4406,12 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("tool-call-requested", event_types)
         self.assertIn("tool-call-completed", event_types)
         self.assertIn("turn-classified", event_types)
+        self.assertIn("loop-state-changed", event_types)
         self.assertEqual(runtime_session.last_terminal_event["query_id"], "query-0001")
         self.assertGreaterEqual(len(runtime_session.execution_ledger), 2)
         self.assertEqual(runtime_session.execution_ledger[0]["tool_name"], "reply-interpreter")
         self.assertEqual(runtime_session.execution_ledger[0]["status"], "completed")
+        self.assertEqual(runtime_session.runtime_metadata["last_loop_handler"], "_handle_create_case")
 
     def test_agent_shell_runtime_session_tracks_execution_ledger(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4097,6 +4492,43 @@ class OrchestratorSmokeTest(unittest.TestCase):
             self.assertEqual(runtime_session.last_terminal_event["terminal_state"], "cancelled")
             self.assertEqual(runtime_session.last_terminal_event["error"]["reason"], "cancelled-by-user")
 
+    def test_runtime_session_can_compress_old_query_history_into_summary_memory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            runtime_session = get_or_create_runtime_session(
+                "demo-runtime-compression",
+                store=default_runtime_session_store(tmpdir),
+            )
+            runtime_session.context_budget["raw_history_budget"] = 2
+            runtime_session.context_budget["working_memory_budget"] = 1
+            runtime_session.context_budget["summary_memory_budget"] = 2
+
+            for index in range(3):
+                start_runtime_query(runtime_session, message=f"第 {index + 1} 轮输入")
+                complete_runtime_query(
+                    runtime_session,
+                    terminal_state="completed",
+                    action="show-guidance",
+                    active_case_id=f"case-{index + 1}",
+                    resume_from="decision-challenge",
+                    output_kind="continue-guidance-card",
+                    workflow_state="blocked",
+                )
+
+        self.assertEqual(len(runtime_session.raw_history), 2)
+        self.assertEqual(len(runtime_session.working_memory), 1)
+        self.assertEqual(len(runtime_session.summary_memory), 1)
+        self.assertEqual(runtime_session.summary_memory[0]["from_turn"], 1)
+        self.assertEqual(runtime_session.summary_memory[0]["to_turn"], 1)
+        self.assertEqual(runtime_session.compression_state["status"], "compressed")
+        self.assertEqual(runtime_session.compression_state["compressed_turns"], 1)
+        self.assertEqual(runtime_session.compression_state["last_compression_turn"], 1)
+        self.assertTrue(
+            any(item["event_type"] == "context-compressed" for item in runtime_session.event_log)
+        )
+        rendered = render_runtime_session(runtime_session)
+        self.assertIn("摘要记忆", rendered)
+        self.assertIn("summary-0001", rendered)
+
     def test_agent_shell_runtime_session_tracks_terminal_state_and_resume_point(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shell = PMMethodAgentShell(base_dir=tmpdir)
@@ -4133,6 +4565,114 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(runtime_session.last_terminal_event["terminal_state"], "failed")
         self.assertEqual(runtime_session.last_terminal_event["action"], "runtime-error")
         self.assertEqual(runtime_session.last_terminal_event["error"]["type"], "RuntimeError")
+
+    def test_agent_shell_records_llm_fallback_without_failing_runtime(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell._reply_interpreter = HybridReplyInterpreter(
+                llm_interpreter=LLMReplyInterpreter(adapter=RaisingLLMAdapter(RuntimeError("network-down"))),
+                fallback=HeuristicReplyInterpreter(),
+            )
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo-fallback",
+            )
+            runtime_session = get_or_create_runtime_session(
+                "demo-fallback",
+                store=default_runtime_session_store(tmpdir),
+            )
+
+        self.assertNotEqual(response.runtime_session.last_terminal_event["action"], "runtime-error")
+        self.assertEqual(runtime_session.runtime_status, "idle")
+        self.assertTrue(
+            any(
+                item["event_type"] == "llm-fallback"
+                and item["payload"].get("component") == "reply-interpreter"
+                and item["payload"].get("fallback_parser") == "heuristic"
+                for item in runtime_session.event_log
+            )
+        )
+
+    def test_agent_shell_can_record_case_level_llm_fallback_events(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            runtime_session = get_or_create_runtime_session(
+                "demo-case-fallback",
+                store=default_runtime_session_store(tmpdir),
+            )
+            start_runtime_query(runtime_session, message="测试 case 级降级")
+            case_state = CaseState(
+                case_id="case-demo",
+                stage="pre-framing",
+                raw_input="想增加一个新手引导浮层，提升新用户发帖率。",
+                metadata={
+                    "llm_enhancements": {
+                        "pre-framing": {
+                            "engine": "llm-fallback",
+                            "fallback_used": True,
+                            "fallback_reason": "RuntimeError: gateway-timeout",
+                        },
+                        "copywriter": {
+                            "engine": "llm-fallback",
+                            "fallback_used": True,
+                            "fallback_reason": "RuntimeError: llm-offline",
+                        },
+                    }
+                },
+            )
+
+            shell._record_case_fallbacks(runtime_session, case_state, action="create-case")
+
+        event_payloads = [
+            item["payload"]
+            for item in runtime_session.event_log
+            if item["event_type"] == "llm-fallback"
+        ]
+        self.assertTrue(any(item.get("component") == "pre-framing" for item in event_payloads))
+        self.assertTrue(any(item.get("component") == "copywriter" for item in event_payloads))
+
+    def test_cli_runtime_command_can_render_runtime_session(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo-runtime-cli",
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "runtime",
+                        "--workspace-id",
+                        "demo-runtime-cli",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("PM Method Agent Runtime Session", rendered)
+        self.assertIn("工作记忆", rendered)
+
+    def test_http_service_can_return_runtime_session_payload(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell.handle_message(
+                "想增加一个新手引导浮层，提升新用户发帖率。",
+                workspace_id="demo-runtime-http",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+
+            response = service.handle("GET", "/workspaces/demo-runtime-http/runtime/session")
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.encoded_body().decode("utf-8"))
+        runtime_session = payload["runtime_session"]
+        self.assertEqual(runtime_session["workspace_id"], "demo-runtime-http")
+        self.assertIn("raw_history", runtime_session)
+        self.assertIn("working_memory", runtime_session)
+        self.assertIn("summary_memory", runtime_session)
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(
@@ -4211,6 +4751,86 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("pm-method-agent", result.stdout)
+
+    def test_cli_direct_json_output_can_include_case_runtime(self) -> None:
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            exit_code = main(
+                [
+                    "--format",
+                    "json",
+                    "--business-model",
+                    "tob",
+                    "--primary-platform",
+                    "mobile-web",
+                    "--target-user-role",
+                    "前台",
+                    "前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertIn("case", payload)
+        self.assertIn("case_runtime", payload)
+        self.assertIn("rendered_card", payload)
+        self.assertIn("summary", payload["case_runtime"])
+
+    def test_cli_history_json_output_can_include_case_runtime_and_rendered_history(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="前台希望增加一个预约前提醒弹窗，避免漏提醒患者。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "mobile-web",
+                    "target_user_roles": ["前台", "诊所管理者"],
+                },
+                store=store,
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "history",
+                        case_state.case_id,
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertIn("history", payload)
+        self.assertIn("case_runtime", payload)
+        self.assertIn("rendered_history", payload)
+        self.assertEqual(payload["history"]["case_id"], case_state.case_id)
+
+    def test_cli_agent_json_output_can_include_case_runtime(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "agent",
+                        "--workspace-id",
+                        "demo-cli-json",
+                        "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertIn("action", payload)
+        self.assertIn("case", payload)
+        self.assertIn("case_runtime", payload)
+        self.assertIn("rendered_card", payload)
 
 
 if __name__ == "__main__":

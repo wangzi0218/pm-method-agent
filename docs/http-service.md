@@ -78,6 +78,19 @@ http://127.0.0.1:8000/
 
 网页 demo 和下面这些接口共用同一个服务层，不会额外维护第二套状态。
 
+如果你只是想先快速装一组可切换的演示案例，也可以直接调用：
+
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/demo/demo-seed \
+  -H "Content-Type: application/json" \
+  -d '{
+    "theme": "医疗",
+    "scenario_count": 3
+  }'
+```
+
+这条接口会优先尝试用当前配置的 OpenAI-compatible 模型生成中文示例草稿；如果模型不可用，会自动回退到内置样本。
+
 ```bash
 curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
   -H "Content-Type: application/json" \
@@ -132,6 +145,24 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 - 返回网页 demo 的前端逻辑
 - 负责消息发送、案例切换、历史和审批展示
+
+### `POST /workspaces/{workspace_id}/demo-seed`
+
+用途：
+
+- 为当前工作区一键装载一组演示案例
+- 优先使用当前配置的模型服务生成中文示例草稿
+- 如果模型不可用，自动回退到内置样本
+- 让网页 demo 可以直接展示最近案例、主卡片、历史和运行时摘要
+
+示例请求体：
+
+```json
+{
+  "theme": "医疗",
+  "scenario_count": 3
+}
+```
 
 ### `GET /health`
 
@@ -355,6 +386,12 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 - `workspace`
 - `project_profile`
 - `message`
+
+对于案例相关接口，现在还会返回：
+
+- `case_runtime`
+
+这层字段的目标，是把 `LLM` 增强状态、回退组件和运行摘要收成一份稳定契约，给网页、IDE 外壳或其他客户端直接消费，而不是让它们自己去拆 `case.metadata`。
 
 对于运行时策略校验接口，还会返回：
 

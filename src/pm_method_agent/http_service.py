@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.command_executor import LOCAL_COMMAND_TOOL_NAME
+from pm_method_agent.demo_seed import build_demo_scenario_generator_from_env, seed_workspace_demo
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -16,6 +17,8 @@ from pm_method_agent.project_profile_service import (
     update_project_profile,
 )
 from pm_method_agent.renderers import (
+    build_case_runtime_payload,
+    build_runtime_session_payload,
     build_case_history_payload,
     build_workspace_cases_payload,
     render_case_history,
@@ -24,6 +27,7 @@ from pm_method_agent.renderers import (
 )
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.runtime_policy import load_runtime_policy, runtime_policy_to_dict
+from pm_method_agent.runtime_session_service import default_runtime_session_store, get_or_create_runtime_session
 from pm_method_agent.runtime_tools import RuntimeToolRegistry
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 from pm_method_agent.web_demo_assets import get_web_demo_asset, get_web_demo_html
@@ -67,9 +71,11 @@ class PMMethodHTTPService:
         self._store = default_store(store_dir)
         self._project_profile_store = default_project_profile_store(store_dir)
         self._workspace_store = default_workspace_store(store_dir)
+        self._runtime_session_store = default_runtime_session_store(store_dir)
         self._runtime_policy = load_runtime_policy(base_dir=store_dir)
         self._agent_shell = PMMethodAgentShell(base_dir=store_dir)
         self._local_tools = RuntimeToolRegistry(base_dir=store_dir)
+        self._demo_scenario_generator = build_demo_scenario_generator_from_env()
 
     def handle(self, method: str, path: str, body: Optional[bytes] = None) -> HTTPResponse:
         try:
@@ -220,6 +226,19 @@ class PMMethodHTTPService:
                         },
                     )
 
+                if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/runtime/session":
+                    runtime_session = get_or_create_runtime_session(
+                        workspace_id,
+                        store=self._runtime_session_store,
+                    )
+                    return HTTPResponse.json(
+                        200,
+                        {
+                            "workspace_id": workspace_id,
+                            "runtime_session": build_runtime_session_payload(runtime_session),
+                        },
+                    )
+
                 approval_id = _extract_workspace_runtime_approval_id(normalized_path, workspace_id)
                 if method == "POST" and approval_id:
                     payload = _parse_json_body(body)
@@ -266,6 +285,7 @@ class PMMethodHTTPService:
                         {
                             "workspace": workspace.to_dict(),
                             "case": case_state.to_dict(),
+                            "case_runtime": build_case_runtime_payload(case_state),
                             "rendered_card": render_case_state(case_state),
                         },
                     )
@@ -277,6 +297,38 @@ class PMMethodHTTPService:
                         workspace_id=workspace_id,
                     )
                     return HTTPResponse.json(200, _build_agent_response_payload(response))
+
+                if method == "POST" and normalized_path == f"/workspaces/{workspace_id}/demo-seed":
+                    payload = _parse_json_body(body)
+                    replay_result = seed_workspace_demo(
+                        self._agent_shell,
+                        workspace_id=workspace_id,
+                        generator=self._demo_scenario_generator,
+                        theme=str(payload.get("theme", "")).strip(),
+                        scenario_count=_ensure_demo_scenario_count(payload.get("scenario_count")),
+                    )
+                    workspace = replay_result.latest_response.workspace
+                    recent_cases = self._load_recent_cases(workspace)
+                    active_case = replay_result.latest_response.case_state
+                    runtime_session = get_or_create_runtime_session(
+                        workspace_id,
+                        store=self._runtime_session_store,
+                    )
+                    return HTTPResponse.json(
+                        200,
+                        {
+                            "message": f"已装载 {len(replay_result.seeded_case_ids)} 个示例案例。",
+                            "workspace": workspace.to_dict(),
+                            "cases": build_workspace_cases_payload(workspace, recent_cases),
+                            "seed_result": replay_result.to_dict(),
+                            "runtime_session": build_runtime_session_payload(runtime_session),
+                            "case": active_case.to_dict() if active_case else None,
+                            "case_runtime": (
+                                build_case_runtime_payload(active_case) if active_case else None
+                            ),
+                            "rendered_card": render_case_state(active_case) if active_case else "",
+                        },
+                    )
 
             case_id = _extract_case_id(normalized_path)
             if case_id:
@@ -291,6 +343,7 @@ class PMMethodHTTPService:
                         {
                             "case_id": case_id,
                             "history": build_case_history_payload(case_state),
+                            "case_runtime": build_case_runtime_payload(case_state),
                             "rendered_history": render_case_history(case_state),
                         },
                     )
@@ -415,6 +468,7 @@ def _build_handler(service: PMMethodHTTPService) -> Callable[..., BaseHTTPReques
 def _build_case_response_payload(case_state) -> JsonDict:
     return {
         "case": case_state.to_dict(),
+        "case_runtime": build_case_runtime_payload(case_state),
         "rendered_card": render_case_state(case_state),
     }
 
@@ -428,6 +482,7 @@ def _build_agent_response_payload(response) -> JsonDict:
         "workspace": response.workspace.to_dict(),
         "runtime_session": response.runtime_session.to_dict(),
         "case": response.case_state.to_dict() if response.case_state else None,
+        "case_runtime": build_case_runtime_payload(response.case_state) if response.case_state else None,
         "project_profile": response.project_profile.to_dict() if response.project_profile else None,
         "rendered_card": response.rendered_card,
         "rendered_history": response.rendered_history,
@@ -520,3 +575,15 @@ def _optional_string(value: object) -> Optional[str]:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _ensure_demo_scenario_count(payload: object) -> int:
+    if payload is None:
+        return 3
+    try:
+        value = int(payload)
+    except (TypeError, ValueError):
+        return 3
+    if value <= 0:
+        return 3
+    return min(value, 5)

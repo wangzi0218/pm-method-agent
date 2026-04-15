@@ -33,6 +33,10 @@ WEB_DEMO_HTML = """<!doctype html>
             <input id="workspaceIdInput" type="text" spellcheck="false" value="demo" />
             <button id="loadWorkspaceButton" type="button">载入</button>
           </div>
+          <div class="workspace-input-row">
+            <button id="seedWorkspaceButton" class="ghost-button" type="button">装载示例</button>
+            <p class="hint">不想手工造数据时，可以先装一组演示案例。</p>
+          </div>
           <div id="workspaceMeta" class="workspace-meta"></div>
         </section>
 
@@ -112,6 +116,7 @@ WEB_DEMO_HTML = """<!doctype html>
       <aside class="detail-rail">
         <div class="detail-tabs" role="tablist" aria-label="辅助信息">
           <button class="detail-tab is-active" type="button" data-tab="history">历史</button>
+          <button class="detail-tab" type="button" data-tab="runtime">运行时</button>
           <button class="detail-tab" type="button" data-tab="approvals">审批</button>
         </div>
 
@@ -141,6 +146,25 @@ WEB_DEMO_HTML = """<!doctype html>
           </div>
           <div id="approvalsContent" class="approvals-list empty-list">
             <p>当前没有待确认操作。</p>
+          </div>
+        </section>
+
+        <section id="runtimePanel" class="panel detail-panel is-hidden">
+          <div class="panel-heading">
+            <h2>运行时</h2>
+            <button id="refreshRuntimeButton" class="ghost-button" type="button">刷新</button>
+          </div>
+          <p class="section-kicker">当前状态</p>
+          <div id="runtimeDigest" class="history-digest empty-list">
+            <p>这里会显示当前工作区的运行态摘要。</p>
+          </div>
+          <p class="section-kicker">最近事件</p>
+          <div id="runtimeTimeline" class="history-timeline empty-list">
+            <p>这里会收最近值得关注的运行提醒。</p>
+          </div>
+          <p class="section-kicker">记忆快照</p>
+          <div id="runtimeMemory" class="render-surface empty-surface">
+            <p>这里会显示最近在接的话题，以及已经收拢过的旧上下文。</p>
           </div>
         </section>
       </aside>
@@ -590,6 +614,17 @@ button:disabled {
   margin: 16px 0 18px;
 }
 
+.runtime-memory-list,
+.runtime-event-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.runtime-memory-list li + li,
+.runtime-event-list li + li {
+  margin-top: 8px;
+}
+
 .card-outline {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
@@ -747,7 +782,7 @@ button:disabled {
 
 .detail-tabs {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
@@ -951,6 +986,8 @@ WEB_DEMO_JS = """\
     workspaceId: "demo",
     activeCaseId: "",
     currentCase: null,
+    currentCaseRuntime: null,
+    currentRuntimeSession: null,
     recentCases: [],
     approvals: [],
   };
@@ -958,6 +995,7 @@ WEB_DEMO_JS = """\
   const els = {
     workspaceIdInput: document.getElementById("workspaceIdInput"),
     loadWorkspaceButton: document.getElementById("loadWorkspaceButton"),
+    seedWorkspaceButton: document.getElementById("seedWorkspaceButton"),
     refreshWorkspaceButton: document.getElementById("refreshWorkspaceButton"),
     workspaceMeta: document.getElementById("workspaceMeta"),
     recentCountBadge: document.getElementById("recentCountBadge"),
@@ -978,11 +1016,16 @@ WEB_DEMO_JS = """\
     historyTimeline: document.getElementById("historyTimeline"),
     historyDigest: document.getElementById("historyDigest"),
     historyContent: document.getElementById("historyContent"),
+    runtimeDigest: document.getElementById("runtimeDigest"),
+    runtimeTimeline: document.getElementById("runtimeTimeline"),
+    runtimeMemory: document.getElementById("runtimeMemory"),
     approvalsContent: document.getElementById("approvalsContent"),
     refreshHistoryButton: document.getElementById("refreshHistoryButton"),
+    refreshRuntimeButton: document.getElementById("refreshRuntimeButton"),
     refreshApprovalsButton: document.getElementById("refreshApprovalsButton"),
     toast: document.getElementById("toast"),
     historyPanel: document.getElementById("historyPanel"),
+    runtimePanel: document.getElementById("runtimePanel"),
     approvalsPanel: document.getElementById("approvalsPanel"),
   };
 
@@ -999,6 +1042,10 @@ WEB_DEMO_JS = """\
       deferred: "已暂缓",
       completed: "已完成",
       idle: "空闲",
+      running: "处理中",
+      failed: "失败",
+      interrupted: "已中断",
+      cancelled: "已取消",
     };
     return labels[value] || value || "未命名";
   }
@@ -1012,6 +1059,92 @@ WEB_DEMO_JS = """\
       "continue-guidance-card": "继续卡",
     };
     return labels[value] || value || "卡片";
+  }
+
+  function runtimeActionLabel(value) {
+    const labels = {
+      "create-case": "新建案例",
+      "reply-case": "继续当前案例",
+      "show-guidance": "查看下一步",
+      "show-history": "查看案例历史",
+      "switch-case": "切换案例",
+      "project-profile-updated": "更新项目背景",
+      "workspace-overview": "查看工作区",
+      "platform-project-profile-created": "创建项目背景",
+      "platform-project-profile-updated": "更新项目背景",
+    };
+    return labels[value] || value || "当前动作";
+  }
+
+  function runtimeComponentLabel(value) {
+    const labels = {
+      "reply-interpreter": "输入理解",
+      "pre-framing": "前置收敛",
+      copywriter: "表达润色",
+    };
+    return labels[value] || value || "模型增强";
+  }
+
+  function runtimeTerminalStateLabel(value) {
+    const labels = {
+      continued: "已继续承接",
+      completed: "这一轮已完成",
+      blocked: "当前先停在这里",
+      deferred: "当前暂缓",
+      failed: "这一轮未完成",
+      interrupted: "这一轮被中断",
+      cancelled: "这一轮已取消",
+    };
+    return labels[value] || value || "运行状态";
+  }
+
+  function runtimeResumeLabel(value) {
+    if (!value) {
+      return "当前阶段";
+    }
+    if (value === "active-case") {
+      return "当前案例";
+    }
+    return stageLabel(value);
+  }
+
+  function runtimeLoopLabel(value) {
+    const labels = {
+      idle: "空闲",
+      "classifying-turn": "判断这轮输入",
+      executing: "处理中",
+      "checking-policy": "检查运行规则",
+      "routing-intent": "决定往哪条路径走",
+      "executing-intent": "执行当前路径",
+      "rendering-response": "整理这一轮输出",
+    };
+    return labels[value] || value || "处理中";
+  }
+
+  function runtimeIntentLabel(value) {
+    const labels = {
+      "workspace-overview": "查看工作区",
+      "switch-case": "切换案例",
+      history: "查看历史",
+      guidance: "查看下一步",
+      "project-background": "补充项目背景",
+      "new-case": "新建案例",
+      "continue-case": "继续当前案例",
+    };
+    return labels[value] || value || "继续处理";
+  }
+
+  function runtimeMemorySummaryLabel(value) {
+    const labels = {
+      completed: "已经处理完",
+      continued: "先承接住了",
+      blocked: "先停下等补充",
+      deferred: "暂时往后放",
+      failed: "这轮没跑通",
+      interrupted: "中途被打断",
+      cancelled: "这轮已取消",
+    };
+    return labels[value] || value || "已经记录";
   }
 
   function escapeHtml(value) {
@@ -1034,6 +1167,156 @@ WEB_DEMO_JS = """\
       return normalized;
     }
     return `${normalized.slice(0, limit - 1)}…`;
+  }
+
+  function summarizeRuntimeEvent(item, runtimeSession) {
+    const eventType = String(item?.event_type || "");
+    const payload = item?.payload || {};
+
+    if (eventType === "approval-requested") {
+      return {
+        key: "approval",
+        kind: "需要人工确认",
+        stage: runtimeActionLabel(payload.action_name || payload.tool_name || ""),
+        text: "这一步先等你确认，确认后系统再继续执行。",
+      };
+    }
+
+    if (eventType === "approval-approved") {
+      return {
+        key: "approval-result",
+        kind: "已同意继续",
+        stage: runtimeActionLabel(payload.action_name || payload.tool_name || ""),
+        text: shortText(payload.reason || "这项确认已经处理，后续可以继续推进。", 96),
+      };
+    }
+
+    if (eventType === "approval-rejected") {
+      return {
+        key: "approval-result",
+        kind: "已拒绝继续",
+        stage: runtimeActionLabel(payload.action_name || payload.tool_name || ""),
+        text: shortText(payload.reason || "这项确认没有通过，系统会停在当前恢复点。", 96),
+      };
+    }
+
+    if (eventType === "llm-fallback") {
+      const component = runtimeComponentLabel(payload.component || "");
+      const reason = shortText(payload.reason || "", 88);
+      return {
+        key: `fallback-${component}`,
+        kind: "回退到本地规则",
+        stage: component,
+        text: reason
+          ? `${component} 这一步先按本地规则继续。${reason}`
+          : `${component} 这一步先按本地规则继续。`,
+      };
+    }
+
+    if (eventType === "context-compressed") {
+      const compressedTurns = Number(payload.compressed_turns || 0);
+      return {
+        key: "context-compressed",
+        kind: "历史已收拢",
+        stage: payload.summary_id || "摘要记忆",
+        text: compressedTurns > 0
+          ? `较早的 ${compressedTurns} 轮内容已经压成摘要，后续会优先带着摘要继续。`
+          : "较早的内容已经收拢成摘要，后续会带着摘要继续。",
+      };
+    }
+
+    if (eventType === "terminal-state-emitted") {
+      const terminalState = String(payload.terminal_state || "");
+      const resumeLabel = runtimeResumeLabel(payload.resume_from || runtimeSession?.resume_from || "");
+      const actionLabel = runtimeActionLabel(payload.action || "");
+      let text = `${actionLabel} 这一轮已经收尾。`;
+      if (terminalState === "blocked") {
+        text = `这一轮先停在${resumeLabel}，等你补信息或做选择。`;
+      } else if (terminalState === "continued") {
+        text = `这一轮先承接到这里，下次会从${resumeLabel}继续。`;
+      } else if (terminalState === "deferred") {
+        text = `这一轮先暂缓，后面可以从${resumeLabel}再接着看。`;
+      } else if (terminalState === "failed") {
+        text = "这一轮没有顺利完成，建议先看错误原因再继续。";
+      } else if (terminalState === "interrupted") {
+        text = "这一轮中途被打断，恢复后会从当前恢复点继续。";
+      } else if (terminalState === "cancelled") {
+        text = "这一轮已经取消，不会继续往下执行。";
+      }
+      return {
+        key: "terminal",
+        kind: runtimeTerminalStateLabel(terminalState),
+        stage: resumeLabel,
+        text,
+      };
+    }
+
+    if (eventType === "loop-state-changed" && runtimeSession?.runtime_status === "running") {
+      return {
+        key: "progress",
+        kind: "当前处理进度",
+        stage: runtimeLoopLabel(payload.to_loop_state || ""),
+        text: shortText(payload.reason || "系统正在推进这一轮处理。", 96),
+      };
+    }
+
+    return null;
+  }
+
+  function pickRuntimeHighlights(runtimeSession) {
+    const eventLog = runtimeSession?.event_log || [];
+    const highlights = [];
+    const usedKeys = new Set();
+
+    for (let index = eventLog.length - 1; index >= 0; index -= 1) {
+      const summary = summarizeRuntimeEvent(eventLog[index], runtimeSession);
+      if (!summary || usedKeys.has(summary.key)) {
+        continue;
+      }
+      highlights.push(summary);
+      usedKeys.add(summary.key);
+      if (highlights.length >= 3) {
+        break;
+      }
+    }
+
+    return highlights;
+  }
+
+  function renderWorkingMemoryItem(item) {
+    const turnLabel = `第 ${inlineFormat(String(item.turn_count || "?"))} 轮`;
+    const intentLabel = runtimeIntentLabel(item.intent || "");
+    const terminalLabel = runtimeMemorySummaryLabel(item.terminal_state || "");
+    const messageText = shortText(item.message_preview || item.message || "", 96) || "这轮输入没有留下可展示的摘要。";
+    const resumeText = item.resume_from ? `后续从 ${runtimeResumeLabel(item.resume_from)} 接着看。` : "";
+    return `
+      <li>
+        <strong>${turnLabel}</strong> ${inlineFormat(intentLabel)}，${inlineFormat(terminalLabel)}。
+        <span>${inlineFormat(messageText)}${resumeText ? ` ${inlineFormat(resumeText)}` : ""}</span>
+      </li>
+    `;
+  }
+
+  function renderSummaryMemoryItem(item) {
+    const turnRange = `第 ${inlineFormat(String(item.from_turn || "?"))} 到 ${inlineFormat(String(item.to_turn || "?"))} 轮`;
+    const highlights = (item.highlights || []).filter(Boolean);
+    const resumePoints = (item.resume_points || []).filter(Boolean);
+    const intents = (item.intents || []).filter(Boolean);
+    const summaryText = shortText(highlights[highlights.length - 1] || "", 96);
+    const resumeText = resumePoints.length
+      ? `后续多半会回到 ${resumePoints.map((value) => runtimeResumeLabel(String(value))).join(" / ")}。`
+      : "";
+    const intentText = intents.length
+      ? `主要围绕 ${intents.map((value) => runtimeIntentLabel(String(value))).join(" / ")}。`
+      : "";
+    return `
+      <li>
+        <strong>${turnRange}</strong> 的较早内容已经收成一段摘要。
+        <span>${inlineFormat(summaryText || intentText || "这段旧上下文已经压缩保存，后续不会整段重复带入。")}${
+          resumeText ? ` ${inlineFormat(resumeText)}` : ""
+        }</span>
+      </li>
+    `;
   }
 
   function buildMarkdownSections(text, sectionPrefix = "section") {
@@ -1232,7 +1515,7 @@ WEB_DEMO_JS = """\
     els.composerMeta.innerHTML = items.join("");
   }
 
-  function renderCardDigest(casePayload) {
+  function renderCardDigest(casePayload, caseRuntime) {
     if (!casePayload) {
       els.cardDigest.className = "card-digest empty-list";
       els.cardDigest.innerHTML = "<p>当前阶段最值得先看的内容，会先收在这里。</p>";
@@ -1260,6 +1543,19 @@ WEB_DEMO_JS = """\
         <article class="digest-card">
           <span class="digest-label">最先该盯的一点</span>
           <span class="digest-value">${inlineFormat(shortText(topFinding.claim || "", 88))}</span>
+        </article>
+      `);
+    }
+
+    if (caseRuntime && caseRuntime.fallback_active) {
+      cards.push(`
+        <article class="digest-card">
+          <span class="digest-label">模型增强状态</span>
+          <span class="digest-value">
+            这一轮有 ${inlineFormat(String(caseRuntime.fallback_count || 0))} 个增强组件回退到了本地规则：${inlineFormat(
+              (caseRuntime.fallback_components || []).join(" / ")
+            )}。
+          </span>
         </article>
       `);
     }
@@ -1296,10 +1592,22 @@ WEB_DEMO_JS = """\
     const conversationTurns = historyPayload.conversation_turns || [];
     const stageHistory = historyPayload.stage_history || [];
     const answeredQuestions = historyPayload.answered_questions || [];
+    const caseRuntime = historyPayload.case_runtime || null;
     const latestTurn = conversationTurns[conversationTurns.length - 1];
     const latestText = latestTurn
       ? `${latestTurn.kind || "turn"}：${latestTurn.text || latestTurn.content || ""}`
       : "当前还没有更多历史。";
+
+    const fallbackCard = caseRuntime && caseRuntime.fallback_active
+      ? `
+      <article class="digest-card">
+        <span class="digest-label">模型回退</span>
+        <span class="digest-value">
+          最近这段过程里，${inlineFormat((caseRuntime.fallback_components || []).join(" / "))} 走了本地规则回退。
+        </span>
+      </article>
+    `
+      : "";
 
     els.historyDigest.className = "history-digest";
     els.historyDigest.innerHTML = `
@@ -1319,6 +1627,135 @@ WEB_DEMO_JS = """\
           已回答 ${answeredQuestions.length} 项，阶段变化 ${stageHistory.length} 次。
         </span>
       </article>
+      ${fallbackCard}
+    `;
+  }
+
+  function renderRuntimePanel(runtimeSession) {
+    if (!runtimeSession) {
+      els.runtimeDigest.className = "history-digest empty-list";
+      els.runtimeDigest.innerHTML = "<p>这里会显示当前工作区的运行态摘要。</p>";
+      els.runtimeTimeline.className = "history-timeline empty-list";
+      els.runtimeTimeline.innerHTML = "<p>这里会收最近值得关注的运行提醒。</p>";
+      els.runtimeMemory.className = "render-surface empty-surface";
+      els.runtimeMemory.innerHTML = "<p>这里会显示最近在接的话题，以及已经收拢过的旧上下文。</p>";
+      return;
+    }
+
+    const lastTerminal = runtimeSession.last_terminal_event || {};
+    const fallbackEvents = (runtimeSession.event_log || []).filter((item) => item.event_type === "llm-fallback");
+    const latestFallback = fallbackEvents[fallbackEvents.length - 1] || null;
+    const pendingApprovals = runtimeSession.pending_approvals || [];
+    const workingMemory = runtimeSession.working_memory || [];
+    const summaryMemory = runtimeSession.summary_memory || [];
+    const highlightedEvents = pickRuntimeHighlights(runtimeSession);
+    const terminalState = String(lastTerminal.terminal_state || "");
+    const resumeLabel = runtimeResumeLabel(runtimeSession.resume_from || lastTerminal.resume_from || "");
+    let focusText = "当前没有额外卡点，可以继续输入下一轮信息。";
+    if (pendingApprovals.length) {
+      focusText = `当前有 ${pendingApprovals.length} 项待确认，这一轮会先停在人工确认这里。`;
+    } else if (terminalState === "blocked") {
+      focusText = `当前先停在${resumeLabel}，补完信息或做完选择后再继续会更稳。`;
+    } else if (terminalState === "deferred") {
+      focusText = `这一轮目前先暂缓，后面可以从${resumeLabel}重新接上。`;
+    } else if (runtimeSession.runtime_status === "running") {
+      focusText = `系统正在${runtimeLoopLabel(runtimeSession.current_loop_state || "executing")}。`;
+    }
+
+    const fallbackCard = latestFallback
+      ? `
+      <article class="digest-card">
+        <span class="digest-label">最近回退</span>
+        <span class="digest-value">
+          ${inlineFormat(runtimeComponentLabel(latestFallback.payload?.component || ""))} 这一步先按本地规则继续了。${inlineFormat(
+            shortText(latestFallback.payload?.reason || "", 72)
+          )}
+        </span>
+      </article>
+    `
+      : "";
+
+    els.runtimeDigest.className = "history-digest";
+    els.runtimeDigest.innerHTML = `
+      <article class="digest-card is-calm">
+        <span class="digest-label">当前运行态</span>
+        <span class="digest-value">
+          现在是 ${inlineFormat(stageLabel(runtimeSession.runtime_status || "idle"))}，系统正停在 ${inlineFormat(
+            runtimeLoopLabel(runtimeSession.current_loop_state || "idle")
+          )}。
+        </span>
+      </article>
+      <article class="digest-card">
+        <span class="digest-label">当前卡点</span>
+        <span class="digest-value">
+          ${inlineFormat(focusText)}
+        </span>
+      </article>
+      <article class="digest-card">
+        <span class="digest-label">恢复线索</span>
+        <span class="digest-value">
+          下次会优先从 ${inlineFormat(resumeLabel)} 接着看；当前工作区累计轮次 ${inlineFormat(String(runtimeSession.turn_count || 0))}。
+        </span>
+      </article>
+      ${fallbackCard}
+    `;
+
+    if (!highlightedEvents.length) {
+      els.runtimeTimeline.className = "history-timeline empty-list";
+      els.runtimeTimeline.innerHTML = "<p>当前没有需要特别关注的运行提醒。</p>";
+    } else {
+      els.runtimeTimeline.className = "history-timeline";
+      els.runtimeTimeline.innerHTML = highlightedEvents
+        .map((item) => {
+          return `
+            <article class="timeline-item">
+              <div class="timeline-body">
+                <div class="timeline-item-head">
+                  <span class="timeline-kind">${inlineFormat(item.kind || "运行提醒")}</span>
+                  <span class="timeline-stage">${inlineFormat(item.stage || "当前阶段")}</span>
+                </div>
+                <div class="timeline-text">${inlineFormat(shortText(item.text || "", 120) || "这一步没有额外说明。")}</div>
+              </div>
+            </article>
+          `;
+        })
+        .join("");
+    }
+
+    const workingItems = workingMemory
+      .slice(-3)
+      .map((item) => renderWorkingMemoryItem(item))
+      .join("");
+    const summaryItems = summaryMemory
+      .slice(-2)
+      .map((item) => renderSummaryMemoryItem(item))
+      .join("");
+    const compressionState = runtimeSession.compression_state || {};
+    const compressedTurns = Number(compressionState.compressed_turns || 0);
+    const memoryHeadline = compressedTurns > 0
+      ? `这段会话里，已经有 ${compressedTurns} 轮较早内容被收进摘要，后续会优先带着摘要继续。`
+      : "当前上下文还比较短，系统会直接带着最近几轮继续往下看。";
+    const workingCount = workingMemory.length;
+    const summaryCount = summaryMemory.length;
+
+    els.runtimeMemory.className = "render-surface";
+    els.runtimeMemory.innerHTML = `
+      <p>${inlineFormat(memoryHeadline)}</p>
+      <p>当前案例：<code>${inlineFormat(runtimeSession.active_case_id || "未设置")}</code>。最近保留 ${inlineFormat(
+        String(workingCount)
+      )} 条近程线索，已收拢 ${inlineFormat(String(summaryCount))} 段旧上下文。</p>
+      <h3>最近在接什么</h3>
+      ${
+        workingItems
+          ? `<ul class="runtime-memory-list">${workingItems}</ul>`
+          : "<p>当前还没有近程线索。</p>"
+      }
+      <h3>之前收过什么</h3>
+      ${
+        summaryItems
+          ? `<ul class="runtime-memory-list">${summaryItems}</ul>`
+          : "<p>当前还没有需要收拢的旧上下文。</p>"
+      }
     `;
   }
 
@@ -1411,7 +1848,7 @@ WEB_DEMO_JS = """\
     });
   }
 
-  function renderCaseMeta(casePayload) {
+  function renderCaseMeta(casePayload, caseRuntime) {
     if (!casePayload) {
       els.cardMeta.innerHTML = "";
       return;
@@ -1422,11 +1859,21 @@ WEB_DEMO_JS = """\
       `<span class="pill">${inlineFormat(stageLabel(casePayload.workflow_state))}</span>`,
       `<span class="pill">${inlineFormat(outputKindLabel(casePayload.output_kind))}</span>`,
     ];
+    if (caseRuntime && caseRuntime.fallback_active) {
+      pills.push(
+        `<span class="pill">已回退：${inlineFormat((caseRuntime.fallback_components || []).join(" / "))}</span>`
+      );
+    }
     els.cardMeta.innerHTML = pills.join("");
   }
 
   function renderMainResponse(response) {
     state.currentCase = response.case || null;
+    state.currentCaseRuntime = response.case_runtime || null;
+    if (response.runtime_session) {
+      state.currentRuntimeSession = response.runtime_session;
+      renderRuntimePanel(state.currentRuntimeSession);
+    }
     state.activeCaseId = response.case ? response.case.case_id : state.activeCaseId;
     els.activeCaseBadge.textContent = state.activeCaseId || "未加载";
     els.systemMessage.textContent = response.message || "已更新当前案例。";
@@ -1435,8 +1882,8 @@ WEB_DEMO_JS = """\
       : "先给一句真实草稿。";
     renderComposerMeta();
 
-    renderCaseMeta(response.case);
-    renderCardDigest(response.case);
+    renderCaseMeta(response.case, response.case_runtime || null);
+    renderCardDigest(response.case, response.case_runtime || null);
     const renderedCard = buildMarkdownSections(response.rendered_card || "", "card");
     renderCardOutline(renderedCard.headings);
     els.cardContent.className = "render-surface";
@@ -1452,6 +1899,11 @@ WEB_DEMO_JS = """\
     if (response.runtime_session && response.runtime_session.turn_count != null) {
       statusBits.push(
         `<span class="pill">轮次：${inlineFormat(String(response.runtime_session.turn_count))}</span>`
+      );
+    }
+    if (response.case_runtime && response.case_runtime.fallback_active) {
+      statusBits.push(
+        `<span class="pill">模型已回退：${inlineFormat(String(response.case_runtime.fallback_count || 0))} 项</span>`
       );
     }
     els.statusPills.innerHTML = statusBits.join("");
@@ -1474,35 +1926,39 @@ WEB_DEMO_JS = """\
 
     if (!state.activeCaseId) {
       state.currentCase = null;
+      state.currentCaseRuntime = null;
+      state.currentRuntimeSession = null;
       els.activeCaseBadge.textContent = "未加载";
       els.heroTitle.textContent = "先给一句真实草稿。";
       els.statusPills.innerHTML = "";
       els.cardMeta.innerHTML = "";
       renderComposerMeta();
       renderCardOutline([]);
-      renderCardDigest(null);
+      renderCardDigest(null, null);
       els.cardContent.className = "render-surface empty-surface";
       els.cardContent.innerHTML = "<p>这里会显示当前案例的主卡片。</p>";
       renderHistoryTimeline(null);
       renderHistoryDigest(null);
       els.historyContent.className = "render-surface empty-surface";
       els.historyContent.innerHTML = "<p>选中案例后，这里会显示历史记录。</p>";
-      await loadApprovals();
+      renderRuntimePanel(null);
+      await Promise.all([loadRuntimeSession(), loadApprovals()]);
       return;
     }
 
     if (reloadActiveCase) {
-      await Promise.all([loadCase(state.activeCaseId), loadHistory(), loadApprovals()]);
+      await Promise.all([loadCase(state.activeCaseId), loadHistory(), loadRuntimeSession(), loadApprovals()]);
       return;
     }
 
-    await Promise.all([loadHistory(), loadApprovals()]);
+    await Promise.all([loadHistory(), loadRuntimeSession(), loadApprovals()]);
   }
 
   async function loadCase(caseId) {
     const payload = await request(`/cases/${encodeURIComponent(caseId)}`);
     renderMainResponse({
       case: payload.case,
+      case_runtime: payload.case_runtime || null,
       rendered_card: payload.rendered_card,
       message: "已切换到当前案例。",
       workspace: { workspace_id: state.workspaceId },
@@ -1519,6 +1975,14 @@ WEB_DEMO_JS = """\
     renderHistoryDigest(payload.history || null);
     els.historyContent.className = "render-surface";
     els.historyContent.innerHTML = renderMarkdownish(payload.rendered_history || "");
+  }
+
+  async function loadRuntimeSession() {
+    const payload = await request(
+      `/workspaces/${encodeURIComponent(state.workspaceId)}/runtime/session`
+    );
+    state.currentRuntimeSession = payload.runtime_session || null;
+    renderRuntimePanel(state.currentRuntimeSession);
   }
 
   async function loadApprovals() {
@@ -1568,6 +2032,41 @@ WEB_DEMO_JS = """\
     });
   }
 
+  async function seedWorkspaceDemo() {
+    const payload = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/demo-seed`, {
+      method: "POST",
+      body: JSON.stringify({ scenario_count: 3 }),
+    });
+    if (payload.workspace) {
+      renderWorkspaceMeta(payload.workspace);
+    }
+    if (payload.cases) {
+      state.recentCases = payload.cases.recent_cases || [];
+      state.activeCaseId = payload.cases.active_case_id || "";
+      renderRecentCases();
+    }
+    renderMainResponse({
+      case: payload.case || null,
+      case_runtime: payload.case_runtime || null,
+      rendered_card: payload.rendered_card || "",
+      message: payload.message || "已装载示例案例。",
+      workspace: payload.workspace || { workspace_id: state.workspaceId },
+      runtime_session: payload.runtime_session || null,
+    });
+    await Promise.all([loadHistory(), loadRuntimeSession(), loadApprovals()]);
+
+    const generation = payload.seed_result?.generation || {};
+    if (generation.fallback_used) {
+      showToast("已装载示例案例，当前先使用内置样本。");
+      return;
+    }
+    if (generation.generator_name === "llm") {
+      showToast("已装载模型生成的示例案例。");
+      return;
+    }
+    showToast("已装载示例案例。");
+  }
+
   async function switchCase(caseId) {
     const payload = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/active-case`, {
       method: "POST",
@@ -1580,12 +2079,13 @@ WEB_DEMO_JS = """\
     renderRecentCases();
     renderMainResponse({
       case: payload.case,
+      case_runtime: payload.case_runtime || null,
       rendered_card: payload.rendered_card,
       message: "已切换到当前案例。",
       workspace: payload.workspace || { workspace_id: state.workspaceId },
       runtime_session: null,
     });
-    await Promise.all([loadHistory(), loadApprovals()]);
+    await Promise.all([loadHistory(), loadRuntimeSession(), loadApprovals()]);
     showToast("已切换到所选案例。");
   }
 
@@ -1653,6 +2153,7 @@ WEB_DEMO_JS = """\
         document.querySelectorAll(".detail-tab").forEach((tab) => tab.classList.remove("is-active"));
         button.classList.add("is-active");
         els.historyPanel.classList.toggle("is-hidden", target !== "history");
+        els.runtimePanel.classList.toggle("is-hidden", target !== "runtime");
         els.approvalsPanel.classList.toggle("is-hidden", target !== "approvals");
       });
     });
@@ -1675,6 +2176,21 @@ WEB_DEMO_JS = """\
         showToast(`已载入工作区：${workspaceId}`);
       } catch (error) {
         showToast(error.message || "工作区载入失败", true);
+      }
+    });
+
+    els.seedWorkspaceButton.addEventListener("click", async () => {
+      const workspaceId = els.workspaceIdInput.value.trim() || "demo";
+      setLoading(els.seedWorkspaceButton, true);
+      try {
+        state.workspaceId = workspaceId;
+        writeWorkspaceIdToUrl(workspaceId);
+        els.workspaceIdInput.value = workspaceId;
+        await seedWorkspaceDemo();
+      } catch (error) {
+        showToast(error.message || "示例装载失败", true);
+      } finally {
+        setLoading(els.seedWorkspaceButton, false);
       }
     });
 
@@ -1702,6 +2218,15 @@ WEB_DEMO_JS = """\
         showToast("已刷新审批。");
       } catch (error) {
         showToast(error.message || "审批刷新失败", true);
+      }
+    });
+
+    els.refreshRuntimeButton.addEventListener("click", async () => {
+      try {
+        await loadRuntimeSession();
+        showToast("已刷新运行态。");
+      } catch (error) {
+        showToast(error.message || "运行态刷新失败", true);
       }
     });
 

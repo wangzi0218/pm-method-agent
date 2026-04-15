@@ -137,6 +137,8 @@
 
 这样可以更自然地接入各种兼容 OpenAI 格式的模型服务。
 
+如果模型服务暂时不可用，例如 `base_url` 不可达、超时、返回异常内容，当前实现会自动回退到本地规则链路继续完成这一轮分析，而不是直接把整轮会话打成失败。这个降级现在已经覆盖回复解释、前置收敛和文案增强三个入口。
+
 ## 适用场景
 
 - 需求刚被提出，但问题定义仍然模糊
@@ -231,6 +233,15 @@ PYTHONPATH=src python3 -m pm_method_agent.cli rules \
 PYTHONPATH=src python3 -m pm_method_agent.cli tool --list
 ```
 
+如果你想看当前工作区的 runtime session、工作记忆、摘要记忆和压缩状态：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli runtime \
+  --workspace-id demo
+```
+
+如果这一轮发生过模型降级，runtime event log 里也会留下 `llm-fallback` 记录，方便后面排查是回复解释、前置收敛还是文案增强没有走到模型增强路径。
+
 看某一个工具的参数契约：
 
 ```bash
@@ -280,6 +291,8 @@ export PMMA_LLM_BASE_URL=https://api.deepseek.com
 export PMMA_LLM_API_KEY=your-api-key
 export PMMA_LLM_MODEL=deepseek-chat
 ```
+
+启动本地网页后，如果你只是想先看一眼整体体验，不想自己手工编几轮输入，现在也可以直接点网页里的 `装载示例`。这一组示例会优先尝试由当前模型生成；如果模型暂时不可用，会自动回退到仓库内置样本。
 
 更完整的入口、HTTP 示例和接入方式，建议直接看：
 
