@@ -116,6 +116,7 @@ def create_case(
     case_state.metadata[SESSION_LAST_GATE_CHOICE_KEY] = None
     case_state.metadata[SESSION_LAST_REPLY_PARSER_KEY] = None
     case_state.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = initial_role_relationships
+    _record_reply_interpreter_enhancement(case_state, initial_reply_analysis)
     case_state.metadata["llm_runtime"] = get_llm_runtime_status()
     if project_profile is not None:
         project_profile_id = getattr(project_profile, "project_profile_id", None)
@@ -240,6 +241,7 @@ def reply_to_case(
     next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.inferred_gate_choice
     next_case.metadata[SESSION_LAST_REPLY_PARSER_KEY] = reply_analysis.parser_name
     next_case.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = role_relationships
+    _record_reply_interpreter_enhancement(next_case, reply_analysis)
     next_case.metadata["llm_runtime"] = get_llm_runtime_status()
     next_case.metadata["show_case_id"] = True
     active_store.save(next_case)
@@ -390,6 +392,18 @@ def _build_gate_outcome_case(
 
 def _empty_note_buckets() -> Dict[str, list[str]]:
     return {bucket_key: [] for bucket_key in NOTE_BUCKET_KEYS}
+
+
+def _record_reply_interpreter_enhancement(case_state: CaseState, reply_analysis: ReplyAnalysis) -> None:
+    enhancements = case_state.metadata.get("llm_enhancements")
+    if not isinstance(enhancements, dict):
+        enhancements = {}
+    enhancements["reply-interpreter"] = {
+        "engine": reply_analysis.parser_name,
+        "fallback_used": reply_analysis.fallback_used,
+        "fallback_reason": reply_analysis.fallback_reason,
+    }
+    case_state.metadata["llm_enhancements"] = enhancements
 
 
 def _merge_note_buckets(

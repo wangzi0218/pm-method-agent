@@ -21,6 +21,9 @@ class CaseCopyUpdate:
     normalized_summary: str = ""
     blocking_reason: str = ""
     next_actions: list[str] | None = None
+    enhancer_name: str = ""
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
 
 class CaseCopywriter(Protocol):
@@ -42,11 +45,15 @@ class LLMCaseCopywriter:
             return CaseCopyUpdate()
 
         request = _build_copy_request(case_state)
-        response = self._adapter.generate(request)
         try:
+            response = self._adapter.generate(request)
             payload = json.loads(response.content)
-        except json.JSONDecodeError:
-            return CaseCopyUpdate()
+        except Exception as exc:
+            return CaseCopyUpdate(
+                enhancer_name="llm-fallback",
+                fallback_used=True,
+                fallback_reason=_render_copywriter_fallback_reason(exc),
+            )
         return _normalize_copy_payload(payload)
 
 
@@ -68,14 +75,21 @@ def apply_case_copywriting(
         return case_state
 
     update = active_copywriter.enhance(case_state)
+    if update.enhancer_name:
+        case_state.metadata["copywriter"] = update.enhancer_name
+        _record_llm_enhancement(
+            case_state,
+            component="copywriter",
+            engine=update.enhancer_name,
+            fallback_used=update.fallback_used,
+            fallback_reason=update.fallback_reason,
+        )
     if update.normalized_summary:
         case_state.normalized_summary = update.normalized_summary
     if update.blocking_reason:
         case_state.blocking_reason = update.blocking_reason
     if update.next_actions:
         case_state.next_actions = list(update.next_actions)
-    if update.normalized_summary or update.blocking_reason or update.next_actions:
-        case_state.metadata["copywriter"] = "llm"
     return case_state
 
 
@@ -172,6 +186,7 @@ def _normalize_copy_payload(payload: object) -> CaseCopyUpdate:
         normalized_summary=normalized_summary,
         blocking_reason=blocking_reason,
         next_actions=next_actions,
+        enhancer_name="llm",
     )
 
 
@@ -200,3 +215,29 @@ def _polish_copy_text(text: str) -> str:
     while "  " in polished:
         polished = polished.replace("  ", " ")
     return polished
+
+
+def _render_copywriter_fallback_reason(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
+
+
+def _record_llm_enhancement(
+    case_state: CaseState,
+    *,
+    component: str,
+    engine: str,
+    fallback_used: bool,
+    fallback_reason: str,
+) -> None:
+    enhancements = case_state.metadata.get("llm_enhancements")
+    if not isinstance(enhancements, dict):
+        enhancements = {}
+    enhancements[component] = {
+        "engine": engine,
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+    }
+    case_state.metadata["llm_enhancements"] = enhancements

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Protocol
 
 from pm_method_agent.llm_adapter import (
@@ -37,6 +37,8 @@ class ReplyAnalysis:
     inferred_gate_choice: Optional[str]
     parser_name: str
     parser_confidence: str = "medium"
+    fallback_used: bool = False
+    fallback_reason: str = ""
     raw_payload: Dict[str, object] = field(default_factory=dict)
 
 
@@ -116,11 +118,15 @@ class LLMReplyInterpreter:
         previous_case: Optional[CaseState] = None,
     ) -> ReplyAnalysis:
         request = _build_interpretation_request(reply_text, previous_case)
-        response = self._adapter.generate(request)
         try:
+            response = self._adapter.generate(request)
             payload = json.loads(response.content)
-        except json.JSONDecodeError:
-            return self._fallback.analyze_reply(reply_text, previous_case=previous_case)
+        except Exception as exc:
+            return _build_fallback_reply_analysis(
+                self._fallback.analyze_reply(reply_text, previous_case=previous_case),
+                parser_name="llm-fallback",
+                reason=_render_fallback_reason(exc),
+            )
 
         context_updates = _normalize_context_updates(payload.get("context_updates", {}))
         if "target_user_roles" in context_updates:
@@ -133,7 +139,11 @@ class LLMReplyInterpreter:
         role_relationships = _normalize_role_relationships(payload.get("role_relationships", {}))
 
         if not context_updates and not categories and not gate_choice and not any(role_relationships.values()):
-            return self._fallback.analyze_reply(reply_text, previous_case=previous_case)
+            return _build_fallback_reply_analysis(
+                self._fallback.analyze_reply(reply_text, previous_case=previous_case),
+                parser_name="llm-fallback",
+                reason="llm-empty-result",
+            )
 
         if not categories:
             categories = _classify_reply_categories(reply_text.strip(), context_updates)
@@ -184,12 +194,11 @@ class HybridReplyInterpreter:
             ),
             categories=_merge_categories(heuristic_result.categories, llm_result.categories),
             inferred_gate_choice=llm_result.inferred_gate_choice or heuristic_result.inferred_gate_choice,
-            parser_name="hybrid",
-            parser_confidence=llm_result.parser_confidence,
-            raw_payload={
-                "heuristic": heuristic_result.raw_payload,
-                "llm": llm_result.raw_payload,
-            },
+            parser_name="hybrid-fallback" if llm_result.fallback_used else "hybrid",
+            parser_confidence=heuristic_result.parser_confidence if llm_result.fallback_used else llm_result.parser_confidence,
+            fallback_used=llm_result.fallback_used,
+            fallback_reason=llm_result.fallback_reason,
+            raw_payload=_build_hybrid_raw_payload(heuristic_result, llm_result),
         )
 
 
@@ -341,6 +350,46 @@ def _normalize_role_relationships(payload: object) -> Dict[str, List[str]]:
             if rendered and rendered not in normalized[key]:
                 normalized[key].append(rendered)
     return normalized
+
+
+def _build_fallback_reply_analysis(
+    fallback_result: ReplyAnalysis,
+    *,
+    parser_name: str,
+    reason: str,
+) -> ReplyAnalysis:
+    raw_payload = dict(fallback_result.raw_payload)
+    raw_payload["fallback_reason"] = reason
+    raw_payload["fallback_parser"] = fallback_result.parser_name
+    return replace(
+        fallback_result,
+        parser_name=parser_name,
+        parser_confidence="low",
+        fallback_used=True,
+        fallback_reason=reason,
+        raw_payload=raw_payload,
+    )
+
+
+def _render_fallback_reason(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
+
+
+def _build_hybrid_raw_payload(
+    heuristic_result: ReplyAnalysis,
+    llm_result: ReplyAnalysis,
+) -> Dict[str, object]:
+    payload: Dict[str, object] = {
+        "heuristic": heuristic_result.raw_payload,
+        "llm": llm_result.raw_payload,
+    }
+    if llm_result.fallback_used:
+        payload["fallback_reason"] = llm_result.fallback_reason
+        payload["fallback_parser"] = str(llm_result.raw_payload.get("fallback_parser", "")).strip() or llm_result.parser_name
+    return payload
 
 
 def _merge_context_updates(primary: Dict[str, object], secondary: Dict[str, object]) -> Dict[str, object]:

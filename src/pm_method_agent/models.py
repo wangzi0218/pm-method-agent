@@ -93,6 +93,9 @@ class PreFramingResult:
     candidate_directions: List[PreFramingDirection] = field(default_factory=list)
     priority_questions: List[str] = field(default_factory=list)
     recommended_direction_id: str = ""
+    generator_name: str = "heuristic"
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -101,6 +104,9 @@ class PreFramingResult:
             "candidate_directions": [item.to_dict() for item in self.candidate_directions],
             "priority_questions": self.priority_questions,
             "recommended_direction_id": self.recommended_direction_id,
+            "generator_name": self.generator_name,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
         }
 
     @classmethod
@@ -114,6 +120,9 @@ class PreFramingResult:
             ],
             priority_questions=list(payload.get("priority_questions", [])),
             recommended_direction_id=str(payload.get("recommended_direction_id", "")),
+            generator_name=str(payload.get("generator_name", "heuristic")),
+            fallback_used=bool(payload.get("fallback_used", False)),
+            fallback_reason=str(payload.get("fallback_reason", "")),
         )
 
 
@@ -196,6 +205,9 @@ class RuntimeSession:
     pending_approvals: List[Dict[str, object]] = field(default_factory=list)
     approval_ledger: List[Dict[str, object]] = field(default_factory=list)
     execution_ledger: List[Dict[str, object]] = field(default_factory=list)
+    raw_history: List[Dict[str, object]] = field(default_factory=list)
+    working_memory: List[Dict[str, object]] = field(default_factory=list)
+    summary_memory: List[Dict[str, object]] = field(default_factory=list)
     last_terminal_event: Dict[str, object] = field(default_factory=dict)
     children_agent_ids: List[str] = field(default_factory=list)
     event_log: List[Dict[str, object]] = field(default_factory=list)
@@ -218,6 +230,9 @@ class RuntimeSession:
             "pending_approvals": self.pending_approvals,
             "approval_ledger": self.approval_ledger,
             "execution_ledger": self.execution_ledger,
+            "raw_history": self.raw_history,
+            "working_memory": self.working_memory,
+            "summary_memory": self.summary_memory,
             "last_terminal_event": self.last_terminal_event,
             "children_agent_ids": self.children_agent_ids,
             "event_log": self.event_log,
@@ -242,6 +257,9 @@ class RuntimeSession:
             pending_approvals=list(payload.get("pending_approvals", [])),
             approval_ledger=list(payload.get("approval_ledger", [])),
             execution_ledger=list(payload.get("execution_ledger", [])),
+            raw_history=list(payload.get("raw_history", [])),
+            working_memory=list(payload.get("working_memory", [])),
+            summary_memory=list(payload.get("summary_memory", [])),
             last_terminal_event=dict(payload.get("last_terminal_event", {})),
             children_agent_ids=list(payload.get("children_agent_ids", [])),
             event_log=list(payload.get("event_log", [])),

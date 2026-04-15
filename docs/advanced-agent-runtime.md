@@ -43,6 +43,14 @@
 - prompt 分层治理
 - sub-agent 生命周期编排
 
+不过从当前仓库状态看，运行时已经不再只是空骨架：
+
+- 已有最小 `context budget`
+- 已开始把历史分成 `raw history / working memory / summary memory`
+- 已能通过 CLI / HTTP 直接观察 runtime session、压缩状态和最近工作记忆
+- 已能在模型服务不可用时自动回退到本地规则，并把降级事件写进 runtime event log
+- 已开始把回复解释、前置收敛、文案增强的降级状态收敛到统一案例元数据
+
 ## 一句话定义
 
 高级 agent runtime 的目标，不是让系统“看起来更像 agent”，而是让系统在复杂交互里仍然保持：

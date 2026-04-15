@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Dict, List, Optional, Protocol
 
 from pm_method_agent.llm_adapter import (
@@ -216,16 +217,29 @@ class LLMPreFramingGenerator:
         fallback_result: PreFramingResult,
     ) -> PreFramingResult:
         request = _build_pre_framing_request(case_state, fallback_result)
-        response = self._adapter.generate(request)
         try:
+            response = self._adapter.generate(request)
             payload = json.loads(response.content)
-        except json.JSONDecodeError:
-            return fallback_result
+        except Exception as exc:
+            return _build_pre_framing_fallback_result(
+                fallback_result,
+                generator_name="llm-fallback",
+                reason=_render_pre_framing_fallback_reason(exc),
+            )
 
         enhanced_result = _normalize_pre_framing_payload(payload, fallback_result)
         if not enhanced_result.candidate_directions:
-            return fallback_result
-        return enhanced_result
+            return _build_pre_framing_fallback_result(
+                fallback_result,
+                generator_name="llm-fallback",
+                reason="llm-empty-result",
+            )
+        return replace(
+            enhanced_result,
+            generator_name="llm",
+            fallback_used=False,
+            fallback_reason="",
+        )
 
 
 def should_trigger_pre_framing(case_state: CaseState) -> bool:
@@ -458,7 +472,29 @@ def _normalize_pre_framing_payload(
         candidate_directions=directions,
         priority_questions=priority_questions,
         recommended_direction_id=recommended_direction_id,
+        generator_name="llm",
     )
+
+
+def _build_pre_framing_fallback_result(
+    fallback_result: PreFramingResult,
+    *,
+    generator_name: str,
+    reason: str,
+) -> PreFramingResult:
+    return replace(
+        fallback_result,
+        generator_name=generator_name,
+        fallback_used=True,
+        fallback_reason=reason,
+    )
+
+
+def _render_pre_framing_fallback_reason(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return type(exc).__name__
 
 
 def _has_ambiguity_signal(text: str, lowered: str) -> bool:

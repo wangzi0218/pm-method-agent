@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from pm_method_agent.models import AnalyzerFinding, CaseState, WorkspaceState
+from pm_method_agent.models import AnalyzerFinding, CaseState, RuntimeSession, WorkspaceState
 from pm_method_agent.prompting import PromptComposition
 from pm_method_agent.rule_loader import LoadedRuleSet
 from pm_method_agent.runtime_config import get_llm_runtime_status
@@ -108,7 +108,26 @@ def render_case_state(case_state: CaseState, output_format: str = "markdown") ->
     return _render_markdown(case_state)
 
 
+def build_case_runtime_payload(case_state: CaseState) -> dict:
+    llm_runtime = case_state.metadata.get("llm_runtime")
+    llm_enhancements = case_state.metadata.get("llm_enhancements", {})
+    if not isinstance(llm_runtime, dict):
+        llm_runtime = get_llm_runtime_status()
+    if not isinstance(llm_enhancements, dict):
+        llm_enhancements = {}
+    fallback_components = _collect_llm_fallback_components(llm_enhancements)
+    return {
+        "summary": _runtime_summary(case_state),
+        "llm_runtime": llm_runtime,
+        "llm_enhancements": llm_enhancements,
+        "fallback_components": fallback_components,
+        "fallback_count": len(fallback_components),
+        "fallback_active": bool(fallback_components),
+    }
+
+
 def build_case_history_payload(case_state: CaseState) -> dict:
+    case_runtime = build_case_runtime_payload(case_state)
     return {
         "case_id": case_state.case_id,
         "workflow_state": case_state.workflow_state,
@@ -120,6 +139,8 @@ def build_case_history_payload(case_state: CaseState) -> dict:
         "last_resume_stage": case_state.metadata.get("last_resume_stage"),
         "last_gate_choice": case_state.metadata.get("last_gate_choice"),
         "last_reply_parser": case_state.metadata.get("last_reply_parser"),
+        "case_runtime": case_runtime,
+        "llm_enhancements": case_runtime.get("llm_enhancements", {}),
     }
 
 
@@ -172,6 +193,84 @@ def render_workspace_overview(workspace_state: WorkspaceState, recent_cases: lis
         is_active = "（当前）" if item.get("case_id") == active_case_id else ""
         lines.append(f"- {index}. `{item.get('case_id')}` {is_active} / {stage} / {workflow_state}")
         lines.append(f"  判断：{item.get('summary', '')}")
+    return "\n".join(lines)
+
+
+def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
+    return runtime_session.to_dict()
+
+
+def render_runtime_session(runtime_session: RuntimeSession, output_format: str = "markdown") -> str:
+    payload = build_runtime_session_payload(runtime_session)
+    if output_format == "json":
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+    if output_format != "markdown":
+        raise ValueError("Unsupported format. Use 'markdown' or 'json'.")
+
+    compression_state = payload.get("compression_state") or {}
+    context_budget = payload.get("context_budget") or {}
+    working_memory = payload.get("working_memory") or []
+    summary_memory = payload.get("summary_memory") or []
+    raw_history = payload.get("raw_history") or []
+    last_terminal = payload.get("last_terminal_event") or {}
+
+    lines: List[str] = []
+    lines.append("# PM Method Agent Runtime Session")
+    lines.append("")
+    lines.append(f"- 会话编号：`{payload.get('session_id', '')}`")
+    lines.append(f"- 工作区：`{payload.get('workspace_id', '')}`")
+    lines.append(f"- 当前案例：`{payload.get('active_case_id', '') or '未设置'}`")
+    lines.append(f"- 运行状态：`{payload.get('runtime_status', '') or 'idle'}`")
+    lines.append(f"- 当前循环：`{payload.get('current_loop_state', '') or 'idle'}`")
+    lines.append(f"- 轮次计数：`{payload.get('turn_count', 0)}`")
+    lines.append(f"- 最近恢复点：`{payload.get('resume_from', '') or '无'}`")
+    lines.append("")
+    lines.append("## 上下文预算")
+    lines.append(f"- 原始历史预算：`{context_budget.get('raw_history_budget', 0)}`")
+    lines.append(f"- 工作记忆预算：`{context_budget.get('working_memory_budget', 0)}`")
+    lines.append(f"- 摘要记忆预算：`{context_budget.get('summary_memory_budget', 0)}`")
+    lines.append("")
+    lines.append("## 压缩状态")
+    lines.append(f"- 状态：`{compression_state.get('status', 'not-needed')}`")
+    lines.append(f"- 已压缩轮次：`{compression_state.get('compressed_turns', 0)}`")
+    lines.append(f"- 最近压缩到：`{compression_state.get('last_compression_turn', 0)}`")
+    lines.append(f"- 原始历史保留：`{compression_state.get('raw_history_size', len(raw_history))}`")
+    lines.append(f"- 工作记忆条目：`{compression_state.get('working_memory_size', len(working_memory))}`")
+    lines.append(f"- 摘要记忆条目：`{compression_state.get('summary_memory_size', len(summary_memory))}`")
+    if compression_state.get("last_summary_id"):
+        lines.append(f"- 最近摘要编号：`{compression_state.get('last_summary_id')}`")
+    lines.append("")
+    lines.append("## 最近终止事件")
+    if last_terminal:
+        lines.append(f"- 终止语义：`{last_terminal.get('terminal_state', '')}`")
+        lines.append(f"- 动作：`{last_terminal.get('action', '')}`")
+        lines.append(f"- 输出类型：`{last_terminal.get('output_kind', '') or '无'}`")
+        lines.append(f"- 工作流状态：`{last_terminal.get('workflow_state', '') or '无'}`")
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    lines.append("## 工作记忆")
+    if working_memory:
+        for item in working_memory:
+            lines.append(
+                f"- 第 {item.get('turn_count', '?')} 轮 / `{item.get('intent', '') or 'unknown'}` / "
+                f"`{item.get('terminal_state', '') or 'unknown'}` / {item.get('message_preview', '') or '暂无'}"
+            )
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    lines.append("## 摘要记忆")
+    if summary_memory:
+        for item in summary_memory:
+            lines.append(
+                f"- `{item.get('summary_id', '')}` / 第 {item.get('from_turn', '?')} 到 {item.get('to_turn', '?')} 轮 / "
+                f"{item.get('turns', 0)} 轮"
+            )
+            highlights = item.get("highlights") or []
+            if highlights:
+                lines.append(f"  重点：{'；'.join(str(text) for text in highlights)}")
+    else:
+        lines.append("- 暂无")
     return "\n".join(lines)
 
 
@@ -407,6 +506,9 @@ def _render_history_markdown(history_payload: dict) -> str:
         )
     if history_payload.get("last_reply_parser"):
         lines.append(f"- 最近解释方式：`{history_payload['last_reply_parser']}`")
+    fallback_components = _render_llm_fallback_components(history_payload.get("llm_enhancements", {}))
+    if fallback_components:
+        lines.append(f"- 最近模型回退：`{fallback_components}`")
     lines.append("")
 
     lines.append("## 会话回合")
@@ -452,6 +554,23 @@ def _render_history_markdown(history_payload: dict) -> str:
     if not history_payload.get("resolved_gates"):
         lines.append("- 暂无")
     return "\n".join(lines)
+
+
+def _render_llm_fallback_components(payload: object) -> str:
+    return " / ".join(_collect_llm_fallback_components(payload))
+
+
+def _collect_llm_fallback_components(payload: object) -> List[str]:
+    if not isinstance(payload, dict):
+        return []
+    components: List[str] = []
+    for component, item in payload.items():
+        if not isinstance(item, dict) or not item.get("fallback_used"):
+            continue
+        rendered = str(component).strip()
+        if rendered and rendered not in components:
+            components.append(rendered)
+    return components
 
 
 def _render_context_question_card(case_state: CaseState) -> str:

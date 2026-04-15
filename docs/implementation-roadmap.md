@@ -130,7 +130,7 @@
 1. 继续打磨网页 demo 体验，优先优化卡片阅读、历史区和审批区的可读性。
 2. 继续补齐网页壳与 IDE / skill 外壳共享的交互契约细节。
 3. 打磨复杂角色关系和长尾自然语言回复解释。
-4. 开始定义更像真正 agent runtime 的执行闭环，而不是只停留在多轮问答。
+4. 继续把 query loop、恢复策略和更细的工具闭环接进统一 runtime。
 
 ## 第五阶段：复合升级
 
@@ -186,7 +186,11 @@
 - 已有最小 `runtime session`、事件日志和执行账本骨架
 - 已把事件、工具调用和 hook 调用的 id 分配收敛到单调计数器，避免截断或恢复后重复编号
 - 已补上 `failed / interrupted / cancelled` 的正式终止语义
-- 还没有完整的 query loop、事件流语义、更细的工具闭环和预算管理
+- 已补最小 `context budget` 压缩闭环，开始区分 `raw history / working memory / summary memory`
+- 已补最小 CLI / HTTP 观察口，能直接查看 runtime session、压缩状态和工作记忆
+- 已补最小 LLM 降级闭环，模型不可用时会自动回退到本地规则，并记录 `llm-fallback` 事件
+- 已开始把回复解释、前置收敛、文案增强三层的降级状态收敛到统一案例元数据
+- 还没有完整的 query loop、事件流语义和更细的工具恢复闭环
 
 建议交付物：
 

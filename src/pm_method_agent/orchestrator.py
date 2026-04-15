@@ -241,6 +241,7 @@ def _build_pre_framing_card(case_state: CaseState) -> CaseState:
     )
     case_state.metadata["next_stage"] = "context-alignment" if missing_context_questions else "problem-definition"
     case_state.metadata["continue_card_kind"] = "pre-framing"
+    _record_pre_framing_enhancement(case_state, pre_framing_result)
     return case_state
 
 
@@ -262,6 +263,18 @@ def _has_min_role_context(context_profile: Dict[str, object]) -> bool:
         return False
     normalized_roles = [str(role).strip() for role in roles if str(role).strip()]
     return len(normalized_roles) >= 2
+
+
+def _record_pre_framing_enhancement(case_state: CaseState, pre_framing_result) -> None:
+    enhancements = case_state.metadata.get("llm_enhancements")
+    if not isinstance(enhancements, dict):
+        enhancements = {}
+    enhancements["pre-framing"] = {
+        "engine": getattr(pre_framing_result, "generator_name", "heuristic"),
+        "fallback_used": bool(getattr(pre_framing_result, "fallback_used", False)),
+        "fallback_reason": str(getattr(pre_framing_result, "fallback_reason", "")),
+    }
+    case_state.metadata["llm_enhancements"] = enhancements
 
 
 def _should_request_context_before_analysis(case_state: CaseState) -> bool:

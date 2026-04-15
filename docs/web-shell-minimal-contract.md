@@ -80,6 +80,9 @@
 - `case.stage`
 - `case.workflow_state`
 - `case.output_kind`
+- `case_runtime.summary`
+- `case_runtime.fallback_active`
+- `case_runtime.fallback_components`
 - `rendered_card`
 
 第一版推荐直接展示：
@@ -92,17 +95,19 @@
 - 不是先定义一整套前端块协议
 - `rendered_card` 已经足够支撑真实试用
 
-### 3. 右侧或底部抽屉：历史与恢复
+### 3. 右侧或底部抽屉：历史、运行态与恢复
 
 这里负责：
 
 - 会话历史
+- 当前工作区的运行态摘要
 - 阶段变更
 - 已处理关口
 
 推荐接口：
 
 - `GET /cases/{case_id}/history`
+- `GET /workspaces/{workspace_id}/runtime/session`
 
 建议优先读取这些字段：
 
@@ -113,6 +118,11 @@
 - `history.stage_history`
 - `history.answered_questions`
 - `history.resolved_gates`
+- `runtime_session.runtime_status`
+- `runtime_session.current_loop_state`
+- `runtime_session.resume_from`
+- `runtime_session.last_terminal_event`
+- `runtime_session.event_log`
 - `rendered_history`
 
 第一版推荐直接展示：
@@ -204,6 +214,7 @@
 ### P1：强烈建议接
 
 - `rendered_history`
+- `case_runtime`
 - `case.context_profile`
 - `case.next_actions`
 - `case.decision_gates`
@@ -230,6 +241,12 @@
 3. 主卡片正文最后再拆
 
 不要反过来一上来就把中间主卡片完全拆掉。
+
+另外，网页壳现在更适合直接消费 `case_runtime`，而不是自己去拆 `case.metadata`：
+
+- `case_runtime.summary` 适合顶栏或状态条
+- `case_runtime.fallback_active` 适合做轻提示
+- `case_runtime.fallback_components` 适合说明这轮是回复解释、前置收敛还是文案增强回退到了本地规则
 
 ## 当前不建议的网页壳做法
 

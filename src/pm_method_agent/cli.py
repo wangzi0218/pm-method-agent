@@ -10,9 +10,13 @@ from pm_method_agent.http_service import run_http_server
 from pm_method_agent.orchestrator import run_analysis_with_context
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.renderers import (
+    build_case_history_payload,
+    build_case_runtime_payload,
+    build_runtime_session_payload,
     build_workspace_cases_payload,
     render_case_history,
     render_rule_diagnostics,
+    render_runtime_session,
     render_case_state,
     render_workspace_overview,
 )
@@ -20,6 +24,7 @@ from pm_method_agent.runtime_tools import RuntimeToolRegistry
 from pm_method_agent.rule_loader import load_rule_set
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_policy import load_runtime_policy
+from pm_method_agent.runtime_session_service import default_runtime_session_store, get_or_create_runtime_session
 from pm_method_agent.agent_shell import PMMethodAgentShell
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 from pm_method_agent.workspace_service import (
@@ -159,6 +164,9 @@ def build_session_parser() -> argparse.ArgumentParser:
     approvals_parser = subparsers.add_parser("approvals", help="查看当前工作区待确认的运行时操作。")
     approvals_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
 
+    runtime_parser = subparsers.add_parser("runtime", help="查看当前工作区的运行时状态与压缩记忆。")
+    runtime_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+
     approve_parser = subparsers.add_parser("approve", help="批准一个待确认操作并继续执行。")
     approve_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
     approve_parser.add_argument("approval_id", help="待确认操作编号。")
@@ -260,7 +268,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         context_profile=context_profile,
         show_case_id=bool(args.case_id),
     )
-    print(render_case_state(case_state, output_format=args.format))
+    if args.format == "json":
+        print(json.dumps(_build_case_cli_payload(case_state), ensure_ascii=False, indent=2))
+    else:
+        print(render_case_state(case_state, output_format=args.format))
     return 0
 
 
@@ -271,6 +282,7 @@ def _run_session_command(argv: List[str]) -> int:
     workspace_store = default_workspace_store(args.store_dir)
     agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
     local_tools = RuntimeToolRegistry(base_dir=args.store_dir)
+    runtime_store = default_runtime_session_store(args.store_dir)
 
     try:
         if args.command == "start":
@@ -327,6 +339,7 @@ def _run_session_command(argv: List[str]) -> int:
                             {
                                 "workspace": workspace.to_dict(),
                                 "case": case_state.to_dict(),
+                                "case_runtime": build_case_runtime_payload(case_state),
                                 "rendered_card": render_case_state(case_state),
                             },
                             ensure_ascii=False,
@@ -376,6 +389,9 @@ def _run_session_command(argv: List[str]) -> int:
                             "workspace": response.workspace.to_dict(),
                             "runtime_session": response.runtime_session.to_dict(),
                             "case": response.case_state.to_dict() if response.case_state else None,
+                            "case_runtime": (
+                                build_case_runtime_payload(response.case_state) if response.case_state else None
+                            ),
                             "project_profile": (
                                 response.project_profile.to_dict() if response.project_profile else None
                             ),
@@ -420,6 +436,16 @@ def _run_session_command(argv: List[str]) -> int:
                         reason = str(violation.get("reason", "")).strip()
                         if reason:
                             print(f"  原因：{reason}")
+            return 0
+        elif args.command == "runtime":
+            runtime_session = get_or_create_runtime_session(
+                args.workspace_id,
+                store=runtime_store,
+            )
+            if args.format == "json":
+                print(json.dumps(build_runtime_session_payload(runtime_session), ensure_ascii=False, indent=2))
+            else:
+                print(render_runtime_session(runtime_session))
             return 0
         elif args.command == "approve":
             result = local_tools.approve_pending_approval(
@@ -605,10 +631,34 @@ def _run_session_command(argv: List[str]) -> int:
         return 1
 
     if args.command == "history":
-        print(render_case_history(case_state, output_format=args.format))
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "history": build_case_history_payload(case_state),
+                        "case_runtime": build_case_runtime_payload(case_state),
+                        "rendered_history": render_case_history(case_state),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print(render_case_history(case_state, output_format=args.format))
     else:
-        print(render_case_state(case_state, output_format=args.format))
+        if args.format == "json":
+            print(json.dumps(_build_case_cli_payload(case_state), ensure_ascii=False, indent=2))
+        else:
+            print(render_case_state(case_state, output_format=args.format))
     return 0
+
+
+def _build_case_cli_payload(case_state) -> dict:
+    return {
+        "case": case_state.to_dict(),
+        "case_runtime": build_case_runtime_payload(case_state),
+        "rendered_card": render_case_state(case_state),
+    }
 
 
 def _build_context_profile(args: argparse.Namespace) -> dict:
@@ -691,6 +741,7 @@ def _is_session_command(args_list: List[str]) -> bool:
         "serve",
         "agent",
         "approvals",
+        "runtime",
         "approve",
         "reject",
         "expire",

@@ -160,6 +160,7 @@ IDE / skill 外壳不需要像网页壳那样拆很多区块。
 ### P1：强烈建议接
 
 - `rendered_history`
+- `case_runtime`
 - `runtime_session.runtime_status`
 - `runtime_session.pending_approvals`
 - `project_profile`
@@ -179,6 +180,7 @@ IDE / skill 外壳不需要像网页壳那样拆很多区块。
 
 - 把 `message` 当成系统说明
 - 把 `rendered_card` 当成主响应
+- 如果 `case_runtime.fallback_active=true`，补一句轻提示，说明这轮有部分增强走了本地规则回退
 
 ### 情况 2：返回了 `rendered_history`
 

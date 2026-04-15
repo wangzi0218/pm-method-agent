@@ -86,6 +86,7 @@ def start_runtime_query(
     active_case_id: str = "",
     message: str,
 ) -> RuntimeSession:
+    _ensure_runtime_memory_defaults(runtime_session)
     close_incomplete_hooks(runtime_session, reason="next-query-started")
     close_incomplete_tool_calls(runtime_session, reason="next-query-started")
     runtime_session.turn_count += 1
@@ -121,6 +122,7 @@ def record_runtime_turn_classification(
     intent: str,
     active_case_id: str = "",
 ) -> RuntimeSession:
+    _ensure_runtime_memory_defaults(runtime_session)
     runtime_session.current_loop_state = "executing"
     if active_case_id:
         runtime_session.active_case_id = active_case_id
@@ -131,6 +133,30 @@ def record_runtime_turn_classification(
             "query_id": runtime_session.current_query_id,
             "intent": intent,
             "active_case_id": runtime_session.active_case_id,
+        },
+    )
+    return runtime_session
+
+
+def advance_runtime_loop_state(
+    runtime_session: RuntimeSession,
+    *,
+    loop_state: str,
+    reason: str = "",
+    payload: Optional[Dict[str, object]] = None,
+) -> RuntimeSession:
+    _ensure_runtime_memory_defaults(runtime_session)
+    previous_state = runtime_session.current_loop_state
+    runtime_session.current_loop_state = loop_state
+    append_runtime_event(
+        runtime_session,
+        "loop-state-changed",
+        {
+            "query_id": runtime_session.current_query_id,
+            "from_loop_state": previous_state,
+            "to_loop_state": loop_state,
+            "reason": reason,
+            **(payload or {}),
         },
     )
     return runtime_session
@@ -220,6 +246,7 @@ def append_runtime_event(
     event_type: str,
     payload: Optional[Dict[str, object]] = None,
 ) -> RuntimeSession:
+    _ensure_runtime_memory_defaults(runtime_session)
     event_index = _next_runtime_counter(runtime_session, "next_event_index")
     runtime_session.event_log.append(
         {
@@ -238,6 +265,7 @@ def request_tool_call(
     tool_name: str,
     request_payload: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
+    _ensure_runtime_memory_defaults(runtime_session)
     call_id = f"call-{_next_runtime_counter(runtime_session, 'next_call_index'):04d}"
     entry = {
         "call_id": call_id,
@@ -285,6 +313,7 @@ def request_runtime_approval(
     resume_from: str = "",
     violation: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
+    _ensure_runtime_memory_defaults(runtime_session)
     approval_id = f"approval-{_next_runtime_counter(runtime_session, 'next_approval_index'):04d}"
     entry = {
         "approval_id": approval_id,
@@ -394,6 +423,7 @@ def request_hook_call(
     hook_stage: str,
     request_payload: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
+    _ensure_runtime_memory_defaults(runtime_session)
     hook_call_id = f"hook-{_next_runtime_counter(runtime_session, 'next_hook_index'):04d}"
     entry = {
         "hook_call_id": hook_call_id,
@@ -678,6 +708,7 @@ def _terminate_runtime_query(
     error: Optional[Dict[str, object]] = None,
     runtime_status_after: str = "idle",
 ) -> RuntimeSession:
+    _ensure_runtime_memory_defaults(runtime_session)
     runtime_session.runtime_status = runtime_status_after
     runtime_session.current_loop_state = "idle"
     runtime_session.resume_from = resume_from
@@ -693,6 +724,15 @@ def _terminate_runtime_query(
         "workflow_state": workflow_state,
         "error": error or {},
     }
+    _record_runtime_query_memory(
+        runtime_session,
+        terminal_state=terminal_state,
+        action=action,
+        active_case_id=runtime_session.active_case_id,
+        resume_from=resume_from,
+        output_kind=output_kind,
+        workflow_state=workflow_state,
+    )
     append_runtime_event(
         runtime_session,
         "terminal-state-emitted",
@@ -700,3 +740,181 @@ def _terminate_runtime_query(
     )
     runtime_session.current_query_id = ""
     return runtime_session
+
+
+def _ensure_runtime_memory_defaults(runtime_session: RuntimeSession) -> None:
+    for key, value in DEFAULT_CONTEXT_BUDGET.items():
+        current_value = runtime_session.context_budget.get(key)
+        if not isinstance(current_value, int) or current_value <= 0:
+            runtime_session.context_budget[key] = value
+
+    runtime_session.raw_history = list(runtime_session.raw_history or [])
+    runtime_session.working_memory = list(runtime_session.working_memory or [])
+    runtime_session.summary_memory = list(runtime_session.summary_memory or [])
+
+    compression_state = dict(runtime_session.compression_state or {})
+    compression_state.setdefault("compressed_turns", 0)
+    compression_state.setdefault("last_compression_turn", 0)
+    compression_state.setdefault("status", "not-needed")
+    compression_state["raw_history_size"] = len(runtime_session.raw_history)
+    compression_state["working_memory_size"] = len(runtime_session.working_memory)
+    compression_state["summary_memory_size"] = len(runtime_session.summary_memory)
+    runtime_session.compression_state = compression_state
+
+
+def _record_runtime_query_memory(
+    runtime_session: RuntimeSession,
+    *,
+    terminal_state: str,
+    action: str,
+    active_case_id: str,
+    resume_from: str,
+    output_kind: str,
+    workflow_state: str,
+) -> None:
+    snapshot = _build_runtime_query_snapshot(
+        runtime_session,
+        terminal_state=terminal_state,
+        action=action,
+        active_case_id=active_case_id,
+        resume_from=resume_from,
+        output_kind=output_kind,
+        workflow_state=workflow_state,
+    )
+    if not snapshot:
+        return
+
+    runtime_session.raw_history.append(snapshot)
+    raw_history_budget = int(runtime_session.context_budget.get("raw_history_budget", DEFAULT_CONTEXT_BUDGET["raw_history_budget"]))
+    working_memory_budget = int(
+        runtime_session.context_budget.get("working_memory_budget", DEFAULT_CONTEXT_BUDGET["working_memory_budget"])
+    )
+    summary_memory_budget = int(
+        runtime_session.context_budget.get("summary_memory_budget", DEFAULT_CONTEXT_BUDGET["summary_memory_budget"])
+    )
+
+    overflow_count = max(0, len(runtime_session.raw_history) - raw_history_budget)
+    if overflow_count:
+        compressed_items = runtime_session.raw_history[:overflow_count]
+        runtime_session.raw_history = runtime_session.raw_history[overflow_count:]
+        summary_entry = _compress_runtime_history(
+            runtime_session,
+            compressed_items=compressed_items,
+        )
+        runtime_session.summary_memory.append(summary_entry)
+        runtime_session.summary_memory = runtime_session.summary_memory[-summary_memory_budget:]
+        runtime_session.compression_state["compressed_turns"] = int(
+            runtime_session.compression_state.get("compressed_turns", 0)
+        ) + len(compressed_items)
+        runtime_session.compression_state["last_compression_turn"] = int(
+            compressed_items[-1].get("turn_count", runtime_session.turn_count) or runtime_session.turn_count
+        )
+        runtime_session.compression_state["last_summary_id"] = summary_entry["summary_id"]
+        runtime_session.compression_state["status"] = "compressed"
+        append_runtime_event(
+            runtime_session,
+            "context-compressed",
+            {
+                "query_id": runtime_session.current_query_id,
+                "summary_id": summary_entry["summary_id"],
+                "compressed_turns": len(compressed_items),
+                "raw_history_size": len(runtime_session.raw_history),
+                "working_memory_size": min(len(runtime_session.raw_history), working_memory_budget),
+                "summary_memory_size": len(runtime_session.summary_memory),
+            },
+        )
+    else:
+        runtime_session.compression_state["status"] = (
+            "tracking" if runtime_session.raw_history else "not-needed"
+        )
+
+    runtime_session.working_memory = runtime_session.raw_history[-working_memory_budget:]
+    runtime_session.compression_state["raw_history_size"] = len(runtime_session.raw_history)
+    runtime_session.compression_state["working_memory_size"] = len(runtime_session.working_memory)
+    runtime_session.compression_state["summary_memory_size"] = len(runtime_session.summary_memory)
+
+
+def _build_runtime_query_snapshot(
+    runtime_session: RuntimeSession,
+    *,
+    terminal_state: str,
+    action: str,
+    active_case_id: str,
+    resume_from: str,
+    output_kind: str,
+    workflow_state: str,
+) -> Dict[str, object]:
+    message = ""
+    intent = ""
+    for item in reversed(runtime_session.event_log):
+        payload = item.get("payload") or {}
+        if str(payload.get("query_id", "")) != runtime_session.current_query_id:
+            continue
+        if not message and str(item.get("event_type")) == "turn-received":
+            message = str(payload.get("message", "")).strip()
+        if not intent and str(item.get("event_type")) == "turn-classified":
+            intent = str(payload.get("intent", "")).strip()
+        if message and intent:
+            break
+
+    return {
+        "entry_id": f"turn-{runtime_session.turn_count:04d}",
+        "query_id": runtime_session.current_query_id,
+        "turn_count": runtime_session.turn_count,
+        "message": message,
+        "message_preview": _short_text(message, limit=80),
+        "intent": intent,
+        "action": action,
+        "terminal_state": terminal_state,
+        "active_case_id": active_case_id,
+        "resume_from": resume_from,
+        "output_kind": output_kind,
+        "workflow_state": workflow_state,
+    }
+
+
+def _compress_runtime_history(
+    runtime_session: RuntimeSession,
+    *,
+    compressed_items: list[Dict[str, object]],
+) -> Dict[str, object]:
+    summary_id = f"summary-{_next_runtime_counter(runtime_session, 'next_summary_index'):04d}"
+    actions = _unique_non_empty(str(item.get("action", "")).strip() for item in compressed_items)
+    terminal_states = _unique_non_empty(
+        str(item.get("terminal_state", "")).strip() for item in compressed_items
+    )
+    intents = _unique_non_empty(str(item.get("intent", "")).strip() for item in compressed_items)
+    case_ids = _unique_non_empty(str(item.get("active_case_id", "")).strip() for item in compressed_items)
+    resume_points = _unique_non_empty(str(item.get("resume_from", "")).strip() for item in compressed_items)
+    highlights = [
+        f"{item.get('action', '')}/{item.get('terminal_state', '')}：{item.get('message_preview', '')}".strip("：")
+        for item in compressed_items[-3:]
+        if str(item.get("message_preview", "")).strip()
+    ]
+    return {
+        "summary_id": summary_id,
+        "from_turn": int(compressed_items[0].get("turn_count", 0) or 0),
+        "to_turn": int(compressed_items[-1].get("turn_count", 0) or 0),
+        "turns": len(compressed_items),
+        "actions": actions,
+        "terminal_states": terminal_states,
+        "intents": intents,
+        "active_case_ids": case_ids,
+        "resume_points": resume_points,
+        "highlights": highlights,
+    }
+
+
+def _short_text(value: str, limit: int = 80) -> str:
+    normalized = " ".join(str(value or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit - 1]}…"
+
+
+def _unique_non_empty(values) -> list[str]:  # type: ignore[no-untyped-def]
+    result: list[str] = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result
