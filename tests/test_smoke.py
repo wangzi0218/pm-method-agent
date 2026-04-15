@@ -1177,7 +1177,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             rendered = render_case_history(replied_case)
 
         self.assertIn("## 这段对话里说过什么", rendered)
-        self.assertIn("## 已经补上的信息", rendered)
+        self.assertIn("## 这段里已经说清的", rendered)
         self.assertIn("下次大概率会从", rendered)
 
     def test_session_service_can_use_llm_reply_interpreter(self) -> None:
@@ -4111,7 +4111,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(first_response.workspace.active_case_id, second_response.workspace.active_case_id)
-        self.assertIn("执行模块", second_response.rendered_card)
+        self.assertIn("## 我现在的判断", second_response.rendered_card)
 
     def test_agent_shell_prefers_continuing_active_case_for_follow_up_message(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4132,7 +4132,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(follow_up_response.action, "reply-case")
         self.assertEqual(first_response.workspace.active_case_id, follow_up_response.workspace.active_case_id)
-        self.assertIn("决策关口卡", follow_up_response.rendered_card)
+        self.assertIn("先把这个点定下来", follow_up_response.rendered_card)
 
     def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4273,7 +4273,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(second_response.case_state.context_profile["business_model"], "tob")
         self.assertEqual(second_response.case_state.context_profile["primary_platform"], "multi-platform")
         self.assertIn("店长", second_response.case_state.context_profile["target_user_roles"])
-        self.assertIn("继续卡", second_response.rendered_card)
+        self.assertIn("继续往下看", second_response.rendered_card)
         self.assertIn("提出者：前台", second_response.rendered_card)
         self.assertIn("结果责任人：店长", second_response.rendered_card)
         self.assertNotIn("当前产品属于企业产品、消费者产品还是内部产品？", second_response.case_state.pending_questions)

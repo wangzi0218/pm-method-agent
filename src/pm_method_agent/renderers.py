@@ -437,11 +437,7 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
-    lines.append(f"- 运行状态：`{_label_for(STAGE_LABELS, case_state.workflow_state)}`")
-    lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
-    selected_modes = case_state.metadata.get("selected_modes", [])
-    selected_mode_labels = [_label_for(MODE_LABELS, mode) for mode in selected_modes]
-    lines.append(f"- 执行模块：`{'、'.join(selected_mode_labels)}`")
+    _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 先看背景")
     if case_state.context_profile:
@@ -491,11 +487,10 @@ def _render_inline_list(items: List[str]) -> str:
 
 def _render_history_markdown(history_payload: dict) -> str:
     lines: List[str] = []
-    lines.append("# PM Method Agent 过程记录")
+    lines.append("# PM Method Agent 这段过程")
     lines.append("")
     lines.append(f"- 案例编号：`{history_payload['case_id']}`")
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, history_payload['stage'])}`")
-    lines.append(f"- 当前状态：`{_label_for(STAGE_LABELS, history_payload['workflow_state'])}`")
     if history_payload.get("last_resume_stage"):
         lines.append(
             f"- 下次大概率会从：`{_label_for(STAGE_LABELS, str(history_payload['last_resume_stage']))}`"
@@ -504,8 +499,6 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append(
             f"- 最近一次选择：`{OPTION_LABELS.get(history_payload['last_gate_choice'], history_payload['last_gate_choice'])}`"
         )
-    if history_payload.get("last_reply_parser"):
-        lines.append(f"- 这段输入最近的理解方式：`{history_payload['last_reply_parser']}`")
     fallback_components = _render_llm_fallback_components(history_payload.get("llm_enhancements", {}))
     if fallback_components:
         lines.append(f"- 最近走过本地兜底：`{fallback_components}`")
@@ -518,7 +511,7 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append("- 暂无")
     lines.append("")
 
-    lines.append("## 过程是怎么往前走的")
+    lines.append("## 这段过程是怎么推进的")
     for item in history_payload.get("stage_history", []):
         from_stage = _label_for(STAGE_LABELS, str(item.get("from_stage")))
         to_stage = _label_for(STAGE_LABELS, str(item.get("to_stage")))
@@ -535,14 +528,14 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append("- 暂无")
     lines.append("")
 
-    lines.append("## 已经补上的信息")
+    lines.append("## 这段里已经说清的")
     for item in history_payload.get("answered_questions", []):
         lines.append(f"- {item}")
     if not history_payload.get("answered_questions"):
         lines.append("- 暂无")
     lines.append("")
 
-    lines.append("## 已经做过的选择")
+    lines.append("## 这段里已经做过的选择")
     for item in history_payload.get("resolved_gates", []):
         choice = item.get("user_choice")
         choice_label = OPTION_LABELS.get(choice, choice or "未识别")
@@ -575,45 +568,45 @@ def _collect_llm_fallback_components(payload: object) -> List[str]:
 
 def _render_context_question_card(case_state: CaseState) -> str:
     lines: List[str] = []
-    lines.append("# PM Method Agent 场景补充卡")
+    lines.append("# PM Method Agent 先补场景信息")
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
-    lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
+    _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我现在的判断")
     lines.append(case_state.normalized_summary or "信息还不够，建议先补几项基础信息。")
     lines.append("")
-    lines.append("## 为什么先补")
+    lines.append("## 为什么先补这几项")
     lines.append(case_state.blocking_reason or "这几个信息会直接影响后面的判断口径。")
     lines.append("")
     lines.append("## 先补这几项")
     for question in case_state.pending_questions:
         lines.append(f"- {question}")
     lines.append("")
-    lines.append("## 补完后我再继续")
+    lines.append("## 补完后会怎么继续")
     next_stage = case_state.metadata.get("next_stage", "problem-definition")
     lines.append(f"- 我会先继续到`{_label_for(STAGE_LABELS, str(next_stage))}`。")
     lines.append("")
-    lines.append("## 下一步")
+    lines.append("## 可以先这么补")
     for action in _collect_next_actions(case_state, limit=3):
         lines.append(f"- {action}")
     return "\n".join(lines)
 
 
 def _render_block_card(case_state: CaseState) -> str:
-    title = "决策关口卡" if case_state.output_kind == "decision-gate-card" else "阶段阻塞卡"
+    title = "先把这个点定下来" if case_state.output_kind == "decision-gate-card" else "这一步先停一下"
     lines: List[str] = []
     lines.append(f"# PM Method Agent {title}")
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
-    lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
+    _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我现在的判断")
     lines.append(case_state.normalized_summary or "当前阶段暂不建议继续推进。")
     lines.append("")
-    lines.append("## 这一步先卡在这里")
+    lines.append("## 为什么先停在这里")
     lines.append(case_state.blocking_reason or "当前条件还不够，先别急着往下走。")
     lines.append("")
     if case_state.findings:
@@ -621,10 +614,10 @@ def _render_block_card(case_state: CaseState) -> str:
         for finding in case_state.findings:
             _append_finding(lines, finding)
         lines.append("")
-    lines.append("## 继续前还想先确认")
+    lines.append("## 继续前想先定这个点")
     _append_gate_items(lines, case_state, empty_message="当前没有需要立刻拍板的决策点。")
     lines.append("")
-    lines.append("## 更建议先做")
+    lines.append("## 更建议先补")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
     if case_state.unknowns:
@@ -638,16 +631,15 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
         return _render_pre_framing_card(case_state)
 
     lines: List[str] = []
-    lines.append("# PM Method Agent 继续卡")
+    lines.append("# PM Method Agent 继续往下看")
     lines.append("")
     _append_case_id(lines, case_state)
-    lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
-    lines.append(f"- 当前重点：`{_continue_card_focus(case_state)}`")
+    _append_runtime_summary_line(lines, case_state)
     lines.append("")
-    lines.append("## 当前进展")
+    lines.append("## 现在已经对到哪了")
     lines.append(case_state.normalized_summary or "基础背景已经补上，可以开始往问题本身收拢了。")
     lines.append("")
-    lines.append("## 已对齐")
+    lines.append("## 目前已经知道的")
     if case_state.context_profile:
         for key, value in case_state.context_profile.items():
             label = CONTEXT_KEY_LABELS.get(key, key)
@@ -657,7 +649,7 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
     else:
         lines.append("- 还没有明确的基础背景。")
     lines.append("")
-    lines.append("## 接下来更值得补")
+    lines.append("## 接下来更值得先补")
     for item in _collect_background_follow_up(case_state):
         lines.append(f"- {item}")
     return "\n".join(lines)
@@ -668,11 +660,11 @@ def _render_pre_framing_card(case_state: CaseState) -> str:
     assert result is not None
 
     lines: List[str] = []
-    lines.append("# PM Method Agent 继续卡")
+    lines.append("# PM Method Agent 继续往下看")
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
-    lines.append(f"- 增强模式：`{_runtime_summary(case_state)}`")
+    _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 当前判断")
     lines.append(case_state.normalized_summary or "先把这句话收一收，再继续推进。")
@@ -1101,6 +1093,13 @@ def _runtime_summary(case_state: CaseState) -> str:
     fallback_runtime = get_llm_runtime_status()
     summary = fallback_runtime.get("summary", "本地规则")
     return str(summary)
+
+
+def _append_runtime_summary_line(lines: List[str], case_state: CaseState) -> None:
+    summary = _runtime_summary(case_state)
+    if summary.strip() == "本地规则":
+        return
+    lines.append(f"- 增强模式：`{summary}`")
 
 
 def _group_unknowns(items: List[str]) -> dict[str, List[str]]:
