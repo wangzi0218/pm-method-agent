@@ -443,7 +443,7 @@ def _render_markdown(case_state: CaseState) -> str:
     selected_mode_labels = [_label_for(MODE_LABELS, mode) for mode in selected_modes]
     lines.append(f"- 执行模块：`{'、'.join(selected_mode_labels)}`")
     lines.append("")
-    lines.append("## 基础信息")
+    lines.append("## 先看背景")
     if case_state.context_profile:
         for key, value in case_state.context_profile.items():
             label = CONTEXT_KEY_LABELS.get(key, key)
@@ -453,7 +453,7 @@ def _render_markdown(case_state: CaseState) -> str:
     else:
         lines.append("- 未提供")
     lines.append("")
-    lines.append("## 输入")
+    lines.append("## 原始输入")
     lines.append(case_state.raw_input)
     lines.append("")
     lines.append("## 我现在的判断")
@@ -466,7 +466,7 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("## 这一步还想先确认")
     _append_gate_items(lines, case_state)
     lines.append("")
-    lines.append("## 更建议先做")
+    lines.append("## 更建议先补")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
     lines.append("")
@@ -491,34 +491,34 @@ def _render_inline_list(items: List[str]) -> str:
 
 def _render_history_markdown(history_payload: dict) -> str:
     lines: List[str] = []
-    lines.append("# PM Method Agent 会话历史")
+    lines.append("# PM Method Agent 过程记录")
     lines.append("")
     lines.append(f"- 案例编号：`{history_payload['case_id']}`")
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, history_payload['stage'])}`")
     lines.append(f"- 当前状态：`{_label_for(STAGE_LABELS, history_payload['workflow_state'])}`")
     if history_payload.get("last_resume_stage"):
         lines.append(
-            f"- 最近恢复阶段：`{_label_for(STAGE_LABELS, str(history_payload['last_resume_stage']))}`"
+            f"- 下次大概率会从：`{_label_for(STAGE_LABELS, str(history_payload['last_resume_stage']))}`"
         )
     if history_payload.get("last_gate_choice"):
         lines.append(
-            f"- 最近关口选择：`{OPTION_LABELS.get(history_payload['last_gate_choice'], history_payload['last_gate_choice'])}`"
+            f"- 最近一次选择：`{OPTION_LABELS.get(history_payload['last_gate_choice'], history_payload['last_gate_choice'])}`"
         )
     if history_payload.get("last_reply_parser"):
-        lines.append(f"- 最近解释方式：`{history_payload['last_reply_parser']}`")
+        lines.append(f"- 这段输入最近的理解方式：`{history_payload['last_reply_parser']}`")
     fallback_components = _render_llm_fallback_components(history_payload.get("llm_enhancements", {}))
     if fallback_components:
-        lines.append(f"- 最近模型回退：`{fallback_components}`")
+        lines.append(f"- 最近走过本地兜底：`{fallback_components}`")
     lines.append("")
 
-    lines.append("## 会话回合")
+    lines.append("## 这段对话里说过什么")
     for turn in history_payload.get("conversation_turns", []):
         lines.append(f"- [{turn.get('turn_kind', 'turn')}] {turn.get('role', 'unknown')}：{turn.get('content', '')}")
     if not history_payload.get("conversation_turns"):
         lines.append("- 暂无")
     lines.append("")
 
-    lines.append("## 阶段变更")
+    lines.append("## 过程是怎么往前走的")
     for item in history_payload.get("stage_history", []):
         from_stage = _label_for(STAGE_LABELS, str(item.get("from_stage")))
         to_stage = _label_for(STAGE_LABELS, str(item.get("to_stage")))
@@ -535,14 +535,14 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append("- 暂无")
     lines.append("")
 
-    lines.append("## 已回答问题")
+    lines.append("## 已经补上的信息")
     for item in history_payload.get("answered_questions", []):
         lines.append(f"- {item}")
     if not history_payload.get("answered_questions"):
         lines.append("- 暂无")
     lines.append("")
 
-    lines.append("## 已处理关口")
+    lines.append("## 已经做过的选择")
     for item in history_payload.get("resolved_gates", []):
         choice = item.get("user_choice")
         choice_label = OPTION_LABELS.get(choice, choice or "未识别")
@@ -845,7 +845,7 @@ def _append_unknowns(lines: List[str], case_state: CaseState) -> None:
     has_items = any(grouped_unknowns.get(group_name) for group_name in UNKNOWN_GROUP_ORDER)
     if not has_items:
         return
-    lines.append("## 后面还值得补")
+    lines.append("## 后面还可以继续补")
     for group_name in UNKNOWN_GROUP_ORDER:
         items = grouped_unknowns.get(group_name, [])
         if not items:

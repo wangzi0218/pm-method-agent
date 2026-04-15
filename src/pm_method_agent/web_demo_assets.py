@@ -770,6 +770,32 @@ button:disabled {
   padding-left: 20px;
 }
 
+.render-surface > ul:first-of-type {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 0;
+  margin: 0 0 16px;
+  list-style: none;
+}
+
+.render-surface > ul:first-of-type > li {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(61, 52, 41, 0.08);
+  border-radius: 999px;
+  background: rgba(246, 239, 227, 0.88);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.render-surface > ul:first-of-type > li code {
+  margin-left: 4px;
+}
+
 .render-surface code {
   padding: 2px 7px;
   border-radius: 999px;

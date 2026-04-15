@@ -431,7 +431,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
         rendered = render_case_state(case_state)
         self.assertIn("## 我主要看到这几个点", rendered)
-        self.assertIn("## 更建议先做", rendered)
+        self.assertIn("## 更建议先补", rendered)
         self.assertIn("### 现状与证据", rendered)
         self.assertIn("### 决策与验证", rendered)
 
@@ -1176,9 +1176,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
             )
             rendered = render_case_history(replied_case)
 
-        self.assertIn("## 会话回合", rendered)
-        self.assertIn("## 已回答问题", rendered)
-        self.assertIn("最近恢复阶段", rendered)
+        self.assertIn("## 这段对话里说过什么", rendered)
+        self.assertIn("## 已经补上的信息", rendered)
+        self.assertIn("下次大概率会从", rendered)
 
     def test_session_service_can_use_llm_reply_interpreter(self) -> None:
         adapter = StubLLMAdapter(
@@ -1428,7 +1428,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertTrue(enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_used"])
         self.assertIn("RuntimeError", enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_reason"])
         rendered_history = render_case_history(enhanced_case)
-        self.assertIn("最近模型回退", rendered_history)
+        self.assertIn("最近走过本地兜底", rendered_history)
         self.assertIn("copywriter", rendered_history)
 
     def test_llm_demo_scenario_generator_can_normalize_generated_scenarios(self) -> None:

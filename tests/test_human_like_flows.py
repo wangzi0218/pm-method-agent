@@ -51,7 +51,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIsNotNone(response.case_state)
         self.assertEqual(response.case_state.output_kind, "review-card")
         self.assertEqual(response.case_state.workflow_state, "done")
-        self.assertIn("## 后面还值得补", response.rendered_card)
+        self.assertIn("## 后面还可以继续补", response.rendered_card)
         self.assertIn("成功指标是什么", response.rendered_card)
         self.assertNotIn("输入里已经带出方案", response.rendered_card)
 
