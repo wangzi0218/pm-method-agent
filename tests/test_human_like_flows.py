@@ -33,6 +33,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(second_response.case_state.output_kind, "review-card")
         self.assertEqual(second_response.case_state.workflow_state, "done")
         self.assertIn("## 我主要看到这几个点", second_response.rendered_card)
+        self.assertIn("## 如果继续往下聊，优先补这几项", second_response.rendered_card)
 
         self.assertEqual(third_response.action, "reply-case")
         self.assertEqual(third_response.case_state.output_kind, "decision-gate-card")

@@ -7,6 +7,7 @@ from typing import Dict, Optional
 from uuid import uuid4
 
 from pm_method_agent.case_copywriter import apply_case_copywriting
+from pm_method_agent.follow_up import attach_follow_up_plan, is_follow_up_question_answered
 from pm_method_agent.models import CaseState, ProjectProfile
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis_with_context
 from pm_method_agent.project_profile_service import merge_project_profile_context
@@ -41,6 +42,14 @@ NOTE_BUCKET_KEYS = [
     "constraint_notes",
     "other_notes",
 ]
+
+NOTE_BUCKET_LABELS = {
+    "context_notes": "这轮补到的场景背景",
+    "evidence_notes": "这轮补到的现状和证据",
+    "decision_notes": "这轮补到的判断倾向",
+    "constraint_notes": "这轮补到的约束条件",
+    "other_notes": "这轮顺手补充",
+}
 
 
 @dataclass
@@ -124,6 +133,7 @@ def create_case(
         case_state.metadata["project_profile_id"] = project_profile_id
         case_state.metadata["project_profile_name"] = project_name
     case_state.metadata["show_case_id"] = True
+    case_state = attach_follow_up_plan(case_state)
     active_store.save(case_state)
     return case_state
 
@@ -188,7 +198,7 @@ def reply_to_case(
     for question in previous_case.pending_questions:
         if question in answered_questions:
             continue
-        if _is_pending_question_answered(question, merged_context, reply_analysis, reply_text.strip()):
+        if is_follow_up_question_answered(question, merged_context, reply_analysis, reply_text.strip()):
             answered_questions.append(question)
 
     resolved_gates = list(previous_case.metadata.get(SESSION_RESOLVED_GATES_KEY, []))
@@ -244,6 +254,7 @@ def reply_to_case(
     _record_reply_interpreter_enhancement(next_case, reply_analysis)
     next_case.metadata["llm_runtime"] = get_llm_runtime_status()
     next_case.metadata["show_case_id"] = True
+    next_case = attach_follow_up_plan(next_case)
     active_store.save(next_case)
     return next_case
 
@@ -259,19 +270,12 @@ def _compose_session_input(original_input: str, note_buckets: Dict[str, list[str
     if not any(note_buckets.get(bucket_key) for bucket_key in NOTE_BUCKET_KEYS):
         return original_input.strip()
     sections = []
-    bucket_labels = {
-        "context_notes": "补充场景信息",
-        "evidence_notes": "补充现状证据",
-        "decision_notes": "补充决策表达",
-        "constraint_notes": "补充限制条件",
-        "other_notes": "其他补充",
-    }
     for bucket_key in NOTE_BUCKET_KEYS:
         notes = note_buckets.get(bucket_key, [])
         if not notes:
             continue
         rendered_notes = "\n".join(f"- {note}" for note in notes if note.strip())
-        sections.append(f"{bucket_labels[bucket_key]}：\n{rendered_notes}")
+        sections.append(f"{NOTE_BUCKET_LABELS[bucket_key]}：\n{rendered_notes}")
     return f"{original_input.strip()}\n\n" + "\n\n".join(sections)
 
 
@@ -387,7 +391,7 @@ def _build_gate_outcome_case(
     case_state.next_actions = next_actions
     case_state.metadata["selected_modes"] = ["decision-challenge"]
     case_state.metadata["next_stage"] = next_stage
-    return apply_case_copywriting(case_state)
+    return apply_case_copywriting(attach_follow_up_plan(case_state))
 
 
 def _empty_note_buckets() -> Dict[str, list[str]]:
@@ -435,11 +439,15 @@ def _select_primary_note_bucket(
 ) -> str:
     if reply_analysis.inferred_gate_choice:
         return bucket_mapping["decision"]
-    if reply_analysis.context_updates or any(reply_analysis.role_relationships.values()):
-        return bucket_mapping["context"]
     for category in ["decision", "evidence", "constraint", "context", "other"]:
         if category in reply_analysis.categories:
+            if category == "context" and not (
+                reply_analysis.context_updates or any(reply_analysis.role_relationships.values())
+            ):
+                continue
             return bucket_mapping[category]
+    if reply_analysis.context_updates or any(reply_analysis.role_relationships.values()):
+        return bucket_mapping["context"]
     return bucket_mapping["other"]
 
 
@@ -513,27 +521,6 @@ def _resolve_gate_resolution_kind(recommended_option: str, user_choice: str) -> 
     if user_choice == recommended_option:
         return "accepted-recommendation"
     return "overrode-recommendation"
-
-
-def _is_pending_question_answered(
-    question: str,
-    merged_context: Dict[str, object],
-    reply_analysis: ReplyAnalysis,
-    reply_text: str,
-) -> bool:
-    del reply_analysis
-    if "企业产品、消费者产品还是内部产品" in question:
-        return bool(merged_context.get("business_model"))
-    if "主要使用平台是桌面端、移动端、小程序还是多端" in question:
-        return bool(merged_context.get("primary_platform"))
-    if "谁提出需求、谁使用产品、谁承担最终结果" in question:
-        roles = merged_context.get("target_user_roles", [])
-        normalized_roles = [str(role).strip() for role in roles] if isinstance(roles, list) else []
-        has_responsibility_signal = any(
-            keyword in reply_text for keyword in ["负责", "结果", "店长", "管理者", "负责人", "老板", "诊所管理者"]
-        )
-        return len([role for role in normalized_roles if role]) >= 2 and has_responsibility_signal
-    return False
 
 
 def _has_explicit_correction_signal(source_text: str) -> bool:

@@ -8,6 +8,11 @@ def analyze_validation_design(case_state: CaseState) -> None:
     case_state.stage = "validation-design"
     base_text = text
     for marker in [
+        "\n\n这轮补到的场景背景：",
+        "\n\n这轮补到的现状和证据：",
+        "\n\n这轮补到的判断倾向：",
+        "\n\n这轮补到的约束条件：",
+        "\n\n这轮顺手补充：",
         "\n\n补充场景信息：",
         "\n\n补充现状证据：",
         "\n\n补充决策表达：",

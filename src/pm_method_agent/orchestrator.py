@@ -8,6 +8,7 @@ from pm_method_agent.analyzers import (
     analyze_validation_design,
 )
 from pm_method_agent.case_copywriter import apply_case_copywriting
+from pm_method_agent.follow_up import attach_follow_up_plan
 from pm_method_agent.models import CaseState
 from pm_method_agent.pre_framing import build_pre_framing_result, should_trigger_pre_framing
 from pm_method_agent.runtime_config import get_llm_runtime_status
@@ -83,7 +84,7 @@ def _run_analysis(
         elif selected_mode == "validation-design":
             analyze_validation_design(case_state)
 
-    return apply_case_copywriting(case_state)
+    return apply_case_copywriting(attach_follow_up_plan(case_state))
 
 
 def _run_agent_flow(
@@ -178,14 +179,14 @@ def _resolve_modes(mode: str) -> List[str]:
 def _continue_agent_flow(case_state: CaseState, start_stage: str) -> CaseState:
     if start_stage == "pre-framing":
         if should_trigger_pre_framing(case_state):
-            return apply_case_copywriting(_build_pre_framing_card(case_state))
+            return apply_case_copywriting(attach_follow_up_plan(_build_pre_framing_card(case_state)))
         start_stage = "context-alignment"
 
     if start_stage == "context-alignment":
         if should_trigger_pre_framing(case_state):
-            return apply_case_copywriting(_build_pre_framing_card(case_state))
+            return apply_case_copywriting(attach_follow_up_plan(_build_pre_framing_card(case_state)))
         if _should_request_context_before_analysis(case_state):
-            return apply_case_copywriting(_build_context_alignment_card(case_state))
+            return apply_case_copywriting(attach_follow_up_plan(_build_context_alignment_card(case_state)))
         start_stage = "problem-definition"
 
     if start_stage == "problem-definition":
@@ -194,7 +195,7 @@ def _continue_agent_flow(case_state: CaseState, start_stage: str) -> CaseState:
         analyze_problem_framing(case_state)
         case_state.metadata["selected_modes"].append("problem-framing")
         if _should_block_after_problem_definition(case_state):
-            return apply_case_copywriting(_build_problem_block_card(case_state))
+            return apply_case_copywriting(attach_follow_up_plan(_build_problem_block_card(case_state)))
         start_stage = "decision-challenge"
 
     if start_stage == "decision-challenge":
@@ -203,7 +204,7 @@ def _continue_agent_flow(case_state: CaseState, start_stage: str) -> CaseState:
         analyze_decision_challenge(case_state)
         case_state.metadata["selected_modes"].append("decision-challenge")
         if _should_block_after_decision_challenge(case_state):
-            return apply_case_copywriting(_build_decision_gate_card(case_state))
+            return apply_case_copywriting(attach_follow_up_plan(_build_decision_gate_card(case_state)))
         start_stage = "validation-design"
 
     if start_stage == "validation-design":
@@ -214,9 +215,9 @@ def _continue_agent_flow(case_state: CaseState, start_stage: str) -> CaseState:
         case_state.workflow_state = "done"
         case_state.output_kind = "review-card"
         case_state.metadata["next_stage"] = "已完成当前轮次分析"
-        return apply_case_copywriting(case_state)
+        return apply_case_copywriting(attach_follow_up_plan(case_state))
 
-    return apply_case_copywriting(case_state)
+    return apply_case_copywriting(attach_follow_up_plan(case_state))
 
 
 def _build_pre_framing_card(case_state: CaseState) -> CaseState:

@@ -99,6 +99,14 @@ UNKNOWN_GROUP_ORDER = [
     "其他",
 ]
 
+MEMORY_BUCKET_LABELS = {
+    "context_notes": "场景背景",
+    "evidence_notes": "现状和证据",
+    "decision_notes": "判断倾向",
+    "constraint_notes": "约束条件",
+    "other_notes": "其他补充",
+}
+
 
 def render_case_state(case_state: CaseState, output_format: str = "markdown") -> str:
     if output_format == "json":
@@ -135,10 +143,14 @@ def build_case_history_payload(case_state: CaseState) -> dict:
         "conversation_turns": case_state.metadata.get("conversation_turns", []),
         "stage_history": case_state.metadata.get("stage_history", []),
         "answered_questions": case_state.metadata.get("answered_questions", []),
+        "memory_items": _build_case_memory_items(case_state),
         "resolved_gates": case_state.metadata.get("resolved_gates", []),
         "last_resume_stage": case_state.metadata.get("last_resume_stage"),
         "last_gate_choice": case_state.metadata.get("last_gate_choice"),
         "last_reply_parser": case_state.metadata.get("last_reply_parser"),
+        "follow_up_focus": case_state.metadata.get("follow_up_focus", ""),
+        "follow_up_reason": case_state.metadata.get("follow_up_reason", ""),
+        "follow_up_loop_state": case_state.metadata.get("follow_up_loop_state", ""),
         "case_runtime": case_runtime,
         "llm_enhancements": case_runtime.get("llm_enhancements", {}),
     }
@@ -465,6 +477,12 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("## 更建议先补")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
+    follow_up_questions = _collect_follow_up_questions(case_state)
+    if follow_up_questions:
+        lines.append("")
+        lines.append("## 如果继续往下聊，优先补这几项")
+        for question in follow_up_questions:
+            lines.append(f"- {question}")
     lines.append("")
     _append_unknowns(lines, case_state)
     return "\n".join(lines)
@@ -535,6 +553,20 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append("- 暂无")
     lines.append("")
 
+    lines.append("## 这段里补到了哪些信息")
+    for item in history_payload.get("memory_items", []):
+        title = str(item.get("title", "")).strip() or "补充信息"
+        summary = str(item.get("summary", "")).strip()
+        count = int(item.get("count", 0) or 0)
+        count_suffix = f"（共 {count} 条）" if count > 1 else ""
+        if summary:
+            lines.append(f"- {title}{count_suffix}：{summary}")
+        else:
+            lines.append(f"- {title}{count_suffix}")
+    if not history_payload.get("memory_items"):
+        lines.append("- 暂无")
+    lines.append("")
+
     lines.append("## 这段里已经做过的选择")
     for item in history_payload.get("resolved_gates", []):
         choice = item.get("user_choice")
@@ -578,7 +610,13 @@ def _render_context_question_card(case_state: CaseState) -> str:
     lines.append(case_state.normalized_summary or "信息还不够，建议先补几项基础信息。")
     lines.append("")
     lines.append("## 为什么先补这几项")
-    lines.append(case_state.blocking_reason or "这几个信息会直接影响后面的判断口径。")
+    lines.append(
+        _polish_display_text(
+            str(case_state.metadata.get("follow_up_reason", "")).strip()
+            or case_state.blocking_reason
+            or "这几个信息会直接影响后面的判断口径。"
+        )
+    )
     lines.append("")
     lines.append("## 先补这几项")
     for question in case_state.pending_questions:
@@ -607,7 +645,13 @@ def _render_block_card(case_state: CaseState) -> str:
     lines.append(case_state.normalized_summary or "当前阶段暂不建议继续推进。")
     lines.append("")
     lines.append("## 为什么先停在这里")
-    lines.append(case_state.blocking_reason or "当前条件还不够，先别急着往下走。")
+    lines.append(
+        _polish_display_text(
+            str(case_state.metadata.get("follow_up_reason", "")).strip()
+            or case_state.blocking_reason
+            or "当前条件还不够，先别急着往下走。"
+        )
+    )
     lines.append("")
     if case_state.findings:
         lines.append("## 我主要看到这几个点")
@@ -620,6 +664,12 @@ def _render_block_card(case_state: CaseState) -> str:
     lines.append("## 更建议先补")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
+    follow_up_questions = _collect_follow_up_questions(case_state)
+    if follow_up_questions and case_state.output_kind != "decision-gate-card":
+        lines.append("")
+        lines.append("## 如果继续补，我会先问这几项")
+        for question in follow_up_questions:
+            lines.append(f"- {question}")
     if case_state.unknowns:
         lines.append("")
         _append_unknowns(lines, case_state)
@@ -650,7 +700,7 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
         lines.append("- 还没有明确的基础背景。")
     lines.append("")
     lines.append("## 接下来更值得先补")
-    for item in _collect_background_follow_up(case_state):
+    for item in _collect_follow_up_questions(case_state, fallback_to_background=True):
         lines.append(f"- {item}")
     return "\n".join(lines)
 
@@ -1058,6 +1108,44 @@ def _collect_background_follow_up(case_state: CaseState) -> List[str]:
         if item not in deduped:
             deduped.append(item)
     return deduped[:4]
+
+
+def _collect_follow_up_questions(case_state: CaseState, fallback_to_background: bool = False) -> List[str]:
+    questions: List[str] = []
+    for item in case_state.pending_questions:
+        normalized = _polish_display_text(str(item).strip())
+        if not normalized:
+            continue
+        if normalized not in questions:
+            questions.append(normalized)
+    if questions or not fallback_to_background:
+        return questions[:3]
+    return _collect_background_follow_up(case_state)[:3]
+
+
+def _build_case_memory_items(case_state: CaseState) -> List[dict]:
+    raw_buckets = case_state.metadata.get("session_note_buckets", {})
+    if not isinstance(raw_buckets, dict):
+        return []
+    items: List[dict] = []
+    for bucket_key in ["context_notes", "evidence_notes", "decision_notes", "constraint_notes", "other_notes"]:
+        notes = raw_buckets.get(bucket_key, [])
+        if not isinstance(notes, list):
+            continue
+        cleaned_notes = [str(item).strip() for item in notes if str(item).strip()]
+        if not cleaned_notes:
+            continue
+        latest_note = cleaned_notes[-1]
+        items.append(
+            {
+                "bucket_key": bucket_key,
+                "title": MEMORY_BUCKET_LABELS.get(bucket_key, "补充信息"),
+                "summary": _short_text(latest_note, limit=52),
+                "count": len(cleaned_notes),
+                "latest_note": latest_note,
+            }
+        )
+    return items
 
 
 def _continue_card_focus(case_state: CaseState) -> str:

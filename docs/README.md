@@ -25,6 +25,7 @@
 ## 方法与体验
 
 - [method-uncertainty-framework.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/method-uncertainty-framework.md)：五类方法不确定性框架
+- [product-v0-2.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/product-v0-2.md)：当前产品层目标、范围和成功标准
 - [evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例
 - [manual-smoke.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/manual-smoke.md)：手动冒烟方式
 - [real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：真实问题试跑方法
@@ -33,6 +34,7 @@
 ## 主线运行时
 
 - [agent-interaction.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-interaction.md)：主代理状态机与阶段推进
+- [follow-up-loop-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/follow-up-loop-design.md)：连续追问闭环和阶段继续规则
 - [agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)：统一 agent 入口与工作区承接
 - [session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)：多轮会话与服务层
 - [interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)：互动与记忆设计

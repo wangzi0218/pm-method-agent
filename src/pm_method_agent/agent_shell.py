@@ -5,6 +5,7 @@ import re
 from typing import Callable, Optional, TypeVar
 
 from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
+from pm_method_agent.follow_up import is_follow_up_question_answered
 from pm_method_agent.models import CaseState, ProjectProfile, RuntimeSession, WorkspaceState
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -796,6 +797,8 @@ def _classify_agent_intent(
     if active_case is not None:
         if any(keyword in message for keyword in ["继续", "补充", "再补一句", "基于上面的信息", "刚才那个"]):
             return "continue-case"
+        if _looks_like_follow_up_answer(message, reply_analysis, active_case):
+            return "continue-case"
         if _looks_like_new_case_without_explicit_keyword(message, reply_analysis, active_case):
             return "new-case"
         if _looks_like_meta_question(message, reply_analysis):
@@ -887,6 +890,27 @@ def _looks_like_meta_question(message: str, reply_analysis: ReplyAnalysis) -> bo
         "那如果",
     ]
     return any(marker in message for marker in meta_markers)
+
+
+def _looks_like_follow_up_answer(
+    message: str,
+    reply_analysis: ReplyAnalysis,
+    active_case: CaseState,
+) -> bool:
+    if not active_case.pending_questions:
+        return False
+    normalized_message = message.strip()
+    if not normalized_message:
+        return False
+    return any(
+        is_follow_up_question_answered(
+            question,
+            active_case.context_profile,
+            reply_analysis,
+            normalized_message,
+        )
+        for question in active_case.pending_questions
+    )
 
 
 def _message_keywords(message: str) -> list[str]:

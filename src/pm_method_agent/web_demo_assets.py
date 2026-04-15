@@ -1655,6 +1655,9 @@ WEB_DEMO_JS = """\
     const topFinding = (casePayload.findings || [])[0];
     const topGate = (casePayload.decision_gates || [])[0];
     const nextActions = (casePayload.next_actions || []).slice(0, 3);
+    const pendingQuestions = (casePayload.pending_questions || []).slice(0, 3);
+    const followUpFocus = casePayload.metadata?.follow_up_focus || "";
+    const followUpReason = casePayload.metadata?.follow_up_reason || "";
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -1673,6 +1676,18 @@ WEB_DEMO_JS = """\
         <article class="digest-card">
           <span class="digest-label">最需要判断的一点</span>
           <span class="digest-value">${inlineFormat(shortText(topFinding.claim || "", 88))}</span>
+        </article>
+      `);
+    }
+
+    if (followUpFocus || followUpReason) {
+      cards.push(`
+        <article class="digest-card">
+          <span class="digest-label">这轮先收什么</span>
+          <span class="digest-value">
+            ${inlineFormat(shortText(followUpFocus || "继续把当前判断收稳", 44))}
+            ${followUpReason ? `：${inlineFormat(shortText(followUpReason, 84))}` : ""}
+          </span>
         </article>
       `);
     }
@@ -1708,6 +1723,17 @@ WEB_DEMO_JS = """\
       `);
     }
 
+    if (pendingQuestions.length) {
+      cards.push(`
+        <article class="digest-card is-calm">
+          <span class="digest-label">继续聊时先补</span>
+          <ul class="digest-list">
+            ${pendingQuestions.map((item) => `<li>${inlineFormat(shortText(item, 52))}</li>`).join("")}
+          </ul>
+        </article>
+      `);
+    }
+
     els.cardDigest.className = "card-digest";
     els.cardDigest.innerHTML = cards.join("");
   }
@@ -1722,6 +1748,7 @@ WEB_DEMO_JS = """\
     const conversationTurns = historyPayload.conversation_turns || [];
     const stageHistory = historyPayload.stage_history || [];
     const answeredQuestions = historyPayload.answered_questions || [];
+    const memoryItems = historyPayload.memory_items || [];
     const caseRuntime = historyPayload.case_runtime || null;
     const latestTurn = conversationTurns[conversationTurns.length - 1];
     const latestText = latestTurn
@@ -1755,6 +1782,19 @@ WEB_DEMO_JS = """\
         <span class="digest-label">已经落下来的结论</span>
         <span class="digest-value">
           已回答 ${answeredQuestions.length} 项，阶段变化 ${stageHistory.length} 次。
+        </span>
+      </article>
+      <article class="digest-card">
+        <span class="digest-label">这段最近补到哪了</span>
+        <span class="digest-value">
+          ${memoryItems.length
+            ? inlineFormat(
+                memoryItems
+                  .slice(0, 2)
+                  .map((item) => `${item.title}：${shortText(item.summary || item.latest_note || "", 36)}`)
+                  .join(" / ")
+              )
+            : "还没有额外补充。"}
         </span>
       </article>
       ${fallbackCard}

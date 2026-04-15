@@ -985,6 +985,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn(reply_text, replied_case.metadata["session_note_buckets"]["context_notes"])
         self.assertNotIn(reply_text, replied_case.metadata["session_note_buckets"]["decision_notes"])
         self.assertEqual(replied_case.raw_input.count(reply_text), 1)
+        self.assertIn("这轮补到的场景背景", replied_case.raw_input)
+        self.assertNotIn("补充场景信息", replied_case.raw_input)
 
     def test_session_service_can_replace_roles_on_explicit_correction(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1139,6 +1141,50 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(resumed_case.workflow_state, "done")
         self.assertEqual(resumed_case.metadata["last_resume_stage"], "decision-challenge")
 
+    def test_review_card_exposes_follow_up_questions_for_next_round(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertGreater(len(case_state.pending_questions), 0)
+        self.assertLessEqual(len(case_state.pending_questions), 3)
+        self.assertEqual(case_state.metadata["follow_up_loop_state"], "open")
+
+    def test_reply_can_mark_generic_follow_up_question_as_answered(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text=(
+                    "当前首帖率大概只有 6%，如果能拉到 10% 就算有效；"
+                    "如果两周内没有明显改善，我们就先停。"
+                ),
+                store=store,
+            )
+
+        answered_questions = list(replied_case.metadata.get("answered_questions", []))
+        self.assertTrue(answered_questions)
+        self.assertTrue(any("指标" in item or "停止条件" in item for item in answered_questions))
+        self.assertFalse(any(item in replied_case.pending_questions for item in answered_questions))
+        self.assertIn(
+            "当前首帖率大概只有 6%，如果能拉到 10% 就算有效；如果两周内没有明显改善，我们就先停。",
+            replied_case.metadata["session_note_buckets"]["evidence_notes"],
+        )
+
     def test_session_service_keeps_gate_block_when_choice_is_unclear(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)
@@ -1178,6 +1224,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertIn("## 这段对话里说过什么", rendered)
         self.assertIn("## 这段里已经说清的", rendered)
+        self.assertIn("## 这段里补到了哪些信息", rendered)
+        self.assertIn("场景背景", rendered)
         self.assertIn("下次大概率会从", rendered)
 
     def test_session_service_can_use_llm_reply_interpreter(self) -> None:
@@ -4133,6 +4181,23 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(follow_up_response.action, "reply-case")
         self.assertEqual(first_response.workspace.active_case_id, follow_up_response.workspace.active_case_id)
         self.assertIn("先把这个点定下来", follow_up_response.rendered_card)
+
+    def test_agent_shell_keeps_short_metric_reply_on_active_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。",
+                workspace_id="metric-follow-up",
+            )
+            second_response = shell.handle_message(
+                "当前首帖率大概只有 6%，如果能拉到 10% 就算有效；如果两周内没有明显改善，我们就先停。",
+                workspace_id="metric-follow-up",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertEqual(first_response.workspace.active_case_id, second_response.workspace.active_case_id)
+        self.assertTrue(second_response.case_state.metadata.get("answered_questions"))
 
     def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:
         with TemporaryDirectory() as tmpdir:
