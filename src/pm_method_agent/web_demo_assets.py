@@ -19,7 +19,7 @@ WEB_DEMO_HTML = """<!doctype html>
           <p class="eyebrow">PM Method Agent</p>
           <h1>问题定义，不从长文档开始。</h1>
           <p class="lede">
-            这里不是通用聊天页。它更像一个轻量工作台，用来承接需求草稿、继续补充和阶段推进。
+            这里不是通用聊天页。把一句还没想透的草稿丢进来，它会先帮你收拢问题，再决定要不要继续往下走。
           </p>
         </div>
 
@@ -98,15 +98,15 @@ WEB_DEMO_HTML = """<!doctype html>
             <span id="activeCaseBadge" class="case-badge">未加载</span>
           </div>
           <div id="cardMeta" class="card-meta"></div>
-          <p class="section-kicker">快速导航</p>
+          <p class="section-kicker">先看脉络</p>
           <div id="cardOutline" class="card-outline empty-list">
             <p>卡片展开后，这里会列出重点章节。</p>
           </div>
-          <p class="section-kicker">本轮摘要</p>
+          <p class="section-kicker">先看这个</p>
           <div id="cardDigest" class="card-digest empty-list">
             <p>当前阶段最值得先看的内容，会先收在这里。</p>
           </div>
-          <p class="section-kicker">主卡正文</p>
+          <p class="section-kicker">完整卡片</p>
           <div id="cardContent" class="render-surface empty-surface">
             <p>这里会显示当前案例的主卡片。</p>
           </div>
@@ -125,11 +125,11 @@ WEB_DEMO_HTML = """<!doctype html>
             <h2>案例历史</h2>
             <button id="refreshHistoryButton" class="ghost-button" type="button">刷新</button>
           </div>
-          <p class="section-kicker">关键动作</p>
+          <p class="section-kicker">这段过程</p>
           <div id="historyTimeline" class="history-timeline empty-list">
             <p>选中案例后，会先把关键动作按顺序收起来。</p>
           </div>
-          <p class="section-kicker">过程概览</p>
+          <p class="section-kicker">先看摘要</p>
           <div id="historyDigest" class="history-digest empty-list">
             <p>这里会先概览这段过程推进到了哪里。</p>
           </div>
@@ -154,15 +154,15 @@ WEB_DEMO_HTML = """<!doctype html>
             <h2>运行时</h2>
             <button id="refreshRuntimeButton" class="ghost-button" type="button">刷新</button>
           </div>
-          <p class="section-kicker">当前状态</p>
+          <p class="section-kicker">现在在做什么</p>
           <div id="runtimeDigest" class="history-digest empty-list">
             <p>这里会显示当前工作区的运行态摘要。</p>
           </div>
-          <p class="section-kicker">最近事件</p>
+          <p class="section-kicker">最近提醒</p>
           <div id="runtimeTimeline" class="history-timeline empty-list">
             <p>这里会收最近值得关注的运行提醒。</p>
           </div>
-          <p class="section-kicker">记忆快照</p>
+          <p class="section-kicker">上下文怎么被接住</p>
           <div id="runtimeMemory" class="render-surface empty-surface">
             <p>这里会显示最近在接的话题，以及已经收拢过的旧上下文。</p>
           </div>
@@ -367,6 +367,12 @@ textarea {
   font-size: 13px;
 }
 
+.case-badge {
+  background: rgba(255, 244, 238, 0.86);
+  color: #8f442e;
+  border-color: rgba(179, 77, 47, 0.18);
+}
+
 .pill.is-strong,
 .primary-button,
 .detail-tab.is-active {
@@ -530,6 +536,7 @@ button:disabled {
   border-radius: 18px;
   padding: 14px;
   text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
 .recent-case.is-active {
@@ -593,6 +600,10 @@ button:disabled {
   color: var(--muted);
   line-height: 1.6;
   font-size: 13px;
+}
+
+.recent-case-footer {
+  font-size: 12px;
 }
 
 .render-surface {
@@ -667,6 +678,7 @@ button:disabled {
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(248, 240, 227, 0.86));
   padding: 14px 15px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
 }
 
 .digest-card.is-warm {
@@ -823,6 +835,11 @@ button:disabled {
   background: rgba(179, 77, 47, 0.22);
   box-shadow: 0 0 0 4px rgba(179, 77, 47, 0.08);
   content: "";
+}
+
+.timeline-item:hover {
+  border-color: rgba(179, 77, 47, 0.18);
+  box-shadow: 0 14px 24px rgba(61, 52, 41, 0.06);
 }
 
 .timeline-body {
@@ -1485,11 +1502,9 @@ WEB_DEMO_JS = """\
   function renderWorkspaceMeta(workspace) {
     const pills = [];
     pills.push(`<span class="pill">工作区：${inlineFormat(workspace.workspace_id || state.workspaceId)}</span>`);
-    pills.push(
-      `<span class="pill">当前案例：${inlineFormat(workspace.active_case_id || "未设置")}</span>`
-    );
+    pills.push(`<span class="pill">${workspace.active_case_id ? "当前有一条正在继续的分析" : "当前还没有活跃分析"}</span>`);
     if (workspace.active_project_profile_id) {
-      pills.push(`<span class="pill">项目背景：${inlineFormat(workspace.active_project_profile_id)}</span>`);
+      pills.push('<span class="pill">已带项目背景</span>');
     }
     els.workspaceMeta.innerHTML = pills.join("");
   }
@@ -1499,9 +1514,9 @@ WEB_DEMO_JS = """\
     items.push(`<span class="soft-pill">工作区：${inlineFormat(state.workspaceId || "demo")}</span>`);
 
     if (state.activeCaseId) {
-      items.push(`<span class="soft-pill is-accent">继续当前案例：${inlineFormat(state.activeCaseId)}</span>`);
+      items.push('<span class="soft-pill is-accent">这次会接着上一次继续</span>');
     } else {
-      items.push(`<span class="soft-pill is-accent">当前会新建案例</span>`);
+      items.push('<span class="soft-pill is-accent">这次会新开一条分析</span>');
     }
 
     if (state.currentCase && state.currentCase.stage) {
@@ -1533,7 +1548,7 @@ WEB_DEMO_JS = """\
     const cards = [];
     cards.push(`
       <article class="digest-card is-warm">
-        <span class="digest-label">这轮重点</span>
+        <span class="digest-label">先看这个</span>
         <span class="digest-value">${inlineFormat(summary || "先看主卡片正文。")}</span>
       </article>
     `);
@@ -1541,7 +1556,7 @@ WEB_DEMO_JS = """\
     if (topFinding) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">最先该盯的一点</span>
+          <span class="digest-label">最需要判断的一点</span>
           <span class="digest-value">${inlineFormat(shortText(topFinding.claim || "", 88))}</span>
         </article>
       `);
@@ -1550,9 +1565,9 @@ WEB_DEMO_JS = """\
     if (caseRuntime && caseRuntime.fallback_active) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">模型增强状态</span>
+          <span class="digest-label">这一轮的承接方式</span>
           <span class="digest-value">
-            这一轮有 ${inlineFormat(String(caseRuntime.fallback_count || 0))} 个增强组件回退到了本地规则：${inlineFormat(
+            这轮里有 ${inlineFormat(String(caseRuntime.fallback_count || 0))} 处增强先按本地规则接住了：${inlineFormat(
               (caseRuntime.fallback_components || []).join(" / ")
             )}。
           </span>
@@ -1563,7 +1578,7 @@ WEB_DEMO_JS = """\
     if (nextActions.length) {
       cards.push(`
         <article class="digest-card is-calm">
-          <span class="digest-label">建议先补</span>
+          <span class="digest-label">还差这些</span>
           <ul class="digest-list">
             ${nextActions.map((item) => `<li>${inlineFormat(shortText(item, 52))}</li>`).join("")}
           </ul>
@@ -1572,7 +1587,7 @@ WEB_DEMO_JS = """\
     } else if (topGate) {
       cards.push(`
         <article class="digest-card is-calm">
-          <span class="digest-label">当前关口</span>
+          <span class="digest-label">还没定下来的点</span>
           <span class="digest-value">${inlineFormat(shortText(topGate.question || "", 88))}</span>
         </article>
       `);
@@ -1601,9 +1616,9 @@ WEB_DEMO_JS = """\
     const fallbackCard = caseRuntime && caseRuntime.fallback_active
       ? `
       <article class="digest-card">
-        <span class="digest-label">模型回退</span>
+        <span class="digest-label">补充说明</span>
         <span class="digest-value">
-          最近这段过程里，${inlineFormat((caseRuntime.fallback_components || []).join(" / "))} 走了本地规则回退。
+          这段过程里，${inlineFormat((caseRuntime.fallback_components || []).join(" / "))} 有走过本地规则兜底，但不影响继续查看。
         </span>
       </article>
     `
@@ -1612,17 +1627,17 @@ WEB_DEMO_JS = """\
     els.historyDigest.className = "history-digest";
     els.historyDigest.innerHTML = `
       <article class="digest-card is-calm">
-        <span class="digest-label">这一段进展</span>
+        <span class="digest-label">这段推进到哪了</span>
         <span class="digest-value">
           已累计 ${conversationTurns.length} 轮输入，当前停在 ${inlineFormat(stageLabel(historyPayload.stage))}。
         </span>
       </article>
       <article class="digest-card">
-        <span class="digest-label">最近一轮</span>
+        <span class="digest-label">最近一次补充</span>
         <span class="digest-value">${inlineFormat(shortText(latestText, 120))}</span>
       </article>
       <article class="digest-card">
-        <span class="digest-label">已确认的内容</span>
+        <span class="digest-label">已经落下来的信息</span>
         <span class="digest-value">
           已回答 ${answeredQuestions.length} 项，阶段变化 ${stageHistory.length} 次。
         </span>
@@ -1653,21 +1668,21 @@ WEB_DEMO_JS = """\
     const resumeLabel = runtimeResumeLabel(runtimeSession.resume_from || lastTerminal.resume_from || "");
     let focusText = "当前没有额外卡点，可以继续输入下一轮信息。";
     if (pendingApprovals.length) {
-      focusText = `当前有 ${pendingApprovals.length} 项待确认，这一轮会先停在人工确认这里。`;
+      focusText = `当前有 ${pendingApprovals.length} 项待确认，这一轮会先停在人来拍板这一步。`;
     } else if (terminalState === "blocked") {
-      focusText = `当前先停在${resumeLabel}，补完信息或做完选择后再继续会更稳。`;
+      focusText = `当前先停在${resumeLabel}，把缺的材料补上，再继续会更稳。`;
     } else if (terminalState === "deferred") {
-      focusText = `这一轮目前先暂缓，后面可以从${resumeLabel}重新接上。`;
+      focusText = `这一轮先往后放一放，之后可以从${resumeLabel}重新接上。`;
     } else if (runtimeSession.runtime_status === "running") {
-      focusText = `系统正在${runtimeLoopLabel(runtimeSession.current_loop_state || "executing")}。`;
+      focusText = `系统正在${runtimeLoopLabel(runtimeSession.current_loop_state || "executing")}，这会儿还不用额外打断它。`;
     }
 
     const fallbackCard = latestFallback
       ? `
       <article class="digest-card">
-        <span class="digest-label">最近回退</span>
+        <span class="digest-label">最近一次兜底</span>
         <span class="digest-value">
-          ${inlineFormat(runtimeComponentLabel(latestFallback.payload?.component || ""))} 这一步先按本地规则继续了。${inlineFormat(
+          ${inlineFormat(runtimeComponentLabel(latestFallback.payload?.component || ""))} 这一步先按本地规则接住了。${inlineFormat(
             shortText(latestFallback.payload?.reason || "", 72)
           )}
         </span>
@@ -1678,7 +1693,7 @@ WEB_DEMO_JS = """\
     els.runtimeDigest.className = "history-digest";
     els.runtimeDigest.innerHTML = `
       <article class="digest-card is-calm">
-        <span class="digest-label">当前运行态</span>
+        <span class="digest-label">现在是什么状态</span>
         <span class="digest-value">
           现在是 ${inlineFormat(stageLabel(runtimeSession.runtime_status || "idle"))}，系统正停在 ${inlineFormat(
             runtimeLoopLabel(runtimeSession.current_loop_state || "idle")
@@ -1686,15 +1701,15 @@ WEB_DEMO_JS = """\
         </span>
       </article>
       <article class="digest-card">
-        <span class="digest-label">当前卡点</span>
+        <span class="digest-label">此刻最该知道的事</span>
         <span class="digest-value">
           ${inlineFormat(focusText)}
         </span>
       </article>
       <article class="digest-card">
-        <span class="digest-label">恢复线索</span>
+        <span class="digest-label">接下来会从哪继续</span>
         <span class="digest-value">
-          下次会优先从 ${inlineFormat(resumeLabel)} 接着看；当前工作区累计轮次 ${inlineFormat(String(runtimeSession.turn_count || 0))}。
+          下一次大概率会从 ${inlineFormat(resumeLabel)} 接着看；当前工作区已经累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
         </span>
       </article>
       ${fallbackCard}
@@ -1733,8 +1748,8 @@ WEB_DEMO_JS = """\
     const compressionState = runtimeSession.compression_state || {};
     const compressedTurns = Number(compressionState.compressed_turns || 0);
     const memoryHeadline = compressedTurns > 0
-      ? `这段会话里，已经有 ${compressedTurns} 轮较早内容被收进摘要，后续会优先带着摘要继续。`
-      : "当前上下文还比较短，系统会直接带着最近几轮继续往下看。";
+      ? `这段会话里，已经有 ${compressedTurns} 轮较早内容被收进摘要，后面会带着这层摘要继续。`
+      : "当前上下文还不长，系统会直接带着最近几轮继续往下看。";
     const workingCount = workingMemory.length;
     const summaryCount = summaryMemory.length;
 
@@ -1744,13 +1759,13 @@ WEB_DEMO_JS = """\
       <p>当前案例：<code>${inlineFormat(runtimeSession.active_case_id || "未设置")}</code>。最近保留 ${inlineFormat(
         String(workingCount)
       )} 条近程线索，已收拢 ${inlineFormat(String(summaryCount))} 段旧上下文。</p>
-      <h3>最近在接什么</h3>
+      <h3>眼下正带着哪些线索</h3>
       ${
         workingItems
           ? `<ul class="runtime-memory-list">${workingItems}</ul>`
           : "<p>当前还没有近程线索。</p>"
       }
-      <h3>之前收过什么</h3>
+      <h3>更早的内容怎么被收住</h3>
       ${
         summaryItems
           ? `<ul class="runtime-memory-list">${summaryItems}</ul>`
@@ -1823,7 +1838,7 @@ WEB_DEMO_JS = """\
       .map((item) => {
         const activeClass = item.case_id === state.activeCaseId ? " is-active" : "";
         const summary = shortText(item.summary || "暂无摘要", 56);
-        const footer = shortText(item.case_id || "", 24);
+        const footer = item.case_id === state.activeCaseId ? "正在继续这条分析" : "点开后从这里继续";
         return `
           <button class="recent-case${activeClass}" type="button" data-case-id="${escapeHtml(item.case_id)}">
             <span class="recent-case-meta">
@@ -1832,7 +1847,7 @@ WEB_DEMO_JS = """\
               ${item.case_id === state.activeCaseId ? '<span class="recent-case-flag">当前</span>' : ""}
             </span>
             <span class="recent-case-title">${inlineFormat(summary)}</span>
-            <span class="recent-case-footer">案例编号：${inlineFormat(footer)}</span>
+            <span class="recent-case-footer">${inlineFormat(footer)}</span>
           </button>
         `;
       })
@@ -1867,6 +1882,22 @@ WEB_DEMO_JS = """\
     els.cardMeta.innerHTML = pills.join("");
   }
 
+  function buildActiveCaseBadge(casePayload) {
+    if (!casePayload) {
+      return "未加载";
+    }
+    if (casePayload.workflow_state === "deferred") {
+      return "先暂缓";
+    }
+    if (casePayload.workflow_state === "blocked") {
+      return "待补信息";
+    }
+    if (casePayload.workflow_state === "done") {
+      return "已完成";
+    }
+    return "进行中";
+  }
+
   function renderMainResponse(response) {
     state.currentCase = response.case || null;
     state.currentCaseRuntime = response.case_runtime || null;
@@ -1875,10 +1906,10 @@ WEB_DEMO_JS = """\
       renderRuntimePanel(state.currentRuntimeSession);
     }
     state.activeCaseId = response.case ? response.case.case_id : state.activeCaseId;
-    els.activeCaseBadge.textContent = state.activeCaseId || "未加载";
+    els.activeCaseBadge.textContent = buildActiveCaseBadge(state.currentCase);
     els.systemMessage.textContent = response.message || "已更新当前案例。";
     els.heroTitle.textContent = state.currentCase
-      ? `${stageLabel(state.currentCase.stage)}，先看这轮判断。`
+      ? `${stageLabel(state.currentCase.stage)}，先把这轮判断看明白。`
       : "先给一句真实草稿。";
     renderComposerMeta();
 
