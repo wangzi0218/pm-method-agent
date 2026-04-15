@@ -106,7 +106,7 @@ WEB_DEMO_HTML = """<!doctype html>
           <div id="cardDigest" class="card-digest empty-list">
             <p>当前阶段最值得先看的内容，会先收在这里。</p>
           </div>
-          <p class="section-kicker">完整卡片</p>
+          <p class="section-kicker">完整内容</p>
           <div id="cardContent" class="render-surface empty-surface">
             <p>这里会显示当前案例的主卡片。</p>
           </div>
@@ -133,7 +133,7 @@ WEB_DEMO_HTML = """<!doctype html>
           <div id="historyDigest" class="history-digest empty-list">
             <p>这里会先概览这段过程推进到了哪里。</p>
           </div>
-          <p class="section-kicker">完整记录</p>
+          <p class="section-kicker">完整过程</p>
           <div id="historyContent" class="render-surface empty-surface">
             <p>选中案例后，这里会显示历史记录。</p>
           </div>
@@ -392,6 +392,11 @@ textarea {
   gap: 12px;
 }
 
+.panel-heading {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(61, 52, 41, 0.08);
+}
+
 .panel-heading h2,
 .composer-header h3 {
   margin: 0;
@@ -614,6 +619,44 @@ button:disabled {
   padding: 18px 18px 20px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
   line-height: 1.8;
+}
+
+.render-surface-secondary {
+  background:
+    linear-gradient(180deg, rgba(251, 248, 242, 0.94), rgba(244, 238, 227, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  color: rgba(36, 31, 26, 0.92);
+  max-height: 356px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(179, 77, 47, 0.24) transparent;
+}
+
+.render-surface-secondary::-webkit-scrollbar {
+  width: 8px;
+}
+
+.render-surface-secondary::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.22);
+}
+
+.render-surface-secondary h1 {
+  font-size: 24px;
+}
+
+.render-surface-secondary h2 {
+  font-size: 19px;
+}
+
+.render-surface-secondary h3 {
+  font-size: 16px;
+}
+
+.render-surface-secondary p,
+.render-surface-secondary li {
+  font-size: 14px;
+  line-height: 1.72;
 }
 
 .card-outline,
@@ -868,6 +911,24 @@ button:disabled {
   box-shadow: 0 14px 24px rgba(61, 52, 41, 0.06);
 }
 
+.timeline-item.is-calm {
+  background: rgba(248, 244, 236, 0.82);
+}
+
+.timeline-item.is-calm::before {
+  background: rgba(79, 124, 115, 0.2);
+  box-shadow: 0 0 0 4px rgba(79, 124, 115, 0.08);
+}
+
+.timeline-item.is-soft {
+  background: rgba(252, 249, 244, 0.78);
+}
+
+.timeline-item.is-soft::before {
+  background: rgba(61, 52, 41, 0.14);
+  box-shadow: 0 0 0 4px rgba(61, 52, 41, 0.05);
+}
+
 .timeline-body {
   display: grid;
   gap: 6px;
@@ -889,6 +950,16 @@ button:disabled {
   background: rgba(179, 77, 47, 0.1);
   color: var(--accent);
   font-size: 12px;
+}
+
+.timeline-item.is-calm .timeline-kind {
+  background: rgba(79, 124, 115, 0.12);
+  color: #476f66;
+}
+
+.timeline-item.is-soft .timeline-kind {
+  background: rgba(36, 31, 26, 0.06);
+  color: var(--muted);
 }
 
 .timeline-stage {
@@ -1102,6 +1173,24 @@ WEB_DEMO_JS = """\
       "continue-guidance-card": "继续卡",
     };
     return labels[value] || value || "卡片";
+  }
+
+  function contextValueLabel(key, value) {
+    const labelMappings = {
+      business_model: {
+        tob: "企业产品",
+        toc: "消费者产品",
+        internal: "内部产品",
+      },
+      primary_platform: {
+        pc: "桌面端",
+        "mobile-web": "移动网页",
+        "native-app": "原生应用",
+        miniapp: "小程序",
+        "multi-platform": "多端",
+      },
+    };
+    return (labelMappings[key] || {})[value] || value || "";
   }
 
   function runtimeActionLabel(value) {
@@ -1663,7 +1752,7 @@ WEB_DEMO_JS = """\
         <span class="digest-value">${inlineFormat(shortText(latestText, 120))}</span>
       </article>
       <article class="digest-card">
-        <span class="digest-label">已经落下来的信息</span>
+        <span class="digest-label">已经落下来的结论</span>
         <span class="digest-value">
           已回答 ${answeredQuestions.length} 项，阶段变化 ${stageHistory.length} 次。
         </span>
@@ -1748,8 +1837,13 @@ WEB_DEMO_JS = """\
       els.runtimeTimeline.className = "history-timeline";
       els.runtimeTimeline.innerHTML = highlightedEvents
         .map((item) => {
+          const toneClass = item.kind && (item.kind.includes("兜底") || item.kind.includes("回退"))
+            ? " is-soft"
+            : item.kind && (item.kind.includes("确认") || item.kind.includes("停在"))
+              ? " is-calm"
+              : "";
           return `
-            <article class="timeline-item">
+            <article class="timeline-item${toneClass}">
               <div class="timeline-body">
                 <div class="timeline-item-head">
                   <span class="timeline-kind">${inlineFormat(item.kind || "运行提醒")}</span>
@@ -1779,7 +1873,7 @@ WEB_DEMO_JS = """\
     const workingCount = workingMemory.length;
     const summaryCount = summaryMemory.length;
 
-    els.runtimeMemory.className = "render-surface";
+    els.runtimeMemory.className = "render-surface render-surface-secondary";
     els.runtimeMemory.innerHTML = `
       <p>${inlineFormat(memoryHeadline)}</p>
       <p>当前案例：<code>${inlineFormat(runtimeSession.active_case_id || "未设置")}</code>。最近保留 ${inlineFormat(
@@ -1816,6 +1910,7 @@ WEB_DEMO_JS = """\
         kind: turn.kind || "turn",
         stage: turn.stage || historyPayload.stage || "",
         text: turn.text || turn.content || "",
+        tone: "soft",
       });
     });
 
@@ -1824,6 +1919,7 @@ WEB_DEMO_JS = """\
         kind: "stage-change",
         stage: item.to_stage || item.stage || "",
         text: `${item.from_stage || "未知阶段"} -> ${item.to_stage || "未知阶段"}`,
+        tone: "calm",
       });
     });
 
@@ -1837,7 +1933,7 @@ WEB_DEMO_JS = """\
     els.historyTimeline.innerHTML = items
       .map(
         (item) => `
-          <article class="timeline-item">
+          <article class="timeline-item${item.tone === "calm" ? " is-calm" : " is-soft"}">
             <div class="timeline-body">
               <div class="timeline-item-head">
                 <span class="timeline-kind">${inlineFormat(item.kind === "stage-change" ? "阶段变化" : "用户输入")}</span>
@@ -1895,11 +1991,21 @@ WEB_DEMO_JS = """\
       return;
     }
 
-    const pills = [
-      `<span class="pill is-strong">${inlineFormat(stageLabel(casePayload.stage))}</span>`,
-      `<span class="pill">${inlineFormat(stageLabel(casePayload.workflow_state))}</span>`,
-      `<span class="pill">${inlineFormat(outputKindLabel(casePayload.output_kind))}</span>`,
-    ];
+    const pills = [`<span class="pill is-strong">${inlineFormat(stageLabel(casePayload.stage))}</span>`];
+    const contextProfile = casePayload.context_profile || {};
+    const businessModel = contextValueLabel("business_model", contextProfile.business_model || "");
+    const primaryPlatform = contextValueLabel("primary_platform", contextProfile.primary_platform || "");
+    const targetRoles = contextProfile.target_user_roles || [];
+
+    if (businessModel) {
+      pills.push(`<span class="pill">${inlineFormat(businessModel)}</span>`);
+    }
+    if (primaryPlatform) {
+      pills.push(`<span class="pill">${inlineFormat(primaryPlatform)}</span>`);
+    }
+    if (Array.isArray(targetRoles) && targetRoles.length) {
+      pills.push(`<span class="pill">${inlineFormat(`${targetRoles.length} 个关键角色`)}</span>`);
+    }
     if (caseRuntime && caseRuntime.fallback_active) {
       pills.push(
         `<span class="pill">已回退：${inlineFormat((caseRuntime.fallback_components || []).join(" / "))}</span>`
@@ -1947,20 +2053,19 @@ WEB_DEMO_JS = """\
     els.cardContent.innerHTML = renderedCard.html;
 
     const statusBits = [];
-    if (response.workspace && response.workspace.workspace_id) {
-      statusBits.push(`<span class="pill">工作区：${inlineFormat(response.workspace.workspace_id)}</span>`);
-    }
-    if (response.case && response.case.mode) {
-      statusBits.push(`<span class="pill">模式：${inlineFormat(response.case.mode)}</span>`);
-    }
     if (response.runtime_session && response.runtime_session.turn_count != null) {
       statusBits.push(
-        `<span class="pill">轮次：${inlineFormat(String(response.runtime_session.turn_count))}</span>`
+        `<span class="pill">第 ${inlineFormat(String(response.runtime_session.turn_count))} 轮</span>`
       );
+    }
+    if (response.case && response.case.workflow_state === "blocked") {
+      statusBits.push('<span class="pill">这轮先停在待补信息</span>');
+    } else if (response.case && response.case.workflow_state === "deferred") {
+      statusBits.push('<span class="pill">这轮先往后放一放</span>');
     }
     if (response.case_runtime && response.case_runtime.fallback_active) {
       statusBits.push(
-        `<span class="pill">模型已回退：${inlineFormat(String(response.case_runtime.fallback_count || 0))} 项</span>`
+        `<span class="pill">有 ${inlineFormat(String(response.case_runtime.fallback_count || 0))} 处先按本地规则接住</span>`
       );
     }
     els.statusPills.innerHTML = statusBits.join("");
@@ -2030,7 +2135,7 @@ WEB_DEMO_JS = """\
     const payload = await request(`/cases/${encodeURIComponent(state.activeCaseId)}/history`);
     renderHistoryTimeline(payload.history || null);
     renderHistoryDigest(payload.history || null);
-    els.historyContent.className = "render-surface";
+    els.historyContent.className = "render-surface render-surface-secondary";
     els.historyContent.innerHTML = renderMarkdownish(payload.rendered_history || "");
   }
 
