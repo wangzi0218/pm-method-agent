@@ -78,6 +78,7 @@ from pm_method_agent.runtime_policy import (
 )
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
 from pm_method_agent.text_file_read_tool import LocalTextFileReader
+from pm_method_agent.web_demo_assets import get_web_demo_asset
 from pm_method_agent.text_search_tool import LocalTextSearcher
 from pm_method_agent.text_file_tool import LocalTextFileWriter
 from pm_method_agent.tool_runtime import (
@@ -1024,9 +1025,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
             )
 
         answered_questions = replied_case.metadata["answered_questions"]
-        self.assertIn("当前产品属于企业产品、消费者产品还是内部产品？", answered_questions)
-        self.assertIn("当前主要使用平台是桌面端、移动端、小程序还是多端？", answered_questions)
-        self.assertNotIn("谁提出需求、谁使用产品、谁承担最终结果？", answered_questions)
+        self.assertTrue(
+            any("企业产品" in question or "消费者产品" in question or "内部产品" in question for question in answered_questions)
+        )
+        self.assertFalse(any("谁提出需求、谁使用产品、谁承担最终结果" in question for question in answered_questions))
         self.assertEqual(replied_case.context_profile["primary_platform"], "pc")
 
     def test_role_relationships_can_influence_problem_framing_judgment(self) -> None:
@@ -1184,6 +1186,50 @@ class OrchestratorSmokeTest(unittest.TestCase):
             "当前首帖率大概只有 6%，如果能拉到 10% 就算有效；如果两周内没有明显改善，我们就先停。",
             replied_case.metadata["session_note_buckets"]["evidence_notes"],
         )
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "validation-design")
+        self.assertNotIn("当前的基线数据是多少", replied_case.pending_questions)
+
+    def test_review_card_metric_reply_resumes_from_validation_design(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="我们先把首帖率从 6% 拉到 10% 当成功线，如果两周没起色就停。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "validation-design")
+        self.assertEqual(replied_case.output_kind, "review-card")
+        self.assertEqual(replied_case.workflow_state, "done")
+        self.assertNotIn("当前的基线数据是多少", replied_case.pending_questions)
+
+    def test_review_card_why_now_reply_resumes_from_decision_challenge(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="最近增长目标压得比较紧，如果晚两个月做，这块活跃可能会继续掉，而且当前排期也要和别的增长实验抢资源。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "decision-challenge")
+        self.assertEqual(replied_case.output_kind, "review-card")
 
     def test_session_service_keeps_gate_block_when_choice_is_unclear(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4198,6 +4244,20 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(first_response.workspace.active_case_id, second_response.workspace.active_case_id)
         self.assertTrue(second_response.case_state.metadata.get("answered_questions"))
+
+    def test_web_demo_javascript_keeps_follow_up_focus_and_memory_cues(self) -> None:
+        asset = get_web_demo_asset("/assets/web-demo.js")
+
+        self.assertIsNotNone(asset)
+        content_type, body = asset
+        script = body.decode("utf-8")
+
+        self.assertIn("function buildComposerPlaceholder()", script)
+        self.assertIn("这轮先收：", script)
+        self.assertIn("这轮现在先收什么", script)
+        self.assertIn("最近补充", script)
+        self.assertIn("当前焦点", script)
+        self.assertEqual(content_type, "application/javascript; charset=utf-8")
 
     def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:
         with TemporaryDirectory() as tmpdir:

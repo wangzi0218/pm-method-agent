@@ -155,6 +155,11 @@ def is_follow_up_question_answered(
 
 def _collect_follow_up_questions(case_state: CaseState) -> List[str]:
     asked_questions = list(case_state.metadata.get("answered_questions", []))
+    asked_question_keys = {
+        _question_family_key(str(item).strip())
+        for item in asked_questions
+        if str(item).strip()
+    }
     candidates: List[str] = []
 
     if case_state.output_kind == "continue-guidance-card":
@@ -167,6 +172,9 @@ def _collect_follow_up_questions(case_state: CaseState) -> List[str]:
     for item in candidates:
         normalized = str(item).strip()
         if not normalized:
+            continue
+        question_key = _question_family_key(normalized)
+        if question_key and question_key in asked_question_keys:
             continue
         if any(_question_text_matches(normalized, answered) for answered in asked_questions):
             continue
@@ -273,6 +281,10 @@ def _question_is_still_open(question: str, case_state: CaseState) -> bool:
 
 
 def _question_text_matches(left: str, right: str) -> bool:
+    left_key = _question_family_key(left)
+    right_key = _question_family_key(right)
+    if left_key and right_key and left_key == right_key:
+        return True
     normalized_left = _compact_text(left)
     normalized_right = _compact_text(right)
     if not normalized_left or not normalized_right:
@@ -285,6 +297,38 @@ def _compact_text(text: str) -> str:
     for token in ["当前", "这轮", "还可以", "再", "先", "是否", "是什么", "怎么", "。", "，", "、", " ", "？", "?"]:
         compact = compact.replace(token, "")
     return compact
+
+
+def _question_family_key(text: str) -> str:
+    normalized = text.strip()
+    if not normalized:
+        return ""
+
+    family_markers = [
+        ("business-model", ["企业产品、消费者产品还是内部产品", "产品类型", "企业产品", "消费者产品", "内部产品"]),
+        ("primary-platform", ["主要使用平台是桌面端、移动端、小程序还是多端", "主要平台", "主要交付和使用平台"]),
+        ("role-triplet", ["谁提出需求、谁使用产品、谁承担最终结果", "关键用户角色"]),
+        ("proposer", ["谁是提出需求的人", "提出者", "谁先把这个问题提出来"]),
+        ("user", ["谁是实际使用的人", "实际使用者", "平时是谁在具体操作"]),
+        ("outcome-owner", ["谁承担最终业务结果", "结果责任人", "谁会对结果负责", "最后谁会对结果负责"]),
+        ("role-alignment", ["目标和约束是否一致", "目标差异", "角色关系", "协作边界"]),
+        ("process-flow", ["当前流程", "真实过程", "流程是怎么运行", "发生在流程的哪个环节"]),
+        ("issue-frequency", ["频率和影响范围", "多久出现一次", "影响到什么结果", "问题发生的频率"]),
+        ("existing-workaround", ["替代方案", "绕路方式", "现有替代做法"]),
+        ("why-now", ["为什么现在", "时间窗口", "偏偏是现在"]),
+        ("opportunity-cost", ["机会成本", "晚三个月", "会损失什么"]),
+        ("non-product-path", ["非产品", "培训", "管理", "流程路径", "替代方案", "不同解法"]),
+        ("success-metric", ["成功指标"]),
+        ("guardrail-metric", ["护栏指标"]),
+        ("stop-condition", ["停止条件", "失败或停止条件"]),
+        ("baseline-metric", ["基线指标", "基线数据", "当前的基线数据", "当前基线指标"]),
+        ("validation-action", ["最小验证动作", "观察什么变化"]),
+        ("validation-period", ["验证周期"]),
+    ]
+    for family_key, markers in family_markers:
+        if any(marker in normalized for marker in markers):
+            return family_key
+    return ""
 
 
 def _question_keyword_overlap(question: str, reply_text: str) -> bool:

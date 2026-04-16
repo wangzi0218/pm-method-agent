@@ -1100,6 +1100,7 @@ WEB_DEMO_JS = """\
     workspaceId: "demo",
     activeCaseId: "",
     currentCase: null,
+    currentHistory: null,
     currentCaseRuntime: null,
     currentRuntimeSession: null,
     recentCases: [],
@@ -1638,11 +1639,49 @@ WEB_DEMO_JS = """\
       items.push(`<span class="soft-pill">当前阶段：${inlineFormat(stageLabel(state.currentCase.stage))}</span>`);
     }
 
+    const followUpFocus = state.currentCase?.metadata?.follow_up_focus || "";
+    if (followUpFocus) {
+      items.push(`<span class="soft-pill">这轮先收：${inlineFormat(shortText(followUpFocus, 20))}</span>`);
+    }
+
+    const memoryItem = (state.currentHistory?.memory_items || [])[0];
+    if (memoryItem && memoryItem.title) {
+      items.push(
+        `<span class="soft-pill">最近补到：${inlineFormat(
+          shortText(`${memoryItem.title} / ${memoryItem.summary || memoryItem.latest_note || ""}`, 28)
+        )}</span>`
+      );
+    }
+
     if (sending) {
       items.push(`<span class="soft-pill is-accent">正在承接这一轮输入</span>`);
     }
 
     els.composerMeta.innerHTML = items.join("");
+    els.composerInput.placeholder = buildComposerPlaceholder();
+  }
+
+  function buildComposerPlaceholder() {
+    if (!state.currentCase) {
+      return "例如：最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。";
+    }
+
+    const pendingQuestions = (state.currentCase.pending_questions || []).filter(Boolean);
+    if (pendingQuestions.length) {
+      return `例如：${pendingQuestions[0]}`;
+    }
+
+    const memoryItem = (state.currentHistory?.memory_items || [])[0];
+    if (memoryItem && (memoryItem.summary || memoryItem.latest_note)) {
+      return `例如：顺着刚才补的「${memoryItem.title}」再补一句。`;
+    }
+
+    const followUpFocus = state.currentCase?.metadata?.follow_up_focus || "";
+    if (followUpFocus) {
+      return `例如：顺着「${followUpFocus}」再补一句更具体的信息。`;
+    }
+
+    return "例如：补一句现状、证据、角色关系，或者直接回答上面的判断点。";
   }
 
   function renderCardDigest(casePayload, caseRuntime) {
@@ -1749,6 +1788,8 @@ WEB_DEMO_JS = """\
     const stageHistory = historyPayload.stage_history || [];
     const answeredQuestions = historyPayload.answered_questions || [];
     const memoryItems = historyPayload.memory_items || [];
+    const followUpFocus = historyPayload.follow_up_focus || "";
+    const followUpReason = historyPayload.follow_up_reason || "";
     const caseRuntime = historyPayload.case_runtime || null;
     const latestTurn = conversationTurns[conversationTurns.length - 1];
     const latestText = latestTurn
@@ -1782,6 +1823,14 @@ WEB_DEMO_JS = """\
         <span class="digest-label">已经落下来的结论</span>
         <span class="digest-value">
           已回答 ${answeredQuestions.length} 项，阶段变化 ${stageHistory.length} 次。
+        </span>
+      </article>
+      <article class="digest-card is-calm">
+        <span class="digest-label">这轮现在先收什么</span>
+        <span class="digest-value">
+          ${followUpFocus
+            ? `${inlineFormat(shortText(followUpFocus, 40))}${followUpReason ? `：${inlineFormat(shortText(followUpReason, 72))}` : ""}`
+            : "当前没有额外卡点，可以继续顺着主卡片往下补。"}
         </span>
       </article>
       <article class="digest-card">
@@ -1943,7 +1992,27 @@ WEB_DEMO_JS = """\
 
     const conversationTurns = historyPayload.conversation_turns || [];
     const stageHistory = historyPayload.stage_history || [];
+    const memoryItems = historyPayload.memory_items || [];
+    const followUpFocus = historyPayload.follow_up_focus || "";
     const items = [];
+
+    if (followUpFocus) {
+      items.push({
+        kind: "当前焦点",
+        stage: historyPayload.stage || "",
+        text: followUpFocus,
+        tone: "warm",
+      });
+    }
+
+    memoryItems.slice(0, 2).forEach((item) => {
+      items.push({
+        kind: "最近补充",
+        stage: historyPayload.stage || "",
+        text: `${item.title || "补充信息"}：${item.summary || item.latest_note || ""}`,
+        tone: "soft",
+      });
+    });
 
     conversationTurns.slice(-4).forEach((turn) => {
       items.push({
@@ -2071,6 +2140,14 @@ WEB_DEMO_JS = """\
   }
 
   function renderMainResponse(response) {
+    if (
+      state.currentHistory &&
+      response.case &&
+      state.currentHistory.case_id &&
+      state.currentHistory.case_id !== response.case.case_id
+    ) {
+      state.currentHistory = null;
+    }
     state.currentCase = response.case || null;
     state.currentCaseRuntime = response.case_runtime || null;
     if (response.runtime_session) {
@@ -2128,6 +2205,7 @@ WEB_DEMO_JS = """\
 
     if (!state.activeCaseId) {
       state.currentCase = null;
+      state.currentHistory = null;
       state.currentCaseRuntime = null;
       state.currentRuntimeSession = null;
       els.activeCaseBadge.textContent = "未加载";
@@ -2173,10 +2251,12 @@ WEB_DEMO_JS = """\
       return;
     }
     const payload = await request(`/cases/${encodeURIComponent(state.activeCaseId)}/history`);
+    state.currentHistory = payload.history || null;
     renderHistoryTimeline(payload.history || null);
     renderHistoryDigest(payload.history || null);
     els.historyContent.className = "render-surface render-surface-secondary";
     els.historyContent.innerHTML = renderMarkdownish(payload.rendered_history || "");
+    renderComposerMeta();
   }
 
   async function loadRuntimeSession() {

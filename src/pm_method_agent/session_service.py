@@ -174,7 +174,13 @@ def reply_to_case(
         reply_analysis,
     )
     rerun_input = _compose_session_input(original_input, note_buckets)
-    resume_stage = _resolve_resume_stage(previous_case, reply_analysis)
+    answered_in_this_turn = _collect_answered_pending_questions(
+        previous_case=previous_case,
+        merged_context=merged_context,
+        reply_analysis=reply_analysis,
+        reply_text=reply_text.strip(),
+    )
+    resume_stage = _resolve_resume_stage(previous_case, reply_analysis, answered_in_this_turn)
     next_case = _build_next_case_from_reply(
         previous_case=previous_case,
         rerun_input=rerun_input,
@@ -195,11 +201,10 @@ def reply_to_case(
     )
 
     answered_questions = list(previous_case.metadata.get(SESSION_ANSWERED_QUESTIONS_KEY, []))
-    for question in previous_case.pending_questions:
+    for question in answered_in_this_turn:
         if question in answered_questions:
             continue
-        if is_follow_up_question_answered(question, merged_context, reply_analysis, reply_text.strip()):
-            answered_questions.append(question)
+        answered_questions.append(question)
 
     resolved_gates = list(previous_case.metadata.get(SESSION_RESOLVED_GATES_KEY, []))
     for gate in previous_case.decision_gates:
@@ -283,7 +288,11 @@ def _generate_case_id() -> str:
     return f"case-{uuid4().hex[:8]}"
 
 
-def _resolve_resume_stage(previous_case: CaseState, reply_analysis: ReplyAnalysis) -> str:
+def _resolve_resume_stage(
+    previous_case: CaseState,
+    reply_analysis: ReplyAnalysis,
+    answered_in_this_turn: list[str],
+) -> str:
     if previous_case.output_kind == "context-question-card":
         return "context-alignment"
     if previous_case.output_kind == "continue-guidance-card":
@@ -298,8 +307,26 @@ def _resolve_resume_stage(previous_case: CaseState, reply_analysis: ReplyAnalysi
             return "validation-design"
         return "decision-challenge"
     if previous_case.workflow_state == "done":
-        return "problem-definition"
+        return _resolve_done_case_resume_stage(previous_case, reply_analysis, answered_in_this_turn)
     return previous_case.stage
+
+
+def _resolve_done_case_resume_stage(
+    previous_case: CaseState,
+    reply_analysis: ReplyAnalysis,
+    answered_in_this_turn: list[str],
+) -> str:
+    stage_from_questions = _infer_stage_from_questions(previous_case, answered_in_this_turn)
+    if stage_from_questions:
+        return stage_from_questions
+
+    stage_from_reply = _infer_stage_from_reply(reply_analysis)
+    if stage_from_reply:
+        return stage_from_reply
+
+    if previous_case.stage in {"problem-definition", "decision-challenge", "validation-design"}:
+        return previous_case.stage
+    return "problem-definition"
 
 
 def _build_next_case_from_reply(
@@ -396,6 +423,20 @@ def _build_gate_outcome_case(
 
 def _empty_note_buckets() -> Dict[str, list[str]]:
     return {bucket_key: [] for bucket_key in NOTE_BUCKET_KEYS}
+
+
+def _collect_answered_pending_questions(
+    *,
+    previous_case: CaseState,
+    merged_context: Dict[str, object],
+    reply_analysis: ReplyAnalysis,
+    reply_text: str,
+) -> list[str]:
+    answered_questions: list[str] = []
+    for question in previous_case.pending_questions:
+        if is_follow_up_question_answered(question, merged_context, reply_analysis, reply_text):
+            answered_questions.append(question)
+    return answered_questions
 
 
 def _record_reply_interpreter_enhancement(case_state: CaseState, reply_analysis: ReplyAnalysis) -> None:
@@ -521,6 +562,128 @@ def _resolve_gate_resolution_kind(recommended_option: str, user_choice: str) -> 
     if user_choice == recommended_option:
         return "accepted-recommendation"
     return "overrode-recommendation"
+
+
+def _infer_stage_from_questions(previous_case: CaseState, questions: list[str]) -> str:
+    if not questions:
+        return ""
+    scores = {
+        "context-alignment": 0,
+        "problem-definition": 0,
+        "decision-challenge": 0,
+        "validation-design": 0,
+    }
+    for question in questions:
+        matched = False
+        for finding in previous_case.findings:
+            for unknown in finding.unknowns:
+                if _question_text_matches(question, str(unknown)):
+                    scores[_normalize_dimension_to_stage(finding.dimension)] += 2
+                    matched = True
+                    break
+            if matched:
+                break
+        if matched:
+            continue
+        scores[_infer_stage_from_question_text(question, previous_case)] += 1
+    best_stage, best_score = max(scores.items(), key=lambda item: item[1])
+    return best_stage if best_score > 0 else ""
+
+
+def _infer_stage_from_reply(reply_analysis: ReplyAnalysis) -> str:
+    if reply_analysis.inferred_gate_choice:
+        return "decision-challenge"
+    if reply_analysis.context_updates or any(reply_analysis.role_relationships.values()):
+        return "problem-definition"
+    categories = list(reply_analysis.categories)
+    if "decision" in categories:
+        return "decision-challenge"
+    if "constraint" in categories:
+        return "decision-challenge"
+    if "evidence" in categories:
+        return "validation-design"
+    return ""
+
+
+def _normalize_dimension_to_stage(dimension: str) -> str:
+    mapping = {
+        "problem-framing": "problem-definition",
+        "decision-challenge": "decision-challenge",
+        "validation-design": "validation-design",
+    }
+    return mapping.get(dimension, "problem-definition")
+
+
+def _infer_stage_from_question_text(question: str, previous_case: CaseState) -> str:
+    normalized = question.strip()
+    if any(
+        marker in normalized
+        for marker in [
+            "企业产品、消费者产品还是内部产品",
+            "主要使用平台是桌面端、移动端、小程序还是多端",
+            "谁提出需求、谁使用产品、谁承担最终结果",
+        ]
+    ):
+        return "context-alignment"
+    if any(
+        marker in normalized
+        for marker in [
+            "提出需求的人",
+            "实际使用的人",
+            "结果责任人",
+            "现象层",
+            "为什么现在会发生",
+            "当前流程",
+            "频率和影响范围",
+            "替代方案",
+            "角色关系",
+            "目标差异",
+        ]
+    ):
+        return "problem-definition"
+    if any(
+        marker in normalized
+        for marker in [
+            "为什么现在",
+            "机会成本",
+            "晚三个月",
+            "非产品",
+            "培训",
+            "管理",
+            "流程路径",
+            "时间窗口",
+        ]
+    ):
+        return "decision-challenge"
+    if any(
+        marker in normalized
+        for marker in [
+            "成功指标",
+            "护栏指标",
+            "停止条件",
+            "最小验证动作",
+            "验证周期",
+            "基线指标",
+            "基线数据",
+        ]
+    ):
+        return "validation-design"
+    return previous_case.stage if previous_case.stage in {"problem-definition", "decision-challenge", "validation-design"} else "problem-definition"
+
+
+def _question_text_matches(left: str, right: str) -> bool:
+    normalized_left = _compact_question_text(left)
+    normalized_right = _compact_question_text(right)
+    if not normalized_left or not normalized_right:
+        return False
+    return normalized_left in normalized_right or normalized_right in normalized_left
+
+
+def _compact_question_text(text: str) -> str:
+    compact = text.strip()
+    for token in ["当前", "这轮", "还可以", "再", "先", "是否", "是什么", "怎么", "。", "，", "、", " ", "？", "?"]:
+        compact = compact.replace(token, "")
+    return compact
 
 
 def _has_explicit_correction_signal(source_text: str) -> bool:
