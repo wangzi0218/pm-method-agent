@@ -28,7 +28,7 @@ def question_family_key(text: str) -> str:
         ("existing-workaround", ["替代方案", "绕路方式", "现有替代做法"]),
         ("why-now", ["为什么现在", "时间窗口", "偏偏是现在"]),
         ("opportunity-cost", ["机会成本", "晚三个月", "会损失什么"]),
-        ("non-product-path", ["非产品", "培训", "管理", "流程路径", "替代方案", "不同解法"]),
+        ("non-product-path", ["非产品", "培训", "管理", "流程路径", "替代方案", "不同解法", "不改产品能否先解决 60%"]),
         ("success-metric", ["成功指标"]),
         ("guardrail-metric", ["护栏指标"]),
         ("stop-condition", ["停止条件", "失败或停止条件"]),

@@ -1098,6 +1098,71 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("最近一轮还差半步的", rendered_history)
         self.assertIn("成功指标是什么", rendered_history)
 
+    def test_partial_answer_can_narrow_follow_up_focus_and_question_order(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            interpreter = LLMReplyInterpreter(
+                adapter=StubLLMAdapter(
+                    content=(
+                        '{"partial_pending_questions":["成功指标是什么"],'
+                        '"categories":["evidence"],'
+                        '"parser_confidence":"strong"}'
+                    )
+                )
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="我觉得这件事如果能提升一点发帖率就值得看，但具体目标还没想清。",
+                store=store,
+                reply_interpreter=interpreter,
+            )
+
+        self.assertEqual(replied_case.metadata.get("last_partial_pending_questions"), ["成功指标是什么"])
+        self.assertEqual(replied_case.metadata.get("follow_up_focus"), "先把刚补到一半的点说完整")
+        self.assertIn("还有半步没落稳", replied_case.metadata.get("follow_up_reason", ""))
+        self.assertTrue(replied_case.pending_questions)
+        self.assertEqual(replied_case.pending_questions[0], "成功指标是什么")
+        self.assertEqual(
+            replied_case.metadata.get("follow_up_display_questions", [])[0],
+            "发帖率方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？",
+        )
+        rendered_card = render_case_state(replied_case)
+        self.assertIn("先把刚补到一半的点说完整", rendered_card)
+        self.assertIn("发帖率方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？", rendered_card)
+
+    def test_local_partial_rewrite_templates_can_cover_non_product_and_role_triplet(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="decision-challenge",
+            workflow_state="open",
+            output_kind="review-card",
+            raw_input="门店提醒总出错，我在想要不要做产品能力。",
+            pending_questions=["不改产品能否先解决 60%", "谁提出需求、谁使用产品、谁承担最终结果"],
+            metadata={
+                "last_partial_pending_questions": ["不改产品能否先解决 60%", "谁提出需求、谁使用产品、谁承担最终结果"],
+                "session_note_buckets": {
+                    "decision_notes": ["前台和店长都觉得值得看，但还没比较流程和运营能不能先兜住。"],
+                },
+            },
+        )
+
+        apply_follow_up_copywriting(case_state)
+
+        self.assertEqual(
+            case_state.metadata.get("follow_up_display_questions"),
+            [
+                "你已经碰到方向了，再补一句：不改产品的话，先靠流程或运营能不能兜住一部分？",
+                "这层已经碰到了，再补一句：谁提、谁在用、最后谁盯结果？",
+            ],
+        )
+
     def test_role_relationships_can_influence_problem_framing_judgment(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)
@@ -1664,6 +1729,30 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
         rendered_history = render_case_history(enhanced_case)
         self.assertIn("follow-up-copywriter", rendered_history)
+
+    def test_llm_follow_up_copywriter_request_includes_partial_pending_questions(self) -> None:
+        adapter = StubLLMAdapter(
+            content='{"focus_text":"先把这半步补完。","reason_text":"顺着刚才那一点继续，会更省来回。"}'
+        )
+        copywriter = LLMFollowUpCopywriter(adapter=adapter)
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="validation-design",
+            workflow_state="open",
+            output_kind="continue-guidance-card",
+            raw_input="新用户发帖率一直不高，我还在想要不要做引导。",
+            pending_questions=["成功指标是什么", "停止条件是什么"],
+            metadata={
+                "follow_up_focus": "先把刚补到一半的点说完整",
+                "follow_up_reason": "你这轮已经碰到关键点了，但还有半步没落稳，顺着这一点补完会更省来回。",
+                "last_partial_pending_questions": ["成功指标是什么"],
+            },
+        )
+
+        apply_follow_up_copywriting(case_state, copywriter=copywriter)
+
+        user_payload = json.loads(adapter.requests[0].messages[1].content)
+        self.assertEqual(user_payload["partial_pending_questions"], ["成功指标是什么"])
 
     def test_llm_demo_scenario_generator_can_normalize_generated_scenarios(self) -> None:
         generator = LLMDemoScenarioGenerator(

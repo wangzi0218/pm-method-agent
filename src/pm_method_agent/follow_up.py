@@ -73,7 +73,7 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
             loop_state="needs-answer",
         )
 
-    questions = _collect_follow_up_questions(case_state)
+    questions = _prioritize_partial_questions(case_state, _collect_follow_up_questions(case_state))
     if not questions:
         return FollowUpPlan(
             questions=[],
@@ -189,6 +189,8 @@ def _role_follow_up_questions(case_state: CaseState) -> List[str]:
 
 
 def _follow_up_focus(case_state: CaseState) -> str:
+    if _active_partial_questions(case_state):
+        return "先把刚补到一半的点说完整"
     if case_state.stage == "problem-definition":
         return "先把问题收稳"
     if case_state.stage == "decision-challenge":
@@ -201,6 +203,8 @@ def _follow_up_focus(case_state: CaseState) -> str:
 
 
 def _follow_up_reason(case_state: CaseState) -> str:
+    if _active_partial_questions(case_state):
+        return "你这轮已经碰到关键点了，但还有半步没落稳，顺着这一点补完会更省来回。"
     if case_state.workflow_state == "blocked":
         return case_state.blocking_reason or "这一步还有卡点，先补最影响推进的信息会更稳。"
     if case_state.stage == "validation-design":
@@ -258,3 +262,39 @@ def _limit_questions(items: List[str]) -> List[str]:
         if len(deduped) >= 3:
             break
     return deduped
+
+
+def _active_partial_questions(case_state: CaseState) -> List[str]:
+    raw_items = case_state.metadata.get("last_partial_pending_questions", [])
+    if not isinstance(raw_items, list):
+        return []
+    active_items: List[str] = []
+    current_questions = list(case_state.pending_questions or [])
+    for item in raw_items:
+        normalized = str(item).strip()
+        if not normalized:
+            continue
+        if any(question_text_matches(normalized, current) for current in current_questions):
+            matched = next(
+                (current for current in current_questions if question_text_matches(normalized, current)),
+                normalized,
+            )
+            if matched not in active_items:
+                active_items.append(matched)
+    return active_items
+
+
+def _prioritize_partial_questions(case_state: CaseState, questions: List[str]) -> List[str]:
+    partials = _active_partial_questions(case_state)
+    if not partials:
+        return questions
+    ordered: List[str] = []
+    for partial in partials:
+        if partial not in ordered:
+            ordered.append(partial)
+    for question in questions:
+        if question not in ordered:
+            ordered.append(question)
+        if len(ordered) >= 3:
+            break
+    return ordered[:3]

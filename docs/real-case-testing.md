@@ -171,6 +171,72 @@ PYTHONPATH=src python3 -m pm_method_agent.cli agent \
 - 每一轮是否都承接上一次，而不是来回重复
 - 原本阻塞的地方，会不会因为信息补齐而自然推进
 
+### 路径四：专门抽查“半步回答”
+
+这条路径不是看系统能不能识别完整回答，而是看：
+
+- 用户只答到一半时，系统会不会顺着那半步继续问
+- 下一轮追问会不会比原始结构化问题更像自然对话
+- 系统会不会又退回“重新问一遍原题”
+
+推荐至少抽两类：
+
+#### 1. 指标类半步回答
+
+第一轮：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id half-step-metric \
+  "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+```
+
+第二轮只补半句：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id half-step-metric \
+  "我觉得这件事如果能提升一点发帖率就值得看，但具体目标还没想清。"
+```
+
+这时重点看：
+
+- 系统有没有识别这是“成功指标只答到一半”
+- 追问有没有收窄成类似“做到什么程度，你会觉得这轮值得继续”
+- 而不是继续原样问“成功指标是什么”
+
+#### 2. 非产品路径半步回答
+
+第一轮：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id half-step-non-product \
+  "最近诊所前台老说提醒总会漏，我在想是不是要处理一下。"
+```
+
+第二轮补背景：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id half-step-non-product \
+  "这是个 ToB HIS 产品，平时前台在网页端操作，店长盯结果。"
+```
+
+第三轮只补半句：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id half-step-non-product \
+  "我也在想能不能先靠晨会提醒和流程约束顶一下，但还没比较清楚。"
+```
+
+这时重点看：
+
+- 系统有没有识别这是“非产品路径只答到一半”
+- 追问有没有收窄成类似“先靠流程或运营能不能兜住一部分”
+- 决策关口还在不在，还是被半句输入误放行了
+
 ### 路径三：先补项目背景，再测真实问题
 
 适合一个项目里连续测试多个真实需求。
@@ -258,6 +324,19 @@ curl -X POST http://127.0.0.1:8000/agent/messages \
 
 - 只有空泛建议
 - 或者一步塞太多
+
+### 5. 半步回答后会不会继续顺着问
+
+好的表现：
+
+- 能看出来用户这轮已经碰到关键点
+- 下一轮会优先追这个半步，而不是换题
+- 问法会更像“顺着刚才那句话继续”
+
+不好的表现：
+
+- 明明只差半步，却像重新发了一张问卷
+- 或者完全没接住，直接换成别的问题
 
 ### 5. 语气是否自然
 

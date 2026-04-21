@@ -481,10 +481,20 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("## 这一步还想先确认")
     _append_gate_items(lines, case_state)
     lines.append("")
+    follow_up_focus = _display_follow_up_focus(case_state)
+    follow_up_reason = _display_follow_up_reason(case_state)
+    if follow_up_focus:
+        lines.append("## 这轮更值得先收")
+        lines.append(_polish_display_text(follow_up_focus))
+        lines.append("")
+    if follow_up_reason:
+        lines.append("## 为什么先收这个")
+        lines.append(_polish_display_text(follow_up_reason))
+        lines.append("")
     lines.append("## 更建议先补")
     for action in _collect_next_actions(case_state):
         lines.append(f"- {action}")
-    follow_up_questions = _collect_follow_up_questions(case_state)
+    follow_up_questions = _display_follow_up_questions(case_state)
     if follow_up_questions:
         lines.append("")
         lines.append("## 如果继续往下聊，优先补这几项")

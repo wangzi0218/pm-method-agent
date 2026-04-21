@@ -14,6 +14,7 @@ from pm_method_agent.llm_adapter import (
 )
 from pm_method_agent.models import CaseState
 from pm_method_agent.prompting import build_prompt_composition
+from pm_method_agent.question_resolution import question_family_key
 
 
 FOLLOW_UP_DISPLAY_FOCUS_KEY = "follow_up_display_focus"
@@ -70,6 +71,7 @@ def apply_follow_up_copywriting(
     case_state: CaseState,
     copywriter: Optional[FollowUpCopywriter] = None,
 ) -> CaseState:
+    _apply_local_follow_up_display_copy(case_state)
     active_copywriter = copywriter or build_follow_up_copywriter_from_env()
     if active_copywriter is None:
         return case_state
@@ -101,6 +103,7 @@ def _build_follow_up_request(case_state: CaseState) -> LLMRequest:
             "语气要像一起推进问题判断的产品同事，自然、克制、直接，不要汇报腔，不要客服腔。",
             "优先让用户一眼看懂“这轮先收什么”和“为什么先收这个”。",
             "追问句子要短，尽量像真实对话，不要把三件事硬挤进一句话。",
+            "如果用户这轮已经答到一半，优先顺着那半步继续问，不要装作没看到。",
         ],
         tool_constraints=[
             "不能新增新的问题家族，不能改动问题顺序，不能改变原本的推进方向。",
@@ -128,6 +131,7 @@ def _build_follow_up_request(case_state: CaseState) -> LLMRequest:
         "focus_text": str(case_state.metadata.get("follow_up_focus", "")).strip(),
         "reason_text": str(case_state.metadata.get("follow_up_reason", "")).strip(),
         "pending_questions": list(case_state.pending_questions[:3]),
+        "partial_pending_questions": list(case_state.metadata.get("last_partial_pending_questions", [])),
         "context_profile": case_state.context_profile,
         "latest_note": _latest_note(case_state),
     }
@@ -186,6 +190,153 @@ def _normalize_display_questions(payload: object, original_questions: list[str])
             break
 
     return normalized[: min(len(original_questions), 3)] or None
+
+
+def _apply_local_follow_up_display_copy(case_state: CaseState) -> None:
+    partial_questions = _partial_pending_questions(case_state)
+    if not partial_questions:
+        return
+
+    display_questions = _build_partial_display_questions(case_state, partial_questions)
+    if display_questions:
+        case_state.metadata[FOLLOW_UP_DISPLAY_QUESTIONS_KEY] = display_questions
+
+
+def _partial_pending_questions(case_state: CaseState) -> list[str]:
+    raw_items = case_state.metadata.get("last_partial_pending_questions", [])
+    if not isinstance(raw_items, list):
+        return []
+    current_questions = [str(item).strip() for item in case_state.pending_questions if str(item).strip()]
+    matched: list[str] = []
+    for item in raw_items:
+        normalized = str(item).strip()
+        if not normalized:
+            continue
+        for current in current_questions:
+            if current == normalized or question_family_key(current) == question_family_key(normalized):
+                if current not in matched:
+                    matched.append(current)
+                break
+    return matched
+
+
+def _build_partial_display_questions(case_state: CaseState, partial_questions: list[str]) -> list[str]:
+    latest_note = _latest_note(case_state)
+    rewritten: list[str] = []
+    for question in partial_questions[:3]:
+        rewritten_question = _rewrite_partial_question(question, latest_note)
+        if rewritten_question and rewritten_question not in rewritten:
+            rewritten.append(rewritten_question)
+
+    for question in case_state.pending_questions[:3]:
+        if question in partial_questions:
+            continue
+        polished = _polish_text(str(question).strip())
+        if polished and polished not in rewritten:
+            rewritten.append(polished)
+        if len(rewritten) >= 3:
+            break
+    return rewritten[:3]
+
+
+def _rewrite_partial_question(question: str, latest_note: str) -> str:
+    family_key = question_family_key(question)
+    note = latest_note.strip()
+    metric_hint = _extract_metric_hint(note)
+    role_hint = _extract_role_hint(note)
+    if family_key == "success-metric":
+        if metric_hint:
+            return f"{metric_hint}方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？"
+        return "目标方向已经有一点了，再补一句：做到什么程度，你会觉得这轮值得继续？"
+    if family_key == "guardrail-metric":
+        if metric_hint:
+            return f"主指标已经碰到了，再补一句：除了{metric_hint}，你最不希望哪项指标被带坏？"
+        return "主指标已经有方向了，再补一句：你最不希望哪项指标被带坏？"
+    if family_key == "stop-condition":
+        return "这轮已经有一点判断了，再补一句：出现什么情况，你会先停下来？"
+    if family_key == "baseline-metric":
+        if metric_hint:
+            return f"{metric_hint}方向已经提到了，再补一个现在的基线值，大概数量级也可以。"
+        return "方向已经提到了，再补一个现在的基线值，大概数量级也可以。"
+    if family_key == "why-now":
+        return "已经有一点理由了，再补一句：为什么偏偏是现在更值得做？"
+    if family_key == "opportunity-cost":
+        return "再补一句：如果先不做，最可能丢掉什么？"
+    if family_key == "non-product-path":
+        return "你已经碰到方向了，再补一句：不改产品的话，先靠流程或运营能不能兜住一部分？"
+    if family_key == "business-model":
+        return "方向已经有一点了，再补一句：这更像企业产品、消费者产品，还是内部场景？"
+    if family_key == "primary-platform":
+        return "再补一句：这件事主要发生在网页、App、小程序，还是多端一起看？"
+    if family_key == "role-triplet":
+        return "这层已经碰到了，再补一句：谁提、谁在用、最后谁盯结果？"
+    if family_key == "proposer":
+        if role_hint:
+            return f"已经提到{role_hint}了，再补一句：最先把这件事提出来的人是谁？"
+        return "这点已经碰到了，再补一句：最先把这件事提出来的人是谁？"
+    if family_key == "user":
+        if role_hint:
+            return f"已经提到{role_hint}了，再补一句：平时真正在操作这一步的人，到底是谁？"
+        return "再补一句：平时真正在操作这一步的人，到底是谁？"
+    if family_key == "outcome-owner":
+        if role_hint:
+            return f"已经提到{role_hint}了，再补一句：最后谁会盯这件事的结果？"
+        return "再补一句：最后谁会盯这件事的结果？"
+    if family_key == "role-alignment":
+        return "角色已经提到一点了，再补一句：他们想要的结果，是一致的还是有冲突？"
+    if family_key == "process-flow":
+        return "已经提到现状了，再顺手补一句：现在这步流程具体是怎么走的？"
+    if family_key == "issue-frequency":
+        return "这点已经有点感觉了，再补一句：大概多久会发生一次，影响到多大范围？"
+    if family_key == "existing-workaround":
+        return "已经提到现状了，再补一句：现在大家会怎么绕过去，或者先靠什么办法顶着？"
+    if family_key == "validation-action":
+        return "方向已经有了，再补一句：你想先用什么最小动作试一下？"
+    if family_key == "validation-period":
+        return "再补一句：你觉得观察多久，才足够判断这件事值不值得继续？"
+    if note:
+        return f"顺着你刚才提到的这点，再补一句：{_polish_text(question)}"
+    return f"顺着刚才那半步，再补一句：{_polish_text(question)}"
+
+
+def _extract_metric_hint(note: str) -> str:
+    if not note:
+        return ""
+    candidates = [
+        "首帖率",
+        "发帖率",
+        "到诊率",
+        "转化率",
+        "留存",
+        "活跃",
+        "预约到诊",
+        "提醒触达",
+        "下单转化",
+    ]
+    for item in candidates:
+        if item in note:
+            return item
+    return ""
+
+
+def _extract_role_hint(note: str) -> str:
+    if not note:
+        return ""
+    candidates = [
+        "前台",
+        "店长",
+        "运营",
+        "医生",
+        "护士",
+        "管理者",
+        "用户",
+        "新用户",
+        "审核同学",
+    ]
+    for item in candidates:
+        if item in note:
+            return item
+    return ""
 
 
 def _latest_note(case_state: CaseState) -> str:

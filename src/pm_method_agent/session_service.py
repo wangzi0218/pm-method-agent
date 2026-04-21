@@ -263,6 +263,7 @@ def reply_to_case(
     next_case.metadata["llm_runtime"] = get_llm_runtime_status()
     next_case.metadata["show_case_id"] = True
     next_case = attach_follow_up_plan(next_case)
+    next_case = apply_follow_up_copywriting(next_case)
     active_store.save(next_case)
     return next_case
 

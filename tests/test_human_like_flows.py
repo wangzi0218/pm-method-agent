@@ -5,6 +5,9 @@ from tempfile import TemporaryDirectory
 os.environ.setdefault("PMMA_DISABLE_ENV_AUTOLOAD", "1")
 
 from pm_method_agent.agent_shell import PMMethodAgentShell
+from pm_method_agent.reply_interpreter import LLMReplyInterpreter
+from pm_method_agent.session_service import create_case, default_store, reply_to_case
+from tests.test_smoke import StubLLMAdapter
 
 
 class HumanLikeFlowTest(unittest.TestCase):
@@ -150,6 +153,64 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIn(third_response.case_state.output_kind, {"review-card", "decision-gate-card", "stage-block-card"})
         self.assertNotIn("证据=", third_response.rendered_card)
         self.assertIn("我看到的信号", third_response.rendered_card)
+
+    def test_realistic_toc_partial_metric_reply_can_render_half_step_question(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            first_case = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            interpreter = LLMReplyInterpreter(
+                adapter=StubLLMAdapter(
+                    content='{"partial_pending_questions":["成功指标是什么"],"categories":["evidence"],"parser_confidence":"strong"}'
+                )
+            )
+            second_case = reply_to_case(
+                case_id=first_case.case_id,
+                reply_text="我觉得这件事如果能提升一点发帖率就值得看，但具体目标还没想清。",
+                store=store,
+                reply_interpreter=interpreter,
+            )
+
+        from pm_method_agent.renderers import render_case_state
+
+        rendered_card = render_case_state(second_case)
+        self.assertEqual(second_case.output_kind, "review-card")
+        self.assertEqual(second_case.metadata.get("follow_up_focus"), "先把刚补到一半的点说完整")
+        self.assertIn("发帖率方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？", rendered_card)
+        self.assertNotIn("- 成功指标是什么", rendered_card)
+
+    def test_realistic_tob_partial_non_product_reply_can_keep_gate_priority(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            first_case = create_case(
+                raw_input=(
+                    "这是一个 ToB 审批系统，主要在 PC 端使用。审批专员在日常操作里经常遇到跨部门审批漏人，"
+                    "部门负责人对 SLA 结果负责，我现在还没决定是不是要做产品。"
+                ),
+                store=store,
+            )
+            interpreter = LLMReplyInterpreter(
+                adapter=StubLLMAdapter(
+                    content='{"partial_pending_questions":["不改产品能否先解决 60%"],"categories":["decision"],"parser_confidence":"strong"}'
+                )
+            )
+            second_case = reply_to_case(
+                case_id=first_case.case_id,
+                reply_text="我也在想能不能先靠晨会提醒和流程约束顶一下，但还没比较清楚。",
+                store=store,
+                reply_interpreter=interpreter,
+            )
+
+        from pm_method_agent.renderers import render_case_state
+
+        rendered_card = render_case_state(second_case)
+        self.assertEqual(second_case.output_kind, "decision-gate-card")
+        self.assertIn("优先评估非产品路径", rendered_card)
 
 
 if __name__ == "__main__":
