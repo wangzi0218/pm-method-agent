@@ -14,6 +14,10 @@ from pm_method_agent.llm_adapter import (
 )
 from pm_method_agent.models import CaseState
 from pm_method_agent.prompting import build_prompt_composition
+from pm_method_agent.question_resolution import (
+    normalize_question_matches,
+    resolve_pending_question_matches,
+)
 from pm_method_agent.role_extraction import (
     extract_role_relationships,
     extract_roles_from_text,
@@ -36,6 +40,8 @@ class ReplyAnalysis:
     categories: List[str]
     inferred_gate_choice: Optional[str]
     parser_name: str
+    answered_pending_questions: List[str] = field(default_factory=list)
+    partial_pending_questions: List[str] = field(default_factory=list)
     parser_confidence: str = "medium"
     fallback_used: bool = False
     fallback_reason: str = ""
@@ -57,7 +63,6 @@ class HeuristicReplyInterpreter:
         reply_text: str,
         previous_case: Optional[CaseState] = None,
     ) -> ReplyAnalysis:
-        del previous_case
         text = reply_text.strip()
         extracted: Dict[str, object] = {}
         lowered = text.lower()
@@ -92,14 +97,25 @@ class HeuristicReplyInterpreter:
         if inferred_roles:
             extracted["target_user_roles"] = filter_roles_for_text(inferred_roles, text)
 
+        pending_questions = previous_case.pending_questions if previous_case else []
+        merged_context = _merge_context_updates(previous_case.context_profile if previous_case else {}, extracted)
+        answered_matches = resolve_pending_question_matches(
+            pending_questions,
+            merged_context=merged_context,
+            role_relationships=role_relationships,
+            inferred_gate_choice=_infer_gate_choice(lowered),
+            reply_text=text,
+        )
+
         return ReplyAnalysis(
             context_updates=extracted,
             role_relationships=role_relationships,
             categories=_classify_reply_categories(text, extracted),
             inferred_gate_choice=_infer_gate_choice(lowered),
             parser_name="heuristic",
+            answered_pending_questions=answered_matches,
             parser_confidence="medium",
-            raw_payload={"reply_text": text},
+            raw_payload={"reply_text": text, "answered_pending_questions": answered_matches},
         )
 
 
@@ -137,8 +153,25 @@ class LLMReplyInterpreter:
         categories = _normalize_categories(payload.get("categories", []))
         gate_choice = _normalize_gate_choice(payload.get("inferred_gate_choice"))
         role_relationships = _normalize_role_relationships(payload.get("role_relationships", {}))
+        pending_questions = previous_case.pending_questions if previous_case else []
+        answered_matches = _normalize_pending_question_matches(
+            payload.get("answered_pending_questions", []),
+            pending_questions,
+        )
+        partial_matches = _normalize_pending_question_matches(
+            payload.get("partial_pending_questions", []),
+            pending_questions,
+            exclude=answered_matches,
+        )
 
-        if not context_updates and not categories and not gate_choice and not any(role_relationships.values()):
+        if (
+            not context_updates
+            and not categories
+            and not gate_choice
+            and not any(role_relationships.values())
+            and not answered_matches
+            and not partial_matches
+        ):
             return _build_fallback_reply_analysis(
                 self._fallback.analyze_reply(reply_text, previous_case=previous_case),
                 parser_name="llm-fallback",
@@ -157,6 +190,8 @@ class LLMReplyInterpreter:
             categories=categories,
             inferred_gate_choice=gate_choice,
             parser_name="llm",
+            answered_pending_questions=answered_matches,
+            partial_pending_questions=partial_matches,
             parser_confidence=str(payload.get("parser_confidence", "medium")),
             raw_payload=payload if isinstance(payload, dict) else {},
         )
@@ -195,6 +230,18 @@ class HybridReplyInterpreter:
             categories=_merge_categories(heuristic_result.categories, llm_result.categories),
             inferred_gate_choice=llm_result.inferred_gate_choice or heuristic_result.inferred_gate_choice,
             parser_name="hybrid-fallback" if llm_result.fallback_used else "hybrid",
+            answered_pending_questions=_merge_question_matches(
+                heuristic_result.answered_pending_questions,
+                llm_result.answered_pending_questions,
+            ),
+            partial_pending_questions=_merge_question_matches(
+                heuristic_result.partial_pending_questions,
+                llm_result.partial_pending_questions,
+                exclude=_merge_question_matches(
+                    heuristic_result.answered_pending_questions,
+                    llm_result.answered_pending_questions,
+                ),
+            ),
             parser_confidence=heuristic_result.parser_confidence if llm_result.fallback_used else llm_result.parser_confidence,
             fallback_used=llm_result.fallback_used,
             fallback_reason=llm_result.fallback_reason,
@@ -267,6 +314,7 @@ def _build_interpretation_request(reply_text: str, previous_case: Optional[CaseS
             "role_relationships 仅允许包含 proposers、users、outcome_owners，且值为字符串数组。",
             "categories 仅允许包含 context、evidence、decision、constraint、other。",
             "inferred_gate_choice 仅允许为 defer、try-non-product-first、productize-now 或 null。",
+            "answered_pending_questions 和 partial_pending_questions 仅允许从 pending_questions 中挑选原题或等价表达。",
         ],
         task_instruction="请把当前回复整理为可供会话服务层继续推进的结构化结果。",
     )
@@ -352,6 +400,18 @@ def _normalize_role_relationships(payload: object) -> Dict[str, List[str]]:
     return normalized
 
 
+def _normalize_pending_question_matches(
+    payload: object,
+    pending_questions: List[str],
+    *,
+    exclude: Optional[List[str]] = None,
+) -> List[str]:
+    normalized = normalize_question_matches(payload, pending_questions)
+    if not exclude:
+        return normalized
+    return [item for item in normalized if item not in exclude]
+
+
 def _build_fallback_reply_analysis(
     fallback_result: ReplyAnalysis,
     *,
@@ -390,6 +450,24 @@ def _build_hybrid_raw_payload(
         payload["fallback_reason"] = llm_result.fallback_reason
         payload["fallback_parser"] = str(llm_result.raw_payload.get("fallback_parser", "")).strip() or llm_result.parser_name
     return payload
+
+
+def _merge_question_matches(
+    primary: List[str],
+    secondary: List[str],
+    *,
+    exclude: Optional[List[str]] = None,
+) -> List[str]:
+    merged: List[str] = []
+    for item in list(primary) + list(secondary):
+        if not isinstance(item, str) or not item.strip():
+            continue
+        rendered = item.strip()
+        if exclude and rendered in exclude:
+            continue
+        if rendered not in merged:
+            merged.append(rendered)
+    return merged
 
 
 def _merge_context_updates(primary: Dict[str, object], secondary: Dict[str, object]) -> Dict[str, object]:

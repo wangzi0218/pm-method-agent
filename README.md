@@ -137,6 +137,10 @@
 
 这样可以更自然地接入各种兼容 OpenAI 格式的模型服务。
 
+如果你关心“语义理解和自然语气这些能力，到底哪些该交给 LLM，哪些必须留在 runtime”，建议继续看：
+
+- [docs/llm-runtime-boundary.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-runtime-boundary.md)
+
 如果模型服务暂时不可用，例如 `base_url` 不可达、超时、返回异常内容，当前实现会自动回退到本地规则链路继续完成这一轮分析，而不是直接把整轮会话打成失败。这个降级现在已经覆盖回复解释、前置收敛和文案增强三个入口。
 
 ## 适用场景

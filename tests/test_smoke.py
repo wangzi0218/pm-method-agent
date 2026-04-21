@@ -31,6 +31,13 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     OpenAICompatibleConfig,
 )
+from pm_method_agent.follow_up_copywriter import (
+    FOLLOW_UP_DISPLAY_FOCUS_KEY,
+    FOLLOW_UP_DISPLAY_QUESTIONS_KEY,
+    FOLLOW_UP_DISPLAY_REASON_KEY,
+    LLMFollowUpCopywriter,
+    apply_follow_up_copywriting,
+)
 from pm_method_agent.models import CaseState
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis, run_analysis_with_context
@@ -210,6 +217,30 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("[输出纪律]", system_prompt)
         self.assertIn("[任务目标]", system_prompt)
         self.assertIn("prompt_layers", request.metadata)
+
+    def test_llm_reply_interpreter_can_normalize_answered_pending_questions(self) -> None:
+        adapter = StubLLMAdapter(
+            content=(
+                '{"answered_pending_questions":["当前的基线数据是多少","失败或停止条件是什么"],'
+                '"partial_pending_questions":["成功指标是什么"],'
+                '"parser_confidence":"strong"}'
+            )
+        )
+        interpreter = LLMReplyInterpreter(adapter=adapter)
+        previous_case = CaseState(
+            case_id="demo-case",
+            stage="validation-design",
+            pending_questions=["当前基线指标是什么", "停止条件是什么", "成功指标是什么"],
+            raw_input="新用户发帖率一直上不来。",
+        )
+
+        analysis = interpreter.analyze_reply(
+            "当前首帖率大概 6%，如果两周没起色就停。",
+            previous_case=previous_case,
+        )
+
+        self.assertEqual(analysis.answered_pending_questions, ["当前基线指标是什么", "停止条件是什么"])
+        self.assertEqual(analysis.partial_pending_questions, ["成功指标是什么"])
 
     def test_llm_reply_interpreter_can_fall_back_to_heuristic_when_adapter_fails(self) -> None:
         interpreter = LLMReplyInterpreter(adapter=RaisingLLMAdapter(RuntimeError("network-down")))
@@ -1031,6 +1062,42 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertFalse(any("谁提出需求、谁使用产品、谁承担最终结果" in question for question in answered_questions))
         self.assertEqual(replied_case.context_profile["primary_platform"], "pc")
 
+    def test_session_service_uses_reply_attribution_to_mark_answered_questions(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            interpreter = LLMReplyInterpreter(
+                adapter=StubLLMAdapter(
+                    content=(
+                        '{"answered_pending_questions":["当前的基线数据是多少","停止条件可以怎么定"],'
+                        '"partial_pending_questions":["成功指标是什么"],'
+                        '"categories":["evidence"],'
+                        '"parser_confidence":"strong"}'
+                    )
+                )
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="当前首帖率大概只有 6%，如果两周内没起色就先停。",
+                store=store,
+                reply_interpreter=interpreter,
+            )
+
+        answered_questions = list(replied_case.metadata.get("answered_questions", []))
+        self.assertIn("当前基线指标是什么", answered_questions)
+        self.assertIn("失败或停止条件是什么", answered_questions)
+        self.assertNotIn("成功指标是什么", answered_questions)
+        self.assertEqual(replied_case.metadata.get("last_partial_pending_questions"), ["成功指标是什么"])
+        rendered_history = render_case_history(replied_case)
+        self.assertIn("最近一轮还差半步的", rendered_history)
+        self.assertIn("成功指标是什么", rendered_history)
+
     def test_role_relationships_can_influence_problem_framing_judgment(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)
@@ -1524,6 +1591,79 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered_history = render_case_history(enhanced_case)
         self.assertIn("最近走过本地兜底", rendered_history)
         self.assertIn("copywriter", rendered_history)
+
+    def test_llm_follow_up_copywriter_can_only_enhance_display_slots(self) -> None:
+        adapter = StubLLMAdapter(
+            content=(
+                '{"focus_text":"这轮先把判断门槛说清。",'
+                '"reason_text":"先把这一层说透，后面就不用来回重写。",'
+                '"display_questions":["你现在更偏向先补证据，还是先判断值不值得做？","如果先不做，最可能丢掉什么？"]}'
+            )
+        )
+        copywriter = LLMFollowUpCopywriter(adapter=adapter)
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="decision-challenge",
+            workflow_state="open",
+            output_kind="continue-guidance-card",
+            raw_input="最近新用户发帖率上不去，我还没想清楚要不要做产品改动。",
+            normalized_summary="方向已经差不多了，但还要把投入判断看稳。",
+            pending_questions=["为什么现在更值得做", "如果晚两个月做，会损失什么"],
+            metadata={
+                "follow_up_focus": "先把值不值得做看清",
+                "follow_up_reason": "这轮已经能看到方向，但还差几项信息才能把投入判断看稳。",
+            },
+        )
+
+        original_pending_questions = list(case_state.pending_questions)
+        enhanced_case = apply_follow_up_copywriting(case_state, copywriter=copywriter)
+
+        self.assertEqual(enhanced_case.pending_questions, original_pending_questions)
+        self.assertEqual(enhanced_case.metadata[FOLLOW_UP_DISPLAY_FOCUS_KEY], "这轮先把判断门槛说清。")
+        self.assertEqual(enhanced_case.metadata[FOLLOW_UP_DISPLAY_REASON_KEY], "先把这一层说透，后面就不用来回重写。")
+        self.assertEqual(
+            enhanced_case.metadata[FOLLOW_UP_DISPLAY_QUESTIONS_KEY],
+            ["你现在更偏向先补证据，还是先判断值不值得做？", "如果先不做，最可能丢掉什么？"],
+        )
+        self.assertEqual(enhanced_case.metadata["follow_up_copywriter"], "llm")
+        self.assertFalse(enhanced_case.metadata["llm_enhancements"]["follow-up-copywriter"]["fallback_used"])
+        rendered = render_case_state(enhanced_case)
+        self.assertIn("这轮更值得先收", rendered)
+        self.assertIn("这轮先把判断门槛说清。", rendered)
+        self.assertIn("为什么先收这个", rendered)
+        self.assertIn("你现在更偏向先补证据，还是先判断值不值得做？", rendered)
+        system_prompt = adapter.requests[0].messages[0].content
+        self.assertIn("[角色职责]", system_prompt)
+        self.assertIn("prompt_layers", adapter.requests[0].metadata)
+
+    def test_llm_follow_up_copywriter_can_fall_back_when_adapter_fails(self) -> None:
+        copywriter = LLMFollowUpCopywriter(adapter=RaisingLLMAdapter(RuntimeError("llm-offline")))
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="problem-definition",
+            workflow_state="open",
+            output_kind="continue-guidance-card",
+            raw_input="最近门店提醒流程总出错，我想看看是不是该处理。",
+            pending_questions=["这件事平时是谁在具体操作，和提出需求的人是不是同一类人？"],
+            metadata={
+                "follow_up_focus": "先把问题收稳",
+                "follow_up_reason": "这轮已经有基础判断了，再补最关键的几项会更顺。",
+            },
+        )
+
+        enhanced_case = apply_follow_up_copywriting(case_state, copywriter=copywriter)
+
+        self.assertNotIn(FOLLOW_UP_DISPLAY_FOCUS_KEY, enhanced_case.metadata)
+        self.assertNotIn(FOLLOW_UP_DISPLAY_REASON_KEY, enhanced_case.metadata)
+        self.assertNotIn(FOLLOW_UP_DISPLAY_QUESTIONS_KEY, enhanced_case.metadata)
+        self.assertEqual(enhanced_case.metadata["follow_up_copywriter"], "llm-fallback")
+        self.assertTrue(enhanced_case.metadata["llm_enhancements"]["follow-up-copywriter"]["fallback_used"])
+        self.assertIn(
+            "RuntimeError",
+            enhanced_case.metadata["llm_enhancements"]["follow-up-copywriter"]["fallback_reason"],
+        )
+        rendered_history = render_case_history(enhanced_case)
+        self.assertIn("follow-up-copywriter", rendered_history)
 
     def test_llm_demo_scenario_generator_can_normalize_generated_scenarios(self) -> None:
         generator = LLMDemoScenarioGenerator(

@@ -1214,6 +1214,7 @@ WEB_DEMO_JS = """\
       "reply-interpreter": "输入理解",
       "pre-framing": "前置收敛",
       copywriter: "表达润色",
+      "follow-up-copywriter": "追问润色",
     };
     return labels[value] || value || "模型增强";
   }
@@ -1639,7 +1640,10 @@ WEB_DEMO_JS = """\
       items.push(`<span class="soft-pill">当前阶段：${inlineFormat(stageLabel(state.currentCase.stage))}</span>`);
     }
 
-    const followUpFocus = state.currentCase?.metadata?.follow_up_focus || "";
+    const followUpFocus =
+      state.currentCase?.metadata?.follow_up_display_focus ||
+      state.currentCase?.metadata?.follow_up_focus ||
+      "";
     if (followUpFocus) {
       items.push(`<span class="soft-pill">这轮先收：${inlineFormat(shortText(followUpFocus, 20))}</span>`);
     }
@@ -1666,7 +1670,9 @@ WEB_DEMO_JS = """\
       return "例如：最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。";
     }
 
-    const pendingQuestions = (state.currentCase.pending_questions || []).filter(Boolean);
+    const pendingQuestions = (
+      state.currentCase?.metadata?.follow_up_display_questions || state.currentCase.pending_questions || []
+    ).filter(Boolean);
     if (pendingQuestions.length) {
       return `例如：${pendingQuestions[0]}`;
     }
@@ -1676,7 +1682,10 @@ WEB_DEMO_JS = """\
       return `例如：顺着刚才补的「${memoryItem.title}」再补一句。`;
     }
 
-    const followUpFocus = state.currentCase?.metadata?.follow_up_focus || "";
+    const followUpFocus =
+      state.currentCase?.metadata?.follow_up_display_focus ||
+      state.currentCase?.metadata?.follow_up_focus ||
+      "";
     if (followUpFocus) {
       return `例如：顺着「${followUpFocus}」再补一句更具体的信息。`;
     }
@@ -1694,9 +1703,13 @@ WEB_DEMO_JS = """\
     const topFinding = (casePayload.findings || [])[0];
     const topGate = (casePayload.decision_gates || [])[0];
     const nextActions = (casePayload.next_actions || []).slice(0, 3);
-    const pendingQuestions = (casePayload.pending_questions || []).slice(0, 3);
-    const followUpFocus = casePayload.metadata?.follow_up_focus || "";
-    const followUpReason = casePayload.metadata?.follow_up_reason || "";
+    const pendingQuestions = (
+      casePayload.metadata?.follow_up_display_questions || casePayload.pending_questions || []
+    ).slice(0, 3);
+    const followUpFocus =
+      casePayload.metadata?.follow_up_display_focus || casePayload.metadata?.follow_up_focus || "";
+    const followUpReason =
+      casePayload.metadata?.follow_up_display_reason || casePayload.metadata?.follow_up_reason || "";
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96

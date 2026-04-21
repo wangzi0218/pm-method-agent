@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from typing import List
 
+from pm_method_agent.follow_up_copywriter import (
+    FOLLOW_UP_DISPLAY_FOCUS_KEY,
+    FOLLOW_UP_DISPLAY_QUESTIONS_KEY,
+    FOLLOW_UP_DISPLAY_REASON_KEY,
+)
 from pm_method_agent.models import AnalyzerFinding, CaseState, RuntimeSession, WorkspaceState
 from pm_method_agent.prompting import PromptComposition
 from pm_method_agent.rule_loader import LoadedRuleSet
@@ -148,8 +153,10 @@ def build_case_history_payload(case_state: CaseState) -> dict:
         "last_resume_stage": case_state.metadata.get("last_resume_stage"),
         "last_gate_choice": case_state.metadata.get("last_gate_choice"),
         "last_reply_parser": case_state.metadata.get("last_reply_parser"),
-        "follow_up_focus": case_state.metadata.get("follow_up_focus", ""),
-        "follow_up_reason": case_state.metadata.get("follow_up_reason", ""),
+        "last_partial_pending_questions": case_state.metadata.get("last_partial_pending_questions", []),
+        "follow_up_focus": _display_follow_up_focus(case_state),
+        "follow_up_reason": _display_follow_up_reason(case_state),
+        "follow_up_questions": _display_follow_up_questions(case_state),
         "follow_up_loop_state": case_state.metadata.get("follow_up_loop_state", ""),
         "case_runtime": case_runtime,
         "llm_enhancements": case_runtime.get("llm_enhancements", {}),
@@ -553,6 +560,14 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append("- 暂无")
     lines.append("")
 
+    partial_questions = history_payload.get("last_partial_pending_questions", [])
+    lines.append("## 最近一轮还差半步的")
+    for item in partial_questions:
+        lines.append(f"- {item}")
+    if not partial_questions:
+        lines.append("- 暂无")
+    lines.append("")
+
     lines.append("## 这段里补到了哪些信息")
     for item in history_payload.get("memory_items", []):
         title = str(item.get("title", "")).strip() or "补充信息"
@@ -610,16 +625,10 @@ def _render_context_question_card(case_state: CaseState) -> str:
     lines.append(case_state.normalized_summary or "信息还不够，建议先补几项基础信息。")
     lines.append("")
     lines.append("## 为什么先补这几项")
-    lines.append(
-        _polish_display_text(
-            str(case_state.metadata.get("follow_up_reason", "")).strip()
-            or case_state.blocking_reason
-            or "这几个信息会直接影响后面的判断口径。"
-        )
-    )
+    lines.append(_polish_display_text(_display_follow_up_reason(case_state)))
     lines.append("")
     lines.append("## 先补这几项")
-    for question in case_state.pending_questions:
+    for question in _display_follow_up_questions(case_state):
         lines.append(f"- {question}")
     lines.append("")
     lines.append("## 补完后会怎么继续")
@@ -689,6 +698,12 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
     lines.append("## 现在已经对到哪了")
     lines.append(case_state.normalized_summary or "基础背景已经补上，可以开始往问题本身收拢了。")
     lines.append("")
+    lines.append("## 这轮更值得先收")
+    lines.append(_polish_display_text(_display_follow_up_focus(case_state)))
+    lines.append("")
+    lines.append("## 为什么先收这个")
+    lines.append(_polish_display_text(_display_follow_up_reason(case_state)))
+    lines.append("")
     lines.append("## 目前已经知道的")
     if case_state.context_profile:
         for key, value in case_state.context_profile.items():
@@ -700,7 +715,7 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
         lines.append("- 还没有明确的基础背景。")
     lines.append("")
     lines.append("## 接下来更值得先补")
-    for item in _collect_follow_up_questions(case_state, fallback_to_background=True):
+    for item in _display_follow_up_questions(case_state, fallback_to_background=True):
         lines.append(f"- {item}")
     return "\n".join(lines)
 
@@ -1158,6 +1173,35 @@ def _continue_card_focus(case_state: CaseState) -> str:
         if not relationships.get("outcome_owners"):
             return "补责任关系"
     return "补问题细节"
+
+
+def _display_follow_up_focus(case_state: CaseState) -> str:
+    rendered = str(case_state.metadata.get(FOLLOW_UP_DISPLAY_FOCUS_KEY, "")).strip()
+    if rendered:
+        return rendered
+    rendered = str(case_state.metadata.get("follow_up_focus", "")).strip()
+    if rendered:
+        return rendered
+    return _continue_card_focus(case_state)
+
+
+def _display_follow_up_reason(case_state: CaseState) -> str:
+    rendered = str(case_state.metadata.get(FOLLOW_UP_DISPLAY_REASON_KEY, "")).strip()
+    if rendered:
+        return rendered
+    rendered = str(case_state.metadata.get("follow_up_reason", "")).strip()
+    if rendered:
+        return rendered
+    return case_state.blocking_reason or "这轮先补最影响推进的信息，会更稳一些。"
+
+
+def _display_follow_up_questions(case_state: CaseState, *, fallback_to_background: bool = False) -> List[str]:
+    rendered = case_state.metadata.get(FOLLOW_UP_DISPLAY_QUESTIONS_KEY, [])
+    if isinstance(rendered, list):
+        questions = [str(item).strip() for item in rendered if str(item).strip()]
+        if questions:
+            return questions[:3]
+    return _collect_follow_up_questions(case_state, fallback_to_background=fallback_to_background)
 
 
 def _find_recommended_direction(case_state: CaseState) -> str:

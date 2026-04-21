@@ -39,6 +39,8 @@ def get_llm_runtime_status(base_dir: Optional[str] = None) -> Dict[str, object]:
         components.extend(["reply-interpreter", "pre-framing"])
         if _env_flag("PMMA_LLM_COPYWRITER_ENABLED"):
             components.append("copywriter")
+        if _env_flag("PMMA_LLM_FOLLOW_UP_COPYWRITER_ENABLED"):
+            components.append("follow-up-copywriter")
 
     mode = "hybrid" if components else "local-only"
     return {
@@ -76,6 +78,7 @@ def _build_runtime_summary(mode: str, components: list[str]) -> str:
         "reply-interpreter": "回复解释",
         "pre-framing": "前置收敛",
         "copywriter": "文案增强",
+        "follow-up-copywriter": "追问润色",
     }
     rendered_components = "、".join(labels.get(item, item) for item in components)
     return f"LLM 混合（{rendered_components}）"

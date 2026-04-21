@@ -124,14 +124,16 @@
 - [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)
 - [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)
 - [docs/llm-boundary-scenarios.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-boundary-scenarios.md)
+- [docs/llm-runtime-boundary.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-runtime-boundary.md)
 - [docs/advanced-agent-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/advanced-agent-runtime.md)
 
 本阶段下一步更适合继续：
 
 1. 先把 `v0.2` 产品目标和非目标定清，重点定义“模糊草稿进入后，系统如何连续推进到阶段结论”。
 2. 继续补连续追问闭环，明确什么时候追问、一次问几项、回答后如何只从卡点继续。
-3. 把项目背景、工作区记忆和长期偏好做成用户可理解的产品能力，而不只是底层状态对象。
-4. 再回到实现层，继续把 query loop、恢复策略和更细的工具闭环接进统一 runtime。
+3. 把“哪些能力由 runtime 持有、哪些能力交给 LLM、哪些能力走混合判定”的边界收紧，再接追问自然化和长尾语义增强。
+4. 把项目背景、工作区记忆和长期偏好做成用户可理解的产品能力，而不只是底层状态对象。
+5. 再回到实现层，继续把 query loop、恢复策略和更细的工具闭环接进统一 runtime。
 
 ## 第五阶段：复合升级
 

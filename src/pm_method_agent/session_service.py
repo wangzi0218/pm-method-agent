@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from pm_method_agent.case_copywriter import apply_case_copywriting
 from pm_method_agent.follow_up import attach_follow_up_plan, is_follow_up_question_answered
+from pm_method_agent.follow_up_copywriter import apply_follow_up_copywriting
 from pm_method_agent.models import CaseState, ProjectProfile
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis_with_context
 from pm_method_agent.project_profile_service import merge_project_profile_context
@@ -34,6 +35,7 @@ SESSION_LAST_RESUME_STAGE_KEY = "last_resume_stage"
 SESSION_LAST_GATE_CHOICE_KEY = "last_gate_choice"
 SESSION_LAST_REPLY_PARSER_KEY = "last_reply_parser"
 SESSION_ROLE_RELATIONSHIPS_KEY = "role_relationships"
+SESSION_LAST_PARTIAL_PENDING_QUESTIONS_KEY = "last_partial_pending_questions"
 
 NOTE_BUCKET_KEYS = [
     "context_notes",
@@ -256,6 +258,7 @@ def reply_to_case(
     next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.inferred_gate_choice
     next_case.metadata[SESSION_LAST_REPLY_PARSER_KEY] = reply_analysis.parser_name
     next_case.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = role_relationships
+    next_case.metadata[SESSION_LAST_PARTIAL_PENDING_QUESTIONS_KEY] = list(reply_analysis.partial_pending_questions)
     _record_reply_interpreter_enhancement(next_case, reply_analysis)
     next_case.metadata["llm_runtime"] = get_llm_runtime_status()
     next_case.metadata["show_case_id"] = True
@@ -418,7 +421,7 @@ def _build_gate_outcome_case(
     case_state.next_actions = next_actions
     case_state.metadata["selected_modes"] = ["decision-challenge"]
     case_state.metadata["next_stage"] = next_stage
-    return apply_case_copywriting(attach_follow_up_plan(case_state))
+    return apply_follow_up_copywriting(apply_case_copywriting(attach_follow_up_plan(case_state)))
 
 
 def _empty_note_buckets() -> Dict[str, list[str]]:
@@ -433,7 +436,14 @@ def _collect_answered_pending_questions(
     reply_text: str,
 ) -> list[str]:
     answered_questions: list[str] = []
+    for question in reply_analysis.answered_pending_questions:
+        if question not in answered_questions:
+            answered_questions.append(question)
     for question in previous_case.pending_questions:
+        if question in reply_analysis.partial_pending_questions:
+            continue
+        if question in answered_questions:
+            continue
         if is_follow_up_question_answered(question, merged_context, reply_analysis, reply_text):
             answered_questions.append(question)
     return answered_questions

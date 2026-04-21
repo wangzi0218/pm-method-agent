@@ -53,6 +53,7 @@
 
 - [llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)：OpenAI-compatible 的 LLM 接入方式
 - [llm-boundary-scenarios.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-boundary-scenarios.md)：哪些能力适合交给 LLM，哪些不适合
+- [llm-runtime-boundary.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-runtime-boundary.md)：哪些能力由 runtime 持有，哪些能力适合 LLM 或混合判定
 
 ## 架构与路线图
 
