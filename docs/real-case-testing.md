@@ -38,6 +38,7 @@
 可直接看：
 
 - [tests/test_human_like_flows.py](/Users/wannz/Documents/sourcetree/pm-method-agent/tests/test_human_like_flows.py)
+- [partial-follow-up-checklist.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/partial-follow-up-checklist.md)
 
 这组用例不是只测“有没有报错”，而是刻意模拟几种常见的真人使用方式：
 
@@ -50,6 +51,19 @@
 - 第一轮输入是否能落到合理卡片，而不是一上来就出完整分析
 - 多轮补充后，系统是否顺着主线推进，而不是每轮重新开聊
 - 同样一句自然表达，系统是否能正确识别场景、角色和决策倾向
+
+这里还有一个测试边界要先说清：
+
+- 不是所有“半步回答”都适合只靠整轮回放来验
+- 有些补充一旦说出来，运行时就会合理推进阶段
+- 这类场景更适合：
+  用真实回放看主线有没有跑偏
+  再用模板级回归锁住追问文案
+
+当前比较典型的两类是：
+
+- 角色三分法
+- 机会成本
 
 ## 适合拿来试跑的输入
 

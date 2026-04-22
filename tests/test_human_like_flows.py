@@ -184,6 +184,36 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIn("发帖率方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？", rendered_card)
         self.assertNotIn("- 成功指标是什么", rendered_card)
 
+    def test_realistic_toc_partial_baseline_reply_can_render_half_step_question(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            first_case = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            interpreter = LLMReplyInterpreter(
+                adapter=StubLLMAdapter(
+                    content='{"partial_pending_questions":["当前基线指标是什么"],"categories":["evidence"],"parser_confidence":"strong"}'
+                )
+            )
+            second_case = reply_to_case(
+                case_id=first_case.case_id,
+                reply_text="现在发帖率确实不高，但我手上没有特别准的数据。",
+                store=store,
+                reply_interpreter=interpreter,
+            )
+
+        from pm_method_agent.renderers import render_case_state
+
+        rendered_card = render_case_state(second_case)
+        self.assertEqual(second_case.output_kind, "review-card")
+        self.assertEqual(second_case.metadata.get("last_partial_pending_questions"), ["当前基线指标是什么"])
+        self.assertIn("发帖率方向已经提到了，再补一个现在的基线值，大概数量级也可以。", rendered_card)
+        self.assertNotIn("- 当前基线指标是什么", rendered_card)
+
     def test_realistic_tob_partial_non_product_reply_can_keep_gate_priority(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)

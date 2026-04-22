@@ -29,6 +29,7 @@
 - [evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例
 - [manual-smoke.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/manual-smoke.md)：手动冒烟方式
 - [real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：真实问题试跑方法
+- [partial-follow-up-checklist.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/partial-follow-up-checklist.md)：半步回答的抽查清单
 - [output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)：输出风格与卡片结构
 
 ## 主线运行时

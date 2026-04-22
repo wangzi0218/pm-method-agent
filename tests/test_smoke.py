@@ -1163,6 +1163,78 @@ class OrchestratorSmokeTest(unittest.TestCase):
             ],
         )
 
+    def test_local_partial_rewrite_templates_can_cover_guardrail_and_baseline_hints(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="validation-design",
+            workflow_state="open",
+            output_kind="review-card",
+            raw_input="新用户发帖率一直起不来。",
+            pending_questions=["护栏指标是什么", "当前基线指标是什么"],
+            metadata={
+                "last_partial_pending_questions": ["护栏指标是什么", "当前基线指标是什么"],
+                "session_note_buckets": {
+                    "evidence_notes": ["主指标能涨可以，但发帖率之外别把前台接待效率拖太多。"],
+                },
+            },
+        )
+
+        apply_follow_up_copywriting(case_state)
+
+        self.assertEqual(
+            case_state.metadata.get("follow_up_display_questions"),
+            [
+                "主指标已经碰到了，再补一句：除了发帖率，你最不希望哪项指标被带坏？",
+                "发帖率方向已经提到了，再补一个现在的基线值，大概数量级也可以。",
+            ],
+        )
+
+    def test_local_partial_rewrite_templates_can_cover_why_now_with_colloquial_hint(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="decision-challenge",
+            workflow_state="open",
+            output_kind="review-card",
+            raw_input="审批总漏人，我在想是不是该处理。",
+            pending_questions=["为什么现在更值得做"],
+            metadata={
+                "last_partial_pending_questions": ["为什么现在更值得做"],
+                "session_note_buckets": {
+                    "decision_notes": ["最近老板开始盯这个结果了，所以我才觉得得看。"],
+                },
+            },
+        )
+
+        apply_follow_up_copywriting(case_state)
+
+        self.assertEqual(
+            case_state.metadata.get("follow_up_display_questions"),
+            ["已经有一点理由了，再补一句：为什么偏偏是现在更值得做？"],
+        )
+
+    def test_local_partial_rewrite_templates_can_cover_opportunity_cost_with_colloquial_hint(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="decision-challenge",
+            workflow_state="open",
+            output_kind="review-card",
+            raw_input="审批总漏人，我在想是不是该处理。",
+            pending_questions=["机会成本"],
+            metadata={
+                "last_partial_pending_questions": ["机会成本"],
+                "session_note_buckets": {
+                    "decision_notes": ["最近投诉确实多了一点，但我也说不上再拖会具体丢掉什么。"],
+                },
+            },
+        )
+
+        apply_follow_up_copywriting(case_state)
+
+        self.assertEqual(
+            case_state.metadata.get("follow_up_display_questions"),
+            ["再补一句：如果先不做，最可能丢掉什么？"],
+        )
+
     def test_role_relationships_can_influence_problem_framing_judgment(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)
