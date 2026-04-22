@@ -4584,10 +4584,16 @@ class OrchestratorSmokeTest(unittest.TestCase):
         script = body.decode("utf-8")
 
         self.assertIn("function buildComposerPlaceholder()", script)
+        self.assertIn("function displayFollowUpFocus", script)
+        self.assertIn("function displayFollowUpReason", script)
+        self.assertIn("function displayFollowUpQuestions", script)
+        self.assertIn("function splitCarryoverFollowUpReason", script)
         self.assertIn("这轮先收：", script)
         self.assertIn("这轮现在先收什么", script)
+        self.assertIn("顺手记住的线索", script)
         self.assertIn("最近补充", script)
         self.assertIn("当前焦点", script)
+        self.assertIn("renderCardDigest(state.currentCase, state.currentCaseRuntime);", script)
         self.assertEqual(content_type, "application/javascript; charset=utf-8")
 
     def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:

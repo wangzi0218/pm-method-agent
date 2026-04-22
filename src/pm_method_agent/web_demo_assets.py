@@ -734,6 +734,12 @@ button:disabled {
   background: linear-gradient(180deg, rgba(241, 249, 247, 0.94), rgba(235, 245, 243, 0.88));
 }
 
+.digest-card.is-muted {
+  border-style: dashed;
+  border-color: rgba(61, 52, 41, 0.12);
+  background: linear-gradient(180deg, rgba(252, 249, 243, 0.84), rgba(247, 241, 231, 0.72));
+}
+
 .digest-label {
   display: block;
   margin-bottom: 8px;
@@ -1626,6 +1632,51 @@ WEB_DEMO_JS = """\
     els.workspaceMeta.innerHTML = pills.join("");
   }
 
+  function displayFollowUpFocus(casePayload = state.currentCase, historyPayload = state.currentHistory) {
+    return (
+      historyPayload?.follow_up_focus ||
+      casePayload?.metadata?.follow_up_display_focus ||
+      casePayload?.metadata?.follow_up_focus ||
+      ""
+    );
+  }
+
+  function displayFollowUpReason(casePayload = state.currentCase, historyPayload = state.currentHistory) {
+    return (
+      historyPayload?.follow_up_reason ||
+      casePayload?.metadata?.follow_up_display_reason ||
+      casePayload?.metadata?.follow_up_reason ||
+      ""
+    );
+  }
+
+  function displayFollowUpQuestions(casePayload = state.currentCase, historyPayload = state.currentHistory) {
+    const historyQuestions = (historyPayload?.follow_up_questions || []).filter(Boolean);
+    if (historyQuestions.length) {
+      return historyQuestions;
+    }
+    return (
+      casePayload?.metadata?.follow_up_display_questions ||
+      casePayload?.pending_questions ||
+      []
+    ).filter(Boolean);
+  }
+
+  function splitCarryoverFollowUpReason(reasonText = "") {
+    const marker = "刚才提到的那一点我先记住了";
+    const normalized = String(reasonText || "").trim();
+    if (!normalized) {
+      return { primaryReason: "", carryoverNote: "" };
+    }
+    const markerIndex = normalized.indexOf(marker);
+    if (markerIndex < 0) {
+      return { primaryReason: normalized, carryoverNote: "" };
+    }
+    const primaryReason = normalized.slice(0, markerIndex).trim().replace(/[：:，,\\s]+$/, "");
+    const carryoverNote = normalized.slice(markerIndex).trim();
+    return { primaryReason, carryoverNote };
+  }
+
   function renderComposerMeta({ sending = false } = {}) {
     const items = [];
     items.push(`<span class="soft-pill">工作区：${inlineFormat(state.workspaceId || "demo")}</span>`);
@@ -1640,10 +1691,7 @@ WEB_DEMO_JS = """\
       items.push(`<span class="soft-pill">当前阶段：${inlineFormat(stageLabel(state.currentCase.stage))}</span>`);
     }
 
-    const followUpFocus =
-      state.currentCase?.metadata?.follow_up_display_focus ||
-      state.currentCase?.metadata?.follow_up_focus ||
-      "";
+    const followUpFocus = displayFollowUpFocus();
     if (followUpFocus) {
       items.push(`<span class="soft-pill">这轮先收：${inlineFormat(shortText(followUpFocus, 20))}</span>`);
     }
@@ -1670,9 +1718,7 @@ WEB_DEMO_JS = """\
       return "例如：最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。";
     }
 
-    const pendingQuestions = (
-      state.currentCase?.metadata?.follow_up_display_questions || state.currentCase.pending_questions || []
-    ).filter(Boolean);
+    const pendingQuestions = displayFollowUpQuestions();
     if (pendingQuestions.length) {
       return `例如：${pendingQuestions[0]}`;
     }
@@ -1682,10 +1728,7 @@ WEB_DEMO_JS = """\
       return `例如：顺着刚才补的「${memoryItem.title}」再补一句。`;
     }
 
-    const followUpFocus =
-      state.currentCase?.metadata?.follow_up_display_focus ||
-      state.currentCase?.metadata?.follow_up_focus ||
-      "";
+    const followUpFocus = displayFollowUpFocus();
     if (followUpFocus) {
       return `例如：顺着「${followUpFocus}」再补一句更具体的信息。`;
     }
@@ -1703,13 +1746,10 @@ WEB_DEMO_JS = """\
     const topFinding = (casePayload.findings || [])[0];
     const topGate = (casePayload.decision_gates || [])[0];
     const nextActions = (casePayload.next_actions || []).slice(0, 3);
-    const pendingQuestions = (
-      casePayload.metadata?.follow_up_display_questions || casePayload.pending_questions || []
-    ).slice(0, 3);
-    const followUpFocus =
-      casePayload.metadata?.follow_up_display_focus || casePayload.metadata?.follow_up_focus || "";
-    const followUpReason =
-      casePayload.metadata?.follow_up_display_reason || casePayload.metadata?.follow_up_reason || "";
+    const pendingQuestions = displayFollowUpQuestions(casePayload).slice(0, 3);
+    const followUpFocus = displayFollowUpFocus(casePayload);
+    const followUpReason = displayFollowUpReason(casePayload);
+    const { primaryReason, carryoverNote } = splitCarryoverFollowUpReason(followUpReason);
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -1738,8 +1778,17 @@ WEB_DEMO_JS = """\
           <span class="digest-label">这轮先收什么</span>
           <span class="digest-value">
             ${inlineFormat(shortText(followUpFocus || "继续把当前判断收稳", 44))}
-            ${followUpReason ? `：${inlineFormat(shortText(followUpReason, 84))}` : ""}
+            ${primaryReason ? `：${inlineFormat(shortText(primaryReason, 84))}` : ""}
           </span>
+        </article>
+      `);
+    }
+
+    if (carryoverNote) {
+      cards.push(`
+        <article class="digest-card is-muted">
+          <span class="digest-label">顺手记住的线索</span>
+          <span class="digest-value">${inlineFormat(shortText(carryoverNote, 96))}</span>
         </article>
       `);
     }
@@ -1803,6 +1852,7 @@ WEB_DEMO_JS = """\
     const memoryItems = historyPayload.memory_items || [];
     const followUpFocus = historyPayload.follow_up_focus || "";
     const followUpReason = historyPayload.follow_up_reason || "";
+    const { primaryReason, carryoverNote } = splitCarryoverFollowUpReason(followUpReason);
     const caseRuntime = historyPayload.case_runtime || null;
     const latestTurn = conversationTurns[conversationTurns.length - 1];
     const latestText = latestTurn
@@ -1842,10 +1892,18 @@ WEB_DEMO_JS = """\
         <span class="digest-label">这轮现在先收什么</span>
         <span class="digest-value">
           ${followUpFocus
-            ? `${inlineFormat(shortText(followUpFocus, 40))}${followUpReason ? `：${inlineFormat(shortText(followUpReason, 72))}` : ""}`
+            ? `${inlineFormat(shortText(followUpFocus, 40))}${primaryReason ? `：${inlineFormat(shortText(primaryReason, 72))}` : ""}`
             : "当前没有额外卡点，可以继续顺着主卡片往下补。"}
         </span>
       </article>
+      ${carryoverNote
+        ? `
+      <article class="digest-card is-muted">
+        <span class="digest-label">顺手记住的线索</span>
+        <span class="digest-value">${inlineFormat(shortText(carryoverNote, 96))}</span>
+      </article>
+      `
+        : ""}
       <article class="digest-card">
         <span class="digest-label">这段最近补到哪了</span>
         <span class="digest-value">
@@ -2270,6 +2328,7 @@ WEB_DEMO_JS = """\
     els.historyContent.className = "render-surface render-surface-secondary";
     els.historyContent.innerHTML = renderMarkdownish(payload.rendered_history || "");
     renderComposerMeta();
+    renderCardDigest(state.currentCase, state.currentCaseRuntime);
   }
 
   async function loadRuntimeSession() {
