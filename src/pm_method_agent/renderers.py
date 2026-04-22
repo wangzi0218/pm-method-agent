@@ -1197,12 +1197,14 @@ def _display_follow_up_focus(case_state: CaseState) -> str:
 
 def _display_follow_up_reason(case_state: CaseState) -> str:
     rendered = str(case_state.metadata.get(FOLLOW_UP_DISPLAY_REASON_KEY, "")).strip()
-    if rendered:
-        return rendered
-    rendered = str(case_state.metadata.get("follow_up_reason", "")).strip()
-    if rendered:
-        return rendered
-    return case_state.blocking_reason or "这轮先补最影响推进的信息，会更稳一些。"
+    if not rendered:
+        rendered = str(case_state.metadata.get("follow_up_reason", "")).strip()
+    if not rendered:
+        rendered = case_state.blocking_reason or "这轮先补最影响推进的信息，会更稳一些。"
+    carryover_note = str(case_state.metadata.get("follow_up_carryover_note", "")).strip()
+    if carryover_note and carryover_note not in rendered:
+        rendered = f"{rendered} {carryover_note}".strip()
+    return rendered
 
 
 def _display_follow_up_questions(case_state: CaseState, *, fallback_to_background: bool = False) -> List[str]:

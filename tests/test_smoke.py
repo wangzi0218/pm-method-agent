@@ -38,6 +38,7 @@ from pm_method_agent.follow_up_copywriter import (
     LLMFollowUpCopywriter,
     apply_follow_up_copywriting,
 )
+from pm_method_agent.follow_up import attach_follow_up_plan
 from pm_method_agent.models import CaseState
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis, run_analysis_with_context
@@ -1136,6 +1137,35 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered_card = render_case_state(replied_case)
         self.assertIn("先把刚补到一半的点说完整", rendered_card)
         self.assertIn("发帖率方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？", rendered_card)
+
+    def test_stage_progression_can_keep_a_gentle_carryover_note_for_last_partial_point(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+
+        case_state.metadata["last_partial_pending_questions"] = ["机会成本"]
+        case_state.metadata["session_note_buckets"] = {
+            "context_notes": [],
+            "evidence_notes": [],
+            "decision_notes": ["最近投诉确实多了一点，但我也说不上再拖会具体丢掉什么。"],
+            "constraint_notes": [],
+            "other_notes": [],
+        }
+        case_state = attach_follow_up_plan(case_state)
+
+        self.assertEqual(case_state.metadata.get("follow_up_focus"), "先把验证前提补稳")
+        self.assertIn("刚才提到的那一点我先记住了", case_state.metadata.get("follow_up_carryover_note", ""))
+        self.assertIn("如果先不做，最可能丢掉什么？", case_state.metadata.get("follow_up_carryover_note", ""))
+
+        rendered_card = render_case_state(case_state)
+        self.assertIn("这轮已经能往验证走，但先补关键前提，后面会少来回。", rendered_card)
+        self.assertIn("刚才提到的那一点我先记住了，后面如果回到这一层，会接着看：如果先不做，最可能丢掉什么？", rendered_card)
 
     def test_local_partial_rewrite_templates_can_cover_non_product_and_role_triplet(self) -> None:
         case_state = CaseState(

@@ -239,6 +239,62 @@ def _build_partial_display_questions(case_state: CaseState, partial_questions: l
     return rewritten[:3]
 
 
+def summarize_partial_question(question: str, latest_note: str) -> str:
+    family_key = question_family_key(question)
+    note = latest_note.strip()
+    metric_hint = _extract_metric_hint(note)
+    role_hint = _extract_role_hint(note)
+    if family_key == "success-metric":
+        return "做到什么程度，你会觉得这轮值得继续？"
+    if family_key == "guardrail-metric":
+        if metric_hint:
+            return f"除了{metric_hint}，你最不希望哪项指标被带坏？"
+        return "你最不希望哪项指标被带坏？"
+    if family_key == "stop-condition":
+        return "出现什么情况，你会先停下来？"
+    if family_key == "baseline-metric":
+        if metric_hint:
+            return f"{metric_hint}现在的基线值大概是多少？"
+        return "现在的基线值大概是多少？"
+    if family_key == "why-now":
+        return "为什么偏偏是现在更值得做？"
+    if family_key == "opportunity-cost":
+        return "如果先不做，最可能丢掉什么？"
+    if family_key == "non-product-path":
+        return "不改产品的话，先靠流程或运营能不能兜住一部分？"
+    if family_key == "business-model":
+        return "这更像企业产品、消费者产品，还是内部场景？"
+    if family_key == "primary-platform":
+        return "这件事主要发生在网页、App、小程序，还是多端一起看？"
+    if family_key == "role-triplet":
+        return "谁提、谁在用、最后谁盯结果？"
+    if family_key == "proposer":
+        if role_hint:
+            return f"最先把这件事提出来的人，是不是{role_hint}？"
+        return "最先把这件事提出来的人是谁？"
+    if family_key == "user":
+        if role_hint:
+            return f"平时真正在操作这一步的人，是不是{role_hint}？"
+        return "平时真正在操作这一步的人，到底是谁？"
+    if family_key == "outcome-owner":
+        if role_hint:
+            return f"最后盯这件事结果的人，是不是{role_hint}？"
+        return "最后谁会盯这件事的结果？"
+    if family_key == "role-alignment":
+        return "他们想要的结果，是一致的还是有冲突？"
+    if family_key == "process-flow":
+        return "现在这步流程具体是怎么走的？"
+    if family_key == "issue-frequency":
+        return "这件事大概多久会发生一次，影响到多大范围？"
+    if family_key == "existing-workaround":
+        return "现在大家会怎么绕过去，或者先靠什么办法顶着？"
+    if family_key == "validation-action":
+        return "你想先用什么最小动作试一下？"
+    if family_key == "validation-period":
+        return "你觉得观察多久，才足够判断这件事值不值得继续？"
+    return _polish_text(question).strip("：")
+
+
 def _rewrite_partial_question(question: str, latest_note: str) -> str:
     family_key = question_family_key(question)
     note = latest_note.strip()
@@ -295,8 +351,8 @@ def _rewrite_partial_question(question: str, latest_note: str) -> str:
     if family_key == "validation-period":
         return "再补一句：你觉得观察多久，才足够判断这件事值不值得继续？"
     if note:
-        return f"顺着你刚才提到的这点，再补一句：{_polish_text(question)}"
-    return f"顺着刚才那半步，再补一句：{_polish_text(question)}"
+        return f"顺着你刚才提到的这点，再补一句：{summarize_partial_question(question, latest_note)}"
+    return f"顺着刚才那半步，再补一句：{summarize_partial_question(question, latest_note)}"
 
 
 def _extract_metric_hint(note: str) -> str:

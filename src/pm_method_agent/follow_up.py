@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
+from pm_method_agent.follow_up_copywriter import summarize_partial_question
 from pm_method_agent.models import AnalyzerFinding, CaseState
 from pm_method_agent.question_resolution import (
     question_family_key,
@@ -15,6 +16,7 @@ from pm_method_agent.reply_interpreter import ReplyAnalysis
 FOLLOW_UP_FOCUS_KEY = "follow_up_focus"
 FOLLOW_UP_REASON_KEY = "follow_up_reason"
 FOLLOW_UP_LOOP_STATE_KEY = "follow_up_loop_state"
+FOLLOW_UP_CARRYOVER_NOTE_KEY = "follow_up_carryover_note"
 
 
 @dataclass
@@ -23,6 +25,7 @@ class FollowUpPlan:
     focus: str = ""
     reason: str = ""
     loop_state: str = "ready"
+    carryover_note: str = ""
 
 
 def attach_follow_up_plan(case_state: CaseState) -> CaseState:
@@ -36,6 +39,10 @@ def attach_follow_up_plan(case_state: CaseState) -> CaseState:
         case_state.metadata[FOLLOW_UP_REASON_KEY] = plan.reason
     else:
         case_state.metadata.pop(FOLLOW_UP_REASON_KEY, None)
+    if plan.carryover_note:
+        case_state.metadata[FOLLOW_UP_CARRYOVER_NOTE_KEY] = plan.carryover_note
+    else:
+        case_state.metadata.pop(FOLLOW_UP_CARRYOVER_NOTE_KEY, None)
     case_state.metadata[FOLLOW_UP_LOOP_STATE_KEY] = plan.loop_state
     return case_state
 
@@ -80,6 +87,7 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
             focus=_follow_up_focus(case_state),
             reason="这轮已经能形成一个阶段结论，后面按需要再继续补。",
             loop_state="settled",
+            carryover_note=_carryover_partial_note(case_state),
         )
 
     return FollowUpPlan(
@@ -87,6 +95,7 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
         focus=_follow_up_focus(case_state),
         reason=_follow_up_reason(case_state),
         loop_state="needs-answer" if case_state.workflow_state == "blocked" else "open",
+        carryover_note=_carryover_partial_note(case_state),
     )
 
 
@@ -214,6 +223,24 @@ def _follow_up_reason(case_state: CaseState) -> str:
     return "这轮已经有基础判断了，再补最关键的几项会更顺。"
 
 
+def _carryover_partial_note(case_state: CaseState) -> str:
+    if _active_partial_questions(case_state):
+        return ""
+    raw_items = case_state.metadata.get("last_partial_pending_questions", [])
+    if not isinstance(raw_items, list):
+        return ""
+    if not case_state.pending_questions:
+        return ""
+    for item in raw_items:
+        normalized = str(item).strip()
+        if not normalized:
+            continue
+        summary = summarize_partial_question(normalized, _latest_note(case_state))
+        if summary:
+            return f"刚才提到的那一点我先记住了，后面如果回到这一层，会接着看：{summary}"
+    return ""
+
+
 def _question_is_still_open(question: str, case_state: CaseState) -> bool:
     context_profile = case_state.context_profile
     relationships = case_state.metadata.get("role_relationships", {})
@@ -298,3 +325,18 @@ def _prioritize_partial_questions(case_state: CaseState, questions: List[str]) -
         if len(ordered) >= 3:
             break
     return ordered[:3]
+
+
+def _latest_note(case_state: CaseState) -> str:
+    raw_buckets = case_state.metadata.get("session_note_buckets", {})
+    if not isinstance(raw_buckets, dict):
+        return ""
+    for bucket_key in ["evidence_notes", "context_notes", "decision_notes", "constraint_notes", "other_notes"]:
+        notes = raw_buckets.get(bucket_key, [])
+        if not isinstance(notes, list):
+            continue
+        for item in reversed(notes):
+            rendered = str(item).strip()
+            if rendered:
+                return rendered
+    return ""
