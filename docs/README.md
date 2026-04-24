@@ -26,6 +26,9 @@
 
 - [method-uncertainty-framework.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/method-uncertainty-framework.md)：五类方法不确定性框架
 - [product-v0-2.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/product-v0-2.md)：当前产品层目标、范围和成功标准
+- [v0-2-product-rules.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-product-rules.md)：`v0.2` 已定、暂定和未定的产品规则
+- [stage-conclusion-checklist.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-checklist.md)：什么时候继续问，什么时候先给阶段结论
+- [stage-conclusion-samples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-samples.md)：过问样本和漏关口样本
 - [evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：典型体验用例
 - [manual-smoke.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/manual-smoke.md)：手动冒烟方式
 - [real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：真实问题试跑方法

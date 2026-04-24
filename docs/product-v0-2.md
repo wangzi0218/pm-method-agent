@@ -176,6 +176,11 @@
 
 ## 当前基础和缺口
 
+配套规则清单可参考：
+
+- [v0-2-product-rules.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-product-rules.md)
+- [stage-conclusion-checklist.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-checklist.md)
+
 ### 已有基础
 
 - 已有最小工作区和案例状态
