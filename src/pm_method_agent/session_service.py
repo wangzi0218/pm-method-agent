@@ -434,6 +434,21 @@ def _build_explicit_gate_outcome_case(
                 "后续如果出现新证据，再重新进入当前案例。",
             ],
         )
+    if inferred_gate_choice == "try-non-product-first" and _is_explicit_non_product_commitment(latest_reply_text):
+        return _build_gate_outcome_case(
+            previous_case=previous_case,
+            rerun_input=rerun_input,
+            merged_context=merged_context,
+            summary="这轮先转去看非产品路径，再决定要不要继续产品化。",
+            blocking_reason="这轮先按非产品路径看，先试流程、培训或管理方案。",
+            workflow_state="blocked",
+            output_kind="stage-block-card",
+            next_stage="decision-challenge",
+            next_actions=[
+                "先列出流程、培训、管理三类可试路径。",
+                "为非产品路径补一个最小试行周期和观察指标。",
+            ],
+        )
     return None
 
 
@@ -463,6 +478,42 @@ def _is_explicit_defer_commitment(reply_text: str) -> bool:
         "先看看",
         "要不要",
         "值不值得",
+    ]
+    return not any(marker in text for marker in indecision_markers)
+
+
+def _is_explicit_non_product_commitment(reply_text: str) -> bool:
+    text = reply_text.strip()
+    explicit_markers = [
+        "先试流程",
+        "先试培训",
+        "先走流程",
+        "先走培训",
+        "先用流程",
+        "先用培训",
+        "先靠流程",
+        "先靠培训",
+        "先按非产品路径",
+        "先按非产品",
+        "先做非产品",
+        "优先评估非产品路径",
+        "先看非产品路径",
+    ]
+    if not any(marker in text for marker in explicit_markers):
+        return False
+    indecision_markers = [
+        "没想好",
+        "还没想好",
+        "还在看要不要",
+        "还没判断",
+        "不确定",
+        "纠结",
+        "倾向",
+        "先看看",
+        "要不要",
+        "值不值得",
+        "能不能",
+        "再决定",
     ]
     return not any(marker in text for marker in indecision_markers)
 

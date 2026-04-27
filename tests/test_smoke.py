@@ -4722,6 +4722,66 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(replied_case.output_kind, "stage-block-card")
         self.assertEqual(replied_case.workflow_state, "deferred")
 
+    def test_session_service_can_block_for_explicit_non_product_commitment_after_review_card(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这轮我想先试流程和培训顶一轮，先不急着继续产品化。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "try-non-product-first")
+        self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.workflow_state, "blocked")
+
+    def test_session_service_can_block_for_explicit_non_product_commitment_during_pre_framing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="最近老有人说审批容易漏，我还没想太清楚是不是要做。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这轮先试流程和培训顶一轮，先不急着继续产品化。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "try-non-product-first")
+        self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.workflow_state, "blocked")
+
+    def test_session_service_keeps_gate_for_non_product_indecision_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="我想先看流程约束能不能解决，再决定要不要做产品。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "try-non-product-first")
+        self.assertEqual(replied_case.output_kind, "decision-gate-card")
+        self.assertEqual(replied_case.workflow_state, "blocked")
+
     def test_session_service_can_infer_try_non_product_from_process_constraint_expression(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)

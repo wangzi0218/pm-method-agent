@@ -98,9 +98,9 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIn("如果先按这个方向继续", first_response.rendered_card)
 
         self.assertEqual(second_response.action, "reply-case")
-        self.assertEqual(second_response.case_state.output_kind, "decision-gate-card")
+        self.assertEqual(second_response.case_state.output_kind, "stage-block-card")
         self.assertEqual(second_response.case_state.workflow_state, "blocked")
-        self.assertIn("优先评估非产品路径", second_response.rendered_card)
+        self.assertIn("这轮先按非产品路径看", second_response.rendered_card)
 
         self.assertEqual(third_response.action, "reply-case")
         self.assertEqual(third_response.case_state.output_kind, "review-card")
@@ -164,6 +164,28 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(follow_up_response.case_state.workflow_state, "deferred")
         self.assertIn("这轮先记为暂缓", follow_up_response.rendered_card)
         self.assertIn("如果后面条件变了，再接着往下看", follow_up_response.rendered_card)
+
+    def test_explicit_non_product_commitment_can_block_across_stages(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "最近诊所前台老说这里总会漏提醒，我在想是不是该处理一下。",
+                workspace_id="explicit-non-product-commitment",
+            )
+            second_response = shell.handle_message(
+                "补充一下，这是一个 ToB 的 HIS 产品，主要通过网页端使用，诊所前台提出来的，前台自己在操作，店长对结果负责。",
+                workspace_id="explicit-non-product-commitment",
+            )
+            third_response = shell.handle_message(
+                "这轮我想先试流程和培训顶一轮，先不急着继续产品化。",
+                workspace_id="explicit-non-product-commitment",
+            )
+
+        self.assertEqual(first_response.case_state.output_kind, "continue-guidance-card")
+        self.assertEqual(second_response.case_state.output_kind, "review-card")
+        self.assertEqual(third_response.case_state.output_kind, "stage-block-card")
+        self.assertEqual(third_response.case_state.workflow_state, "blocked")
+        self.assertIn("这轮先按非产品路径看", third_response.rendered_card)
 
     def test_colloquial_b_side_mobile_web_flow_can_be_understood(self) -> None:
         with TemporaryDirectory() as tmpdir:
