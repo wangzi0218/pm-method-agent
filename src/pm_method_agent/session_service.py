@@ -36,6 +36,7 @@ SESSION_LAST_GATE_CHOICE_KEY = "last_gate_choice"
 SESSION_LAST_REPLY_PARSER_KEY = "last_reply_parser"
 SESSION_ROLE_RELATIONSHIPS_KEY = "role_relationships"
 SESSION_LAST_PARTIAL_PENDING_QUESTIONS_KEY = "last_partial_pending_questions"
+SESSION_EXPLICIT_RESUME_STAGE_KEY = "explicit_resume_stage"
 
 NOTE_BUCKET_KEYS = [
     "context_notes",
@@ -255,11 +256,13 @@ def reply_to_case(
     next_case.metadata[SESSION_ANSWERED_QUESTIONS_KEY] = answered_questions
     next_case.metadata[SESSION_RESOLVED_GATES_KEY] = resolved_gates
     next_case.metadata[SESSION_LATEST_REPLY_KEY] = reply_text.strip()
-    next_case.metadata[SESSION_LAST_RESUME_STAGE_KEY] = resume_stage
+    actual_resume_stage = str(next_case.metadata.get(SESSION_EXPLICIT_RESUME_STAGE_KEY, resume_stage))
+    next_case.metadata[SESSION_LAST_RESUME_STAGE_KEY] = actual_resume_stage
     next_case.metadata[SESSION_LAST_GATE_CHOICE_KEY] = reply_analysis.inferred_gate_choice
     next_case.metadata[SESSION_LAST_REPLY_PARSER_KEY] = reply_analysis.parser_name
     next_case.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = role_relationships
     next_case.metadata[SESSION_LAST_PARTIAL_PENDING_QUESTIONS_KEY] = list(reply_analysis.partial_pending_questions)
+    next_case.metadata.pop(SESSION_EXPLICIT_RESUME_STAGE_KEY, None)
     _record_reply_interpreter_enhancement(next_case, reply_analysis)
     next_case.metadata["llm_runtime"] = get_llm_runtime_status()
     next_case.metadata["show_case_id"] = True
@@ -350,6 +353,7 @@ def _build_next_case_from_reply(
         merged_context=merged_context,
         inferred_gate_choice=inferred_gate_choice,
         latest_reply_text=latest_reply_text,
+        role_relationships=role_relationships,
     )
     if explicit_gate_outcome is not None:
         return explicit_gate_outcome
@@ -418,7 +422,24 @@ def _build_explicit_gate_outcome_case(
     merged_context: Dict[str, object],
     inferred_gate_choice: Optional[str],
     latest_reply_text: str,
+    role_relationships: Dict[str, list[str]],
 ) -> Optional[CaseState]:
+    if inferred_gate_choice == "productize-now" and _is_explicit_productize_commitment(latest_reply_text):
+        explicit_start_stage = _resolve_explicit_productize_start_stage(previous_case, merged_context)
+        if explicit_start_stage:
+            explicit_case = continue_analysis_with_context(
+                raw_input=rerun_input,
+                start_stage=explicit_start_stage,
+                case_id=previous_case.case_id,
+                context_profile=merged_context,
+                show_case_id=True,
+                metadata={
+                    SESSION_ROLE_RELATIONSHIPS_KEY: role_relationships,
+                    "skip_pre_framing": previous_case.output_kind == "continue-guidance-card",
+                },
+            )
+            explicit_case.metadata[SESSION_EXPLICIT_RESUME_STAGE_KEY] = explicit_start_stage
+            return explicit_case
     if inferred_gate_choice == "defer" and _is_explicit_defer_commitment(latest_reply_text):
         return _build_gate_outcome_case(
             previous_case=previous_case,
@@ -516,6 +537,65 @@ def _is_explicit_non_product_commitment(reply_text: str) -> bool:
         "再决定",
     ]
     return not any(marker in text for marker in indecision_markers)
+
+
+def _is_explicit_productize_commitment(reply_text: str) -> bool:
+    text = reply_text.strip()
+    explicit_markers = [
+        "继续产品化",
+        "继续做",
+        "还是继续",
+        "继续推进",
+        "往方案前验证走",
+        "继续往方案走",
+        "继续往验证走",
+        "直接往验证走",
+        "继续产品方案",
+    ]
+    if not any(marker in text for marker in explicit_markers):
+        return False
+    indecision_markers = [
+        "没想好",
+        "还没想好",
+        "还在看要不要",
+        "还没判断",
+        "不确定",
+        "纠结",
+        "倾向",
+        "先看看",
+        "要不要",
+        "值不值得",
+    ]
+    return not any(marker in text for marker in indecision_markers)
+
+
+def _resolve_explicit_productize_start_stage(
+    previous_case: CaseState,
+    merged_context: Dict[str, object],
+) -> str:
+    if previous_case.output_kind == "decision-gate-card":
+        return ""
+    if not _has_core_context_for_analysis(merged_context):
+        return ""
+    if previous_case.stage == "validation-design":
+        return "validation-design"
+    if previous_case.stage == "decision-challenge":
+        return "validation-design"
+    if previous_case.stage == "problem-definition":
+        return "decision-challenge"
+    return "problem-definition"
+
+
+def _has_core_context_for_analysis(context_profile: Dict[str, object]) -> bool:
+    if not context_profile.get("business_model"):
+        return False
+    if not context_profile.get("primary_platform"):
+        return False
+    roles = context_profile.get("target_user_roles", [])
+    if not isinstance(roles, list):
+        return False
+    normalized_roles = [str(role).strip() for role in roles if str(role).strip()]
+    return len(normalized_roles) >= 2
 
 
 def _build_gate_outcome_case(

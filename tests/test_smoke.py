@@ -1375,7 +1375,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(blocked_case.metadata["next_stage"], "decision-challenge")
         self.assertEqual(resumed_case.output_kind, "review-card")
         self.assertEqual(resumed_case.workflow_state, "done")
-        self.assertEqual(resumed_case.metadata["last_resume_stage"], "decision-challenge")
+        self.assertEqual(resumed_case.metadata["last_resume_stage"], "validation-design")
 
     def test_review_card_exposes_follow_up_questions_for_next_round(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4759,6 +4759,68 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
         self.assertEqual(replied_case.metadata["last_gate_choice"], "try-non-product-first")
         self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.workflow_state, "blocked")
+
+    def test_session_service_can_resume_validation_design_for_explicit_productize_after_review_card(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input=(
+                    "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，"
+                    "新用户和内容运营都在关注这个问题，运营怀疑他们不知道首帖该发什么。"
+                ),
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="先不绕了，这轮还是继续产品化，直接往方案前验证走。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "productize-now")
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "validation-design")
+        self.assertEqual(replied_case.output_kind, "review-card")
+        self.assertEqual(replied_case.workflow_state, "done")
+
+    def test_session_service_can_resume_problem_definition_for_explicit_productize_after_pre_framing_when_context_is_ready(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="最近老有人说审批容易漏，我还没想太清楚是不是要做。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text=(
+                    "补充一下，这是一个 ToB 的审批后台，主要在 PC 端使用，审批专员和部门负责人都在用。"
+                    "这轮还是继续产品化吧，先往方案前验证走。"
+                ),
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "productize-now")
+        self.assertEqual(replied_case.metadata["last_resume_stage"], "problem-definition")
+        self.assertEqual(replied_case.output_kind, "review-card")
+        self.assertEqual(replied_case.workflow_state, "done")
+
+    def test_session_service_keeps_context_alignment_for_explicit_productize_without_context(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="最近老有人说审批容易漏，我还没想太清楚是不是要做。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这轮还是继续产品化吧，我们先往方案前验证走。",
+                store=store,
+            )
+
+        self.assertEqual(case_state.output_kind, "continue-guidance-card")
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "productize-now")
+        self.assertEqual(replied_case.output_kind, "context-question-card")
         self.assertEqual(replied_case.workflow_state, "blocked")
 
     def test_session_service_keeps_gate_for_non_product_indecision_expression(self) -> None:

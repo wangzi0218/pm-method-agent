@@ -187,6 +187,24 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(third_response.case_state.workflow_state, "blocked")
         self.assertIn("这轮先按非产品路径看", third_response.rendered_card)
 
+    def test_explicit_productize_commitment_can_resume_after_pre_framing_when_context_is_ready(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "最近老有人说审批容易漏，我还没想太清楚是不是要做。",
+                workspace_id="explicit-productize-commitment",
+            )
+            second_response = shell.handle_message(
+                "补充一下，这是一个 ToB 的审批后台，主要在 PC 端使用，审批专员和部门负责人都在用。"
+                "这轮还是继续产品化吧，先往方案前验证走。",
+                workspace_id="explicit-productize-commitment",
+            )
+
+        self.assertEqual(first_response.case_state.output_kind, "continue-guidance-card")
+        self.assertEqual(second_response.case_state.output_kind, "review-card")
+        self.assertEqual(second_response.case_state.workflow_state, "done")
+        self.assertIn("验证设计", second_response.rendered_card)
+
     def test_colloquial_b_side_mobile_web_flow_can_be_understood(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shell = PMMethodAgentShell(base_dir=tmpdir)
