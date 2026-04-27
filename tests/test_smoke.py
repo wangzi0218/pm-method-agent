@@ -4705,6 +4705,23 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(replied_case.metadata["last_gate_choice"], "defer")
         self.assertEqual(replied_case.workflow_state, "deferred")
 
+    def test_session_service_can_infer_defer_from_goal_shift_expression(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="这是一个 ToC 内容社区 App，新用户会抱怨私信通知有点打扰，我还在看要不要处理。",
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="我觉得这件事可以先放一放。不是它完全没价值，而是这阶段我们的目标不在这里，短期也没有资源支持。",
+                store=store,
+            )
+
+        self.assertEqual(replied_case.metadata["last_gate_choice"], "defer")
+        self.assertEqual(replied_case.output_kind, "stage-block-card")
+        self.assertEqual(replied_case.workflow_state, "deferred")
+
     def test_session_service_can_infer_try_non_product_from_process_constraint_expression(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)

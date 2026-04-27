@@ -146,6 +146,25 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIn("这轮先记为暂缓", follow_up_response.rendered_card)
         self.assertIn("如果后面条件变了，再接着往下看", follow_up_response.rendered_card)
 
+    def test_stage_conclusion_toc_defer_sample_can_turn_into_deferred_block(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToC 内容社区 App。最近新用户会抱怨私信通知有点打扰，我还在看要不要处理。",
+                workspace_id="stage-conclusion-toc-defer",
+            )
+            follow_up_response = shell.handle_message(
+                "我觉得这件事可以先放一放。不是它完全没价值，而是这阶段我们的目标不在这里，短期也没有资源支持。",
+                workspace_id="stage-conclusion-toc-defer",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(follow_up_response.action, "reply-case")
+        self.assertEqual(follow_up_response.case_state.output_kind, "stage-block-card")
+        self.assertEqual(follow_up_response.case_state.workflow_state, "deferred")
+        self.assertIn("这轮先记为暂缓", follow_up_response.rendered_card)
+        self.assertIn("如果后面条件变了，再接着往下看", follow_up_response.rendered_card)
+
     def test_colloquial_b_side_mobile_web_flow_can_be_understood(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shell = PMMethodAgentShell(base_dir=tmpdir)

@@ -190,6 +190,7 @@ def reply_to_case(
         resume_stage=resume_stage,
         reply_analysis=reply_analysis,
         role_relationships=role_relationships,
+        latest_reply_text=reply_text.strip(),
     )
 
     turns = list(previous_case.metadata.get(SESSION_TURNS_KEY, []))
@@ -340,8 +341,18 @@ def _build_next_case_from_reply(
     resume_stage: str,
     reply_analysis: ReplyAnalysis,
     role_relationships: Dict[str, list[str]],
+    latest_reply_text: str,
 ) -> CaseState:
     inferred_gate_choice = reply_analysis.inferred_gate_choice
+    explicit_gate_outcome = _build_explicit_gate_outcome_case(
+        previous_case=previous_case,
+        rerun_input=rerun_input,
+        merged_context=merged_context,
+        inferred_gate_choice=inferred_gate_choice,
+        latest_reply_text=latest_reply_text,
+    )
+    if explicit_gate_outcome is not None:
+        return explicit_gate_outcome
     if previous_case.output_kind == "decision-gate-card":
         if not inferred_gate_choice:
             return _build_gate_outcome_case(
@@ -399,6 +410,61 @@ def _build_next_case_from_reply(
             "skip_pre_framing": previous_case.output_kind == "continue-guidance-card",
         },
     )
+
+
+def _build_explicit_gate_outcome_case(
+    previous_case: CaseState,
+    rerun_input: str,
+    merged_context: Dict[str, object],
+    inferred_gate_choice: Optional[str],
+    latest_reply_text: str,
+) -> Optional[CaseState]:
+    if inferred_gate_choice == "defer" and _is_explicit_defer_commitment(latest_reply_text):
+        return _build_gate_outcome_case(
+            previous_case=previous_case,
+            rerun_input=rerun_input,
+            merged_context=merged_context,
+            summary="这轮先记为暂缓，暂不继续推进产品化。",
+            blocking_reason="这轮先按暂缓处理；如果后面条件变了，再接着往下看。",
+            workflow_state="deferred",
+            output_kind="stage-block-card",
+            next_stage="decision-challenge",
+            next_actions=[
+                "记录本轮暂缓原因和重新开启条件。",
+                "后续如果出现新证据，再重新进入当前案例。",
+            ],
+        )
+    return None
+
+
+def _is_explicit_defer_commitment(reply_text: str) -> bool:
+    text = reply_text.strip()
+    explicit_markers = [
+        "暂缓",
+        "先放一放",
+        "先放放",
+        "放一放",
+        "先不做",
+        "不用现在做",
+        "先不立项",
+        "先不上线",
+        "以后再说",
+    ]
+    if not any(marker in text for marker in explicit_markers):
+        return False
+    indecision_markers = [
+        "没想好",
+        "还没想好",
+        "还在看要不要",
+        "还没判断",
+        "不确定",
+        "纠结",
+        "倾向",
+        "先看看",
+        "要不要",
+        "值不值得",
+    ]
+    return not any(marker in text for marker in indecision_markers)
 
 
 def _build_gate_outcome_case(
