@@ -59,6 +59,24 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIn("成功指标是什么", response.rendered_card)
         self.assertNotIn("输入里已经带出方案", response.rendered_card)
 
+    def test_stage_conclusion_over_ask_sample_can_land_on_review_card(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "这是一个内容社区 App。最近新用户注册后 3 天内发帖率还是起不来，"
+                "运营怀疑不是没人想发，而是不知道第一条该发什么。"
+                "我手上还没有特别细的数据，但这个方向我觉得已经挺明显了。",
+                workspace_id="stage-conclusion-over-ask",
+            )
+
+        self.assertEqual(response.action, "create-case")
+        self.assertIsNotNone(response.case_state)
+        self.assertEqual(response.case_state.output_kind, "review-card")
+        self.assertEqual(response.case_state.workflow_state, "done")
+        self.assertIn("## 我现在的判断", response.rendered_card)
+        self.assertIn("## 如果继续往下聊，优先补这几项", response.rendered_card)
+        self.assertNotIn("我先按这几个方向理解", response.rendered_card)
+
     def test_senior_pm_process_flow_can_resume_after_non_product_trial(self) -> None:
         with TemporaryDirectory() as tmpdir:
             shell = PMMethodAgentShell(base_dir=tmpdir)
@@ -88,6 +106,45 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(third_response.case_state.output_kind, "review-card")
         self.assertEqual(third_response.case_state.workflow_state, "done")
         self.assertIn("验证设计", third_response.rendered_card)
+
+    def test_stage_conclusion_missed_gate_sample_can_turn_into_decision_gate(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToB 门店工作台，主要在网页端使用。前台在提一个提醒相关需求，但我还没判断要不要投入产品能力。",
+                workspace_id="stage-conclusion-missed-gate",
+            )
+            follow_up_response = shell.handle_message(
+                "这个需求我不是完全不想做，但现在研发资源就是很紧。"
+                "它更像一个 nice to have，我也没想好现在值不值得为它投入产品能力。",
+                workspace_id="stage-conclusion-missed-gate",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(follow_up_response.action, "reply-case")
+        self.assertEqual(follow_up_response.case_state.output_kind, "decision-gate-card")
+        self.assertEqual(follow_up_response.case_state.workflow_state, "blocked")
+        self.assertIn("这件事要不要继续往产品方案走", follow_up_response.rendered_card)
+        self.assertIn("倾向：暂缓", follow_up_response.rendered_card)
+
+    def test_stage_conclusion_defer_sample_can_turn_into_deferred_block(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToB 的 PC 后台，前台和管理员在用。我们需要优化权限配置流程，避免前台误操作。",
+                workspace_id="stage-conclusion-defer",
+            )
+            follow_up_response = shell.handle_message(
+                "我觉得这个需求可以不用现在做，研发资源比较紧张，更像是一个 nice to have。",
+                workspace_id="stage-conclusion-defer",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(follow_up_response.action, "reply-case")
+        self.assertEqual(follow_up_response.case_state.output_kind, "stage-block-card")
+        self.assertEqual(follow_up_response.case_state.workflow_state, "deferred")
+        self.assertIn("这轮先记为暂缓", follow_up_response.rendered_card)
+        self.assertIn("如果后面条件变了，再接着往下看", follow_up_response.rendered_card)
 
     def test_colloquial_b_side_mobile_web_flow_can_be_understood(self) -> None:
         with TemporaryDirectory() as tmpdir:

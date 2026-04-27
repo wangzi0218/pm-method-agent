@@ -1445,6 +1445,29 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(replied_case.workflow_state, "done")
         self.assertNotIn("当前的基线数据是多少", replied_case.pending_questions)
 
+    def test_stage_conclusion_over_ask_tob_sample_can_resume_from_problem_definition(self) -> None:
+        case_state = continue_analysis_with_context(
+            raw_input=(
+                "最近前台老漏掉复诊患者的就诊前提醒，店长已经开始担心会影响到诊率。"
+                "现在基本还是靠前台手工翻列表确认，之前也试过晨会提醒，但过一阵又回去了。"
+            ),
+            start_stage="problem-definition",
+            context_profile={
+                "business_model": "tob",
+                "primary_platform": "pc",
+                "target_user_roles": ["前台", "店长"],
+            },
+        )
+
+        self.assertEqual(case_state.output_kind, "review-card")
+        self.assertEqual(case_state.workflow_state, "done")
+        self.assertEqual(
+            case_state.metadata["selected_modes"],
+            ["problem-framing", "decision-challenge", "validation-design"],
+        )
+        self.assertIn("问题定义", render_case_state(case_state))
+        self.assertIn("如果继续往下聊，优先补这几项", render_case_state(case_state))
+
     def test_review_card_why_now_reply_resumes_from_decision_challenge(self) -> None:
         with TemporaryDirectory() as tmpdir:
             store = default_store(tmpdir)
