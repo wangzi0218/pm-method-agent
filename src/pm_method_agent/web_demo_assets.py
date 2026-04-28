@@ -1182,6 +1182,56 @@ WEB_DEMO_JS = """\
     return labels[value] || value || "卡片";
   }
 
+  function gateChoiceLabel(value) {
+    const labels = {
+      "productize-now": "继续产品化",
+      "try-non-product-first": "先看非产品路径",
+      defer: "先暂缓",
+    };
+    return labels[value] || "";
+  }
+
+  function describeCaseDirection(casePayload) {
+    if (!casePayload) {
+      return null;
+    }
+    const metadata = casePayload.metadata || {};
+    const lastGateChoice = String(metadata.last_gate_choice || "");
+    if (casePayload.workflow_state === "deferred" || lastGateChoice === "defer") {
+      return {
+        label: "先暂缓",
+        badge: "先暂缓",
+        pill: "当前先暂缓",
+        summary: "这轮先按暂缓处理，等条件变了，再从这里接着看。",
+      };
+    }
+    if (lastGateChoice === "try-non-product-first" && casePayload.output_kind === "stage-block-card") {
+      return {
+        label: "先看非产品路径",
+        badge: "先看非产品路径",
+        pill: "当前先看非产品路径",
+        summary: "这轮先不继续产品主线，先试流程、培训或管理方案。",
+      };
+    }
+    if (lastGateChoice === "productize-now") {
+      return {
+        label: "继续产品化",
+        badge: "继续产品化",
+        pill: "当前继续产品化",
+        summary: "这轮已经明确继续产品化，系统会从当前合适阶段继续往验证或方案前判断走。",
+      };
+    }
+    if (casePayload.output_kind === "decision-gate-card") {
+      return {
+        label: "等你拍板",
+        badge: "等你拍板",
+        pill: "这轮等你拍板",
+        summary: "这一步还需要你先定方向，系统才会继续往下推进。",
+      };
+    }
+    return null;
+  }
+
   function contextValueLabel(key, value) {
     const labelMappings = {
       business_model: {
@@ -1750,6 +1800,7 @@ WEB_DEMO_JS = """\
     const followUpFocus = displayFollowUpFocus(casePayload);
     const followUpReason = displayFollowUpReason(casePayload);
     const { primaryReason, carryoverNote } = splitCarryoverFollowUpReason(followUpReason);
+    const direction = describeCaseDirection(casePayload);
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -1768,6 +1819,15 @@ WEB_DEMO_JS = """\
         <article class="digest-card">
           <span class="digest-label">最需要判断的一点</span>
           <span class="digest-value">${inlineFormat(shortText(topFinding.claim || "", 88))}</span>
+        </article>
+      `);
+    }
+
+    if (direction) {
+      cards.push(`
+        <article class="digest-card">
+          <span class="digest-label">这一轮怎么承接</span>
+          <span class="digest-value">${inlineFormat(direction.summary)}</span>
         </article>
       `);
     }
@@ -2176,6 +2236,7 @@ WEB_DEMO_JS = """\
     const businessModel = contextValueLabel("business_model", contextProfile.business_model || "");
     const primaryPlatform = contextValueLabel("primary_platform", contextProfile.primary_platform || "");
     const targetRoles = contextProfile.target_user_roles || [];
+    const direction = describeCaseDirection(casePayload);
 
     if (businessModel) {
       pills.push(`<span class="pill">${inlineFormat(businessModel)}</span>`);
@@ -2185,6 +2246,9 @@ WEB_DEMO_JS = """\
     }
     if (Array.isArray(targetRoles) && targetRoles.length) {
       pills.push(`<span class="pill">${inlineFormat(`${targetRoles.length} 个关键角色`)}</span>`);
+    }
+    if (direction && direction.label) {
+      pills.push(`<span class="pill">${inlineFormat(direction.label)}</span>`);
     }
     if (caseRuntime && caseRuntime.fallback_active) {
       pills.push(
@@ -2197,6 +2261,10 @@ WEB_DEMO_JS = """\
   function buildActiveCaseBadge(casePayload) {
     if (!casePayload) {
       return "未加载";
+    }
+    const direction = describeCaseDirection(casePayload);
+    if (direction && direction.badge) {
+      return direction.badge;
     }
     if (casePayload.workflow_state === "deferred") {
       return "先暂缓";
@@ -2241,12 +2309,15 @@ WEB_DEMO_JS = """\
     els.cardContent.innerHTML = renderedCard.html;
 
     const statusBits = [];
+    const direction = response.case ? describeCaseDirection(response.case) : null;
     if (response.runtime_session && response.runtime_session.turn_count != null) {
       statusBits.push(
         `<span class="pill">第 ${inlineFormat(String(response.runtime_session.turn_count))} 轮</span>`
       );
     }
-    if (response.case && response.case.workflow_state === "blocked") {
+    if (direction && direction.pill) {
+      statusBits.push(`<span class="pill">${inlineFormat(direction.pill)}</span>`);
+    } else if (response.case && response.case.workflow_state === "blocked") {
       statusBits.push('<span class="pill">这轮先停在待补信息</span>');
     } else if (response.case && response.case.workflow_state === "deferred") {
       statusBits.push('<span class="pill">这轮先往后放一放</span>');

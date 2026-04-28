@@ -4617,6 +4617,11 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("最近补充", script)
         self.assertIn("当前焦点", script)
         self.assertIn("renderCardDigest(state.currentCase, state.currentCaseRuntime);", script)
+        self.assertIn("function describeCaseDirection(casePayload)", script)
+        self.assertIn("这一轮怎么承接", script)
+        self.assertIn("当前继续产品化", script)
+        self.assertIn("当前先看非产品路径", script)
+        self.assertIn("这轮等你拍板", script)
         self.assertEqual(content_type, "application/javascript; charset=utf-8")
 
     def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:
