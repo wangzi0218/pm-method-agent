@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from pm_method_agent.http_service import run_http_server
 from pm_method_agent.orchestrator import run_analysis_with_context
+from pm_method_agent.project_profile_service import default_project_profile_store, get_project_profile
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.renderers import (
     build_case_history_payload,
@@ -32,8 +33,10 @@ from pm_method_agent.workspace_service import (
     default_workspace_store,
     get_or_create_workspace,
     get_workspace_approval_preferences,
+    get_workspace_user_profile,
     save_workspace,
     update_workspace_approval_preferences,
+    update_workspace_user_profile,
 )
 
 
@@ -151,6 +154,10 @@ def build_session_parser() -> argparse.ArgumentParser:
     workspace_parser.add_argument(
         "--approval-preferences-json",
         help="以 JSON 字符串更新工作区审批偏好，例如 auto_approve_actions。",
+    )
+    workspace_parser.add_argument(
+        "--user-profile-json",
+        help="以 JSON 字符串更新用户偏好，例如 preferred_output_style、preferred_language。",
     )
 
     serve_parser = subparsers.add_parser("serve", help="启动本地 HTTP 服务。")
@@ -280,6 +287,7 @@ def _run_session_command(argv: List[str]) -> int:
     args = parser.parse_args(argv)
     store = default_store(args.store_dir)
     workspace_store = default_workspace_store(args.store_dir)
+    project_profile_store = default_project_profile_store(args.store_dir)
     agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
     local_tools = RuntimeToolRegistry(base_dir=args.store_dir)
     runtime_store = default_runtime_session_store(args.store_dir)
@@ -329,6 +337,37 @@ def _run_session_command(argv: List[str]) -> int:
                 else:
                     print(f"已更新工作区 {workspace.workspace_id} 的审批偏好。")
                 return 0
+            if args.user_profile_json:
+                profile_payload = json.loads(args.user_profile_json)
+                if not isinstance(profile_payload, dict):
+                    raise ValueError("user-profile-json must be a JSON object.")
+                update_workspace_user_profile(
+                    workspace,
+                    preferred_output_style=_optional_string(profile_payload.get("preferred_output_style")),
+                    preferred_language=_optional_string(profile_payload.get("preferred_language")),
+                    decision_style=_optional_string(profile_payload.get("decision_style")),
+                    frequent_product_domains=_ensure_string_list_or_empty(
+                        profile_payload.get("frequent_product_domains")
+                    ),
+                    common_constraints=_ensure_string_list_or_empty(
+                        profile_payload.get("common_constraints")
+                    ),
+                )
+                save_workspace(workspace, store=workspace_store)
+                if args.format == "json":
+                    print(
+                        json.dumps(
+                            {
+                                "workspace": workspace.to_dict(),
+                                "user_profile": get_workspace_user_profile(workspace),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(f"已更新工作区 {workspace.workspace_id} 的用户偏好。")
+                return 0
             if args.switch_case_id:
                 case_state = get_case(case_id=args.switch_case_id, store=store)
                 activate_workspace_case(workspace, case_state.case_id)
@@ -357,20 +396,41 @@ def _run_session_command(argv: List[str]) -> int:
                     recent_cases.append(get_case(case_id=case_id, store=store))
                 except FileNotFoundError:
                     continue
+            active_case = None
+            if workspace.active_case_id:
+                try:
+                    active_case = get_case(case_id=workspace.active_case_id, store=store)
+                except FileNotFoundError:
+                    active_case = None
+            active_project_profile = None
+            if workspace.active_project_profile_id:
+                try:
+                    active_project_profile = get_project_profile(
+                        workspace.active_project_profile_id,
+                        store=project_profile_store,
+                    )
+                except FileNotFoundError:
+                    active_project_profile = None
             if args.format == "json":
                 print(
                     json.dumps(
                         {
                             "workspace": workspace.to_dict(),
-                            "cases": build_workspace_cases_payload(workspace, recent_cases),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                recent_cases,
+                                active_project_profile,
+                                active_case,
+                            ),
                             "approval_preferences": get_workspace_approval_preferences(workspace),
+                            "user_profile": get_workspace_user_profile(workspace),
                         },
                         ensure_ascii=False,
                         indent=2,
                     )
                 )
             else:
-                print(render_workspace_overview(workspace, recent_cases))
+                print(render_workspace_overview(workspace, recent_cases, active_project_profile, active_case))
             return 0
         elif args.command == "serve":
             run_http_server(host=args.host, port=args.port, store_dir=args.store_dir)
@@ -692,6 +752,13 @@ def _ensure_string_list_or_empty(payload: object) -> list[str]:
         if text and text not in normalized:
             normalized.append(text)
     return normalized
+
+
+def _optional_string(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    rendered = str(value).strip()
+    return rendered or None
 
 
 def _add_context_arguments(parser: argparse.ArgumentParser) -> None:

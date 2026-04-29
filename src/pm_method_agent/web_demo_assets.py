@@ -1826,7 +1826,7 @@ WEB_DEMO_JS = """\
     if (direction) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">这一轮怎么承接</span>
+          <span class="digest-label">接下来怎么走</span>
           <span class="digest-value">${inlineFormat(direction.summary)}</span>
         </article>
       `);
@@ -1835,7 +1835,7 @@ WEB_DEMO_JS = """\
     if (followUpFocus || followUpReason) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">这轮先收什么</span>
+          <span class="digest-label">这轮先收</span>
           <span class="digest-value">
             ${inlineFormat(shortText(followUpFocus || "继续把当前判断收稳", 44))}
             ${primaryReason ? `：${inlineFormat(shortText(primaryReason, 84))}` : ""}
@@ -1847,7 +1847,7 @@ WEB_DEMO_JS = """\
     if (carryoverNote) {
       cards.push(`
         <article class="digest-card is-muted">
-          <span class="digest-label">顺手记住的线索</span>
+          <span class="digest-label">顺手记一下</span>
           <span class="digest-value">${inlineFormat(shortText(carryoverNote, 96))}</span>
         </article>
       `);
@@ -1856,7 +1856,7 @@ WEB_DEMO_JS = """\
     if (caseRuntime && caseRuntime.fallback_active) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">这一轮的承接方式</span>
+          <span class="digest-label">这轮怎么接住的</span>
           <span class="digest-value">
             这轮里有 ${inlineFormat(String(caseRuntime.fallback_count || 0))} 处增强先按本地规则接住了：${inlineFormat(
               (caseRuntime.fallback_components || []).join(" / ")
@@ -1949,23 +1949,23 @@ WEB_DEMO_JS = """\
         </span>
       </article>
       <article class="digest-card is-calm">
-        <span class="digest-label">这轮现在先收什么</span>
+        <span class="digest-label">这轮先收</span>
         <span class="digest-value">
           ${followUpFocus
             ? `${inlineFormat(shortText(followUpFocus, 40))}${primaryReason ? `：${inlineFormat(shortText(primaryReason, 72))}` : ""}`
-            : "当前没有额外卡点，可以继续顺着主卡片往下补。"}
+            : "眼下没别的卡点，顺着主卡继续补就行。"}
         </span>
       </article>
       ${carryoverNote
         ? `
       <article class="digest-card is-muted">
-        <span class="digest-label">顺手记住的线索</span>
+        <span class="digest-label">顺手记一下</span>
         <span class="digest-value">${inlineFormat(shortText(carryoverNote, 96))}</span>
       </article>
       `
         : ""}
       <article class="digest-card">
-        <span class="digest-label">这段最近补到哪了</span>
+        <span class="digest-label">最近补到了哪</span>
         <span class="digest-value">
           ${memoryItems.length
             ? inlineFormat(
@@ -2001,7 +2001,7 @@ WEB_DEMO_JS = """\
     const highlightedEvents = pickRuntimeHighlights(runtimeSession);
     const terminalState = String(lastTerminal.terminal_state || "");
     const resumeLabel = runtimeResumeLabel(runtimeSession.resume_from || lastTerminal.resume_from || "");
-    let focusText = "当前没有额外卡点，可以继续输入下一轮信息。";
+    let focusText = "眼下没有额外卡点，可以继续补下一轮。";
     if (pendingApprovals.length) {
       focusText = `当前有 ${pendingApprovals.length} 项待确认，这一轮会先停在人来拍板这一步。`;
     } else if (terminalState === "blocked") {

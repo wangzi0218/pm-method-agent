@@ -30,18 +30,18 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(first_response.case_state.output_kind, "continue-guidance-card")
         self.assertEqual(first_response.case_state.stage, "pre-framing")
-        self.assertIn("我先按这几个方向理解", first_response.rendered_card)
+        self.assertIn("我先这样理解", first_response.rendered_card)
 
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(second_response.case_state.output_kind, "review-card")
         self.assertEqual(second_response.case_state.workflow_state, "done")
-        self.assertIn("## 我主要看到这几个点", second_response.rendered_card)
-        self.assertIn("## 如果继续往下聊，优先补这几项", second_response.rendered_card)
+        self.assertIn("## 我主要卡在", second_response.rendered_card)
+        self.assertIn("## 建议先补", second_response.rendered_card)
 
         self.assertEqual(third_response.action, "reply-case")
         self.assertEqual(third_response.case_state.output_kind, "decision-gate-card")
         self.assertEqual(third_response.case_state.workflow_state, "blocked")
-        self.assertIn("倾向：暂缓", third_response.rendered_card)
+        self.assertIn("我更偏向：暂缓", third_response.rendered_card)
 
     def test_mid_level_pm_toc_growth_case_can_go_directly_to_review_card(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -55,7 +55,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIsNotNone(response.case_state)
         self.assertEqual(response.case_state.output_kind, "review-card")
         self.assertEqual(response.case_state.workflow_state, "done")
-        self.assertIn("## 后面还可以继续补", response.rendered_card)
+        self.assertIn("## 先放一边", response.rendered_card)
         self.assertIn("成功指标是什么", response.rendered_card)
         self.assertNotIn("输入里已经带出方案", response.rendered_card)
 
@@ -73,8 +73,8 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIsNotNone(response.case_state)
         self.assertEqual(response.case_state.output_kind, "review-card")
         self.assertEqual(response.case_state.workflow_state, "done")
-        self.assertIn("## 我现在的判断", response.rendered_card)
-        self.assertIn("## 如果继续往下聊，优先补这几项", response.rendered_card)
+        self.assertIn("## 我先这么看", response.rendered_card)
+        self.assertIn("## 建议先补", response.rendered_card)
         self.assertNotIn("我先按这几个方向理解", response.rendered_card)
 
     def test_senior_pm_process_flow_can_resume_after_non_product_trial(self) -> None:
@@ -95,7 +95,7 @@ class HumanLikeFlowTest(unittest.TestCase):
 
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(first_response.case_state.output_kind, "continue-guidance-card")
-        self.assertIn("如果先按这个方向继续", first_response.rendered_card)
+        self.assertIn("接下来我会", first_response.rendered_card)
 
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(second_response.case_state.output_kind, "stage-block-card")
@@ -125,7 +125,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(follow_up_response.case_state.output_kind, "decision-gate-card")
         self.assertEqual(follow_up_response.case_state.workflow_state, "blocked")
         self.assertIn("这件事要不要继续往产品方案走", follow_up_response.rendered_card)
-        self.assertIn("倾向：暂缓", follow_up_response.rendered_card)
+        self.assertIn("我更偏向：暂缓", follow_up_response.rendered_card)
 
     def test_stage_conclusion_defer_sample_can_turn_into_deferred_block(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -257,8 +257,10 @@ class HumanLikeFlowTest(unittest.TestCase):
 
         self.assertIn(first_response.case_state.output_kind, {"continue-guidance-card", "context-question-card"})
         self.assertTrue(
-            "现在更值得先补" in first_response.rendered_card
+            "现在先补什么" in first_response.rendered_card
+            or "建议先补" in first_response.rendered_card
             or "先补这几项" in first_response.rendered_card
+            or "先补这些" in first_response.rendered_card
         )
         self.assertEqual(second_response.action, "reply-case")
         self.assertIn(
@@ -268,7 +270,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(third_response.action, "reply-case")
         self.assertIn(third_response.case_state.output_kind, {"review-card", "decision-gate-card", "stage-block-card"})
         self.assertNotIn("证据=", third_response.rendered_card)
-        self.assertIn("我看到的信号", third_response.rendered_card)
+        self.assertIn("看到：", third_response.rendered_card)
 
     def test_realistic_toc_partial_metric_reply_can_render_half_step_question(self) -> None:
         with TemporaryDirectory() as tmpdir:

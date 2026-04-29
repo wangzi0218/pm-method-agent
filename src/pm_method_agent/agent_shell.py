@@ -6,6 +6,7 @@ from typing import Callable, Optional, TypeVar
 
 from pm_method_agent.hook_enforcement import HookExecutionBlockedError, run_pre_operation_hooks
 from pm_method_agent.follow_up import is_follow_up_question_answered
+from pm_method_agent.memory_write_suggestions import suggest_memory_write_hints
 from pm_method_agent.models import CaseState, ProjectProfile, RuntimeSession, WorkspaceState
 from pm_method_agent.project_profile_service import (
     create_project_profile,
@@ -145,6 +146,12 @@ class PMMethodAgentShell:
                 normalized_message=normalized_message,
                 reply_analysis=reply_analysis,
             )
+            self._attach_memory_write_hints(
+                response=response,
+                message=normalized_message,
+                reply_analysis=reply_analysis,
+                active_case=active_case,
+            )
             return self._finalize_response(response)
         except (RuntimePolicyBlockedError, HookExecutionBlockedError) as exc:
             response = AgentShellResponse(
@@ -250,7 +257,12 @@ class PMMethodAgentShell:
                 tool_name="renderer",
                 action_name="renderer.workspace-overview",
                 request_payload={"card": "workspace-overview"},
-                operation=lambda: render_workspace_overview(workspace, recent_cases),
+                operation=lambda: render_workspace_overview(
+                    workspace,
+                    recent_cases,
+                    self._load_active_project_profile(workspace),
+                    self._load_active_case(workspace),
+                ),
                 result_ref_builder=lambda _: "rendered:workspace-overview",
             ),
         )
@@ -292,7 +304,12 @@ class PMMethodAgentShell:
                     tool_name="renderer",
                     action_name="renderer.workspace-overview",
                     request_payload={"card": "workspace-overview"},
-                    operation=lambda: render_workspace_overview(workspace, recent_cases),
+                    operation=lambda: render_workspace_overview(
+                        workspace,
+                        recent_cases,
+                        self._load_active_project_profile(workspace),
+                        self._load_active_case(workspace),
+                    ),
                     result_ref_builder=lambda _: "rendered:workspace-overview",
                 ),
             )
@@ -745,6 +762,48 @@ class PMMethodAgentShell:
                     "fallback_parser": str(payload.get("engine", "")),
                 },
             )
+
+    def _attach_memory_write_hints(
+        self,
+        *,
+        response: AgentShellResponse,
+        message: str,
+        reply_analysis: ReplyAnalysis,
+        active_case: Optional[CaseState],
+    ) -> None:
+        hints = suggest_memory_write_hints(
+            message,
+            reply_analysis=reply_analysis,
+            active_case=response.case_state or active_case,
+        )
+        if hints:
+            response.workspace.metadata["memory_write_suggestions"] = hints
+        else:
+            response.workspace.metadata.pop("memory_write_suggestions", None)
+        save_workspace(response.workspace, store=self._workspace_store)
+
+        if response.case_state is not None:
+            if hints:
+                response.case_state.metadata["memory_write_suggestions"] = hints
+            else:
+                response.case_state.metadata.pop("memory_write_suggestions", None)
+            self._case_store.save(response.case_state)
+
+        if response.action == "show-workspace":
+            response.rendered_card = render_workspace_overview(
+                response.workspace,
+                self._load_recent_cases(response.workspace),
+                self._load_active_project_profile(response.workspace),
+                self._load_active_case(response.workspace),
+            )
+            return
+
+        if response.case_state is not None and response.rendered_history:
+            response.rendered_history = render_case_history(response.case_state)
+            return
+
+        if response.action != "project-profile-updated" and response.case_state is not None and response.rendered_card:
+            response.rendered_card = render_case_state(response.case_state)
 
 
 def _classify_agent_intent(

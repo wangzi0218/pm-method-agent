@@ -31,6 +31,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     OpenAICompatibleConfig,
 )
+from pm_method_agent.memory_write_suggestions import suggest_memory_write_hints
 from pm_method_agent.follow_up_copywriter import (
     FOLLOW_UP_DISPLAY_FOCUS_KEY,
     FOLLOW_UP_DISPLAY_QUESTIONS_KEY,
@@ -73,7 +74,13 @@ from pm_method_agent.reply_interpreter import (
     LLMReplyInterpreter,
     build_reply_interpreter_from_env,
 )
-from pm_method_agent.renderers import render_case_history, render_case_state, render_runtime_session
+from pm_method_agent.renderers import (
+    build_workspace_cases_payload,
+    render_case_history,
+    render_case_state,
+    render_runtime_session,
+    render_workspace_overview,
+)
 from pm_method_agent.renderers import build_case_runtime_payload
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.runtime_policy import (
@@ -100,8 +107,10 @@ from pm_method_agent.workspace_service import (
     default_workspace_store,
     get_or_create_workspace,
     get_workspace_approval_preferences,
+    get_workspace_user_profile,
     save_workspace,
     update_workspace_approval_preferences,
+    update_workspace_user_profile,
 )
 
 
@@ -376,9 +385,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         }
 
         rendered = render_case_state(case_state)
-        self.assertIn("提出者：前台", rendered)
-        self.assertIn("实际使用者：前台", rendered)
-        self.assertIn("结果责任人：店长", rendered)
+        self.assertIn("这次更像是前台先提出来的。", rendered)
+        self.assertIn("平时主要是前台在用。", rendered)
+        self.assertIn("店长更需要对结果负责。", rendered)
 
     def test_auto_mode_requests_context_when_context_is_missing(self) -> None:
         case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
@@ -463,8 +472,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
             },
         )
         rendered = render_case_state(case_state)
-        self.assertIn("## 我主要看到这几个点", rendered)
-        self.assertIn("## 更建议先补", rendered)
+        self.assertIn("## 我主要卡在", rendered)
+        self.assertIn("## 建议先补", rendered)
         self.assertIn("### 现状与证据", rendered)
         self.assertIn("### 决策与验证", rendered)
 
@@ -485,7 +494,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertIn("输入里已经带出方案，先把要解决的问题单独说清。", rendered)
         self.assertIn("补上现状流程、失败案例和现有替代做法。", rendered)
-        self.assertIn("把当前输入拆成现象、解释、方案假设三层。", rendered)
+        self.assertIn("把当前输入拆成现象、解释、方案假设三层", rendered)
         self.assertIn("输入里已经带出方案，建议先把要解决的问题单独说清。", original_claims)
 
     def test_rendered_review_card_can_polish_gate_copy(self) -> None:
@@ -503,9 +512,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertIn("按现在的信息，能不能直接进入方案讨论？", rendered)
-        self.assertIn("按现在的信息，这件事要不要继续往产品方案走？", rendered)
         self.assertIn("输入里已经混进方案了，现状证据也还不够。", rendered)
-        self.assertIn("基础场景信息已经够用了，也没看到更优的非产品路径，可以继续往验证走。", rendered)
+        self.assertNotIn("按现在的信息，这件事要不要继续往产品方案走？", rendered)
 
     def test_rendered_review_card_can_dedupe_overlap_between_actions_and_unknowns(self) -> None:
         from pm_method_agent.orchestrator import run_analysis_with_context
@@ -543,7 +551,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("还有几个场景前提会直接影响后面的判断", rendered)
         self.assertIn("这是企业产品场景", rendered)
         self.assertIn("现在主要是非桌面端场景", rendered)
-        self.assertEqual(rendered.count("这条会影响后面怎么判断，但不用单独放大。"), 1)
+        self.assertEqual(rendered.count("（会影响后面判断）"), 1)
 
     def test_rendered_review_card_does_not_show_summary_count_markers(self) -> None:
         from pm_method_agent.orchestrator import run_analysis_with_context
@@ -583,9 +591,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         rendered = render_case_state(case_state)
 
-        self.assertIn("## 我先按这几个方向理解", rendered)
-        self.assertIn("## 现在更值得先补", rendered)
-        self.assertIn("## 如果先按这个方向继续", rendered)
+        self.assertIn("## 我先这样理解", rendered)
+        self.assertIn("## 现在先补", rendered)
+        self.assertIn("## 接下来我会", rendered)
 
     def test_pre_framing_can_identify_core_problem_uncertainty(self) -> None:
         case_state = run_analysis_with_context(
@@ -1057,10 +1065,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
             )
 
         answered_questions = replied_case.metadata["answered_questions"]
-        self.assertTrue(
-            any("企业产品" in question or "消费者产品" in question or "内部产品" in question for question in answered_questions)
-        )
+        self.assertEqual(answered_questions, [])
         self.assertFalse(any("谁提出需求、谁使用产品、谁承担最终结果" in question for question in answered_questions))
+        self.assertEqual(replied_case.context_profile["business_model"], "tob")
         self.assertEqual(replied_case.context_profile["primary_platform"], "pc")
 
     def test_session_service_uses_reply_attribution_to_mark_answered_questions(self) -> None:
@@ -1091,7 +1098,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             )
 
         answered_questions = list(replied_case.metadata.get("answered_questions", []))
-        self.assertIn("当前基线指标是什么", answered_questions)
+        self.assertTrue(any("基线" in question for question in answered_questions))
         self.assertIn("失败或停止条件是什么", answered_questions)
         self.assertNotIn("成功指标是什么", answered_questions)
         self.assertEqual(replied_case.metadata.get("last_partial_pending_questions"), ["成功指标是什么"])
@@ -1127,7 +1134,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertEqual(replied_case.metadata.get("last_partial_pending_questions"), ["成功指标是什么"])
         self.assertEqual(replied_case.metadata.get("follow_up_focus"), "先把刚补到一半的点说完整")
-        self.assertIn("还有半步没落稳", replied_case.metadata.get("follow_up_reason", ""))
+        self.assertIn("还差半步", replied_case.metadata.get("follow_up_reason", ""))
         self.assertTrue(replied_case.pending_questions)
         self.assertEqual(replied_case.pending_questions[0], "成功指标是什么")
         self.assertEqual(
@@ -1137,6 +1144,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered_card = render_case_state(replied_case)
         self.assertIn("先把刚补到一半的点说完整", rendered_card)
         self.assertIn("发帖率方向已经提到了，再补一句：做到什么程度，你会觉得这轮值得继续？", rendered_card)
+        self.assertEqual(replied_case.metadata.get("follow_up_question_budget"), 1)
+        self.assertEqual(replied_case.metadata.get("follow_up_strategy"), "partial-follow-up")
 
     def test_stage_progression_can_keep_a_gentle_carryover_note_for_last_partial_point(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1164,8 +1173,63 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("如果先不做，最可能丢掉什么？", case_state.metadata.get("follow_up_carryover_note", ""))
 
         rendered_card = render_case_state(case_state)
-        self.assertIn("这轮已经能往验证走，但先补关键前提，后面会少来回。", rendered_card)
+        self.assertIn("前提还没补齐。", rendered_card)
         self.assertIn("刚才提到的那一点我先记住了，后面如果回到这一层，会接着看：如果先不做，最可能丢掉什么？", rendered_card)
+
+    def test_follow_up_plan_defaults_to_single_question_for_unrelated_gaps(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="problem-definition",
+            workflow_state="done",
+            output_kind="review-card",
+            raw_input="最近提醒流程总出错，我在想是不是该处理。",
+            pending_questions=[],
+            unknowns=["当前流程是怎么运行的", "如果晚三个月做，会损失什么"],
+        )
+
+        case_state = attach_follow_up_plan(case_state)
+
+        self.assertEqual(case_state.pending_questions, ["当前流程是怎么运行的"])
+        self.assertEqual(case_state.metadata.get("follow_up_question_budget"), 1)
+        self.assertEqual(case_state.metadata.get("follow_up_strategy"), "stage-critical")
+
+    def test_follow_up_plan_can_keep_two_questions_when_they_are_tightly_coupled(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="decision-challenge",
+            workflow_state="done",
+            output_kind="review-card",
+            raw_input="新用户发帖率一直不高，我还在看值不值得继续做。",
+            pending_questions=[],
+            unknowns=["为什么现在更值得做", "如果晚三个月做，会损失什么", "当前基线指标是什么"],
+        )
+
+        case_state = attach_follow_up_plan(case_state)
+
+        self.assertEqual(case_state.pending_questions[:2], ["为什么现在更值得做", "如果晚三个月做，会损失什么"])
+        self.assertEqual(len(case_state.pending_questions), 2)
+        self.assertEqual(case_state.metadata.get("follow_up_question_budget"), 2)
+        self.assertEqual(case_state.metadata.get("follow_up_strategy"), "decision-evidence")
+
+    def test_context_alignment_can_keep_three_questions_as_a_bundle(self) -> None:
+        case_state = CaseState(
+            case_id="demo-case",
+            stage="context-alignment",
+            workflow_state="blocked",
+            output_kind="context-question-card",
+            raw_input="做个弹窗",
+            pending_questions=[
+                "当前产品属于企业产品、消费者产品还是内部产品？",
+                "当前主要使用平台是桌面端、移动端、小程序还是多端？",
+                "谁提出需求、谁使用产品、谁承担最终结果？",
+            ],
+        )
+
+        case_state = attach_follow_up_plan(case_state)
+
+        self.assertEqual(len(case_state.pending_questions), 3)
+        self.assertEqual(case_state.metadata.get("follow_up_question_budget"), 3)
+        self.assertEqual(case_state.metadata.get("follow_up_strategy"), "context-bundle")
 
     def test_local_partial_rewrite_templates_can_cover_non_product_and_role_triplet(self) -> None:
         case_state = CaseState(
@@ -1466,7 +1530,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             ["problem-framing", "decision-challenge", "validation-design"],
         )
         self.assertIn("问题定义", render_case_state(case_state))
-        self.assertIn("如果继续往下聊，优先补这几项", render_case_state(case_state))
+        self.assertIn("## 建议先补", render_case_state(case_state))
 
     def test_review_card_why_now_reply_resumes_from_decision_challenge(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1818,9 +1882,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(enhanced_case.metadata["follow_up_copywriter"], "llm")
         self.assertFalse(enhanced_case.metadata["llm_enhancements"]["follow-up-copywriter"]["fallback_used"])
         rendered = render_case_state(enhanced_case)
-        self.assertIn("这轮更值得先收", rendered)
+        self.assertIn("这轮先收", rendered)
         self.assertIn("这轮先把判断门槛说清。", rendered)
-        self.assertIn("为什么先收这个", rendered)
+        self.assertIn("先收原因", rendered)
         self.assertIn("你现在更偏向先补证据，还是先判断值不值得做？", rendered)
         system_prompt = adapter.requests[0].messages[0].content
         self.assertIn("[角色职责]", system_prompt)
@@ -4103,6 +4167,180 @@ class OrchestratorSmokeTest(unittest.TestCase):
             ["project-profile-service.*"],
         )
 
+    def test_workspace_command_can_update_user_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "workspace",
+                        "workspace-user-profile-cli",
+                        "--user-profile-json",
+                        json.dumps(
+                            {
+                                "preferred_output_style": "简洁卡片",
+                                "preferred_language": "中文",
+                                "decision_style": "先结论后展开",
+                                "frequent_product_domains": ["医疗", "内容社区"],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["user_profile"]["preferred_output_style"], "简洁卡片")
+        self.assertEqual(payload["user_profile"]["preferred_language"], "中文")
+        self.assertEqual(payload["user_profile"]["decision_style"], "先结论后展开")
+        self.assertEqual(payload["user_profile"]["frequent_product_domains"], ["医疗", "内容社区"])
+
+    def test_http_service_can_update_workspace_user_profile(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            update_response = service.handle(
+                method="POST",
+                path="/workspaces/workspace-user-profile-http/user-profile",
+                body=json.dumps(
+                    {
+                        "preferred_output_style": "简洁卡片",
+                        "preferred_language": "中文",
+                        "common_constraints": ["上线周期紧"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            get_response = service.handle(
+                method="GET",
+                path="/workspaces/workspace-user-profile-http/user-profile",
+            )
+
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.payload["user_profile"]["preferred_output_style"], "简洁卡片")
+        self.assertEqual(get_response.payload["user_profile"]["preferred_language"], "中文")
+        self.assertEqual(get_response.payload["user_profile"]["common_constraints"], ["上线周期紧"])
+
+    def test_workspace_overview_can_render_memory_layers(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            workspace = get_or_create_workspace("workspace-memory-demo", store=default_workspace_store(tmpdir))
+            workspace.active_case_id = "case-demo"
+            workspace.active_project_profile_id = "profile-demo"
+            update_workspace_user_profile(
+                workspace,
+                preferred_output_style="简洁卡片",
+                preferred_language="中文",
+                decision_style="先结论后展开",
+            )
+            project_profile = create_project_profile(
+                project_name="诊所工作台",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "multi-platform",
+                    "product_domain": "医疗服务平台",
+                    "target_user_roles": ["前台", "店长"],
+                },
+                stable_constraints=["上线周期紧"],
+                success_metrics=["到诊率"],
+                project_profile_id="profile-demo",
+                store=default_project_profile_store(tmpdir),
+            )
+            case_state = CaseState(
+                case_id="case-demo",
+                stage="validation-design",
+                workflow_state="done",
+                output_kind="review-card",
+                raw_input="最近提醒总会漏。",
+                pending_questions=["成功指标是什么"],
+                metadata={
+                    "follow_up_focus": "先把验证前提补稳",
+                    "memory_write_suggestions": [
+                        {
+                            "target": "project-profile",
+                            "label": "项目背景",
+                            "summary": "这句更像项目层会反复用到的前提。",
+                            "action_hint": "如果后面还会反复提到，适合记进项目背景。",
+                            "source_excerpt": "我们团队默认先看到诊率和履约率",
+                        }
+                    ],
+                },
+            )
+            workspace.metadata["memory_write_suggestions"] = list(case_state.metadata["memory_write_suggestions"])
+            rendered = render_workspace_overview(workspace, [case_state], project_profile, case_state)
+            payload = build_workspace_cases_payload(workspace, [case_state], project_profile, case_state)
+
+        self.assertIn("## 记住的项目背景", rendered)
+        self.assertIn("## 记住的使用偏好", rendered)
+        self.assertIn("## 当前工作记忆", rendered)
+        self.assertIn("## 这句先怎么记", rendered)
+        self.assertIn("上线周期紧", rendered)
+        self.assertIn("先结论后展开", rendered)
+        self.assertEqual(payload["user_profile"]["preferred_output_style"], "简洁卡片")
+        self.assertEqual(payload["project_profile"]["project_name"], "诊所工作台")
+        self.assertEqual(payload["workspace_memory"]["active_focus"], "先把验证前提补稳")
+        self.assertEqual(payload["memory_write_suggestions"][0]["target"], "project-profile")
+
+    def test_memory_write_hint_can_identify_project_background(self) -> None:
+        hints = suggest_memory_write_hints("我们团队默认先看诊率和履约率，资源紧的时候也会优先保履约。")
+
+        self.assertEqual(hints[0]["target"], "project-profile")
+
+    def test_memory_write_hint_can_prefer_project_background_for_mixed_context_sentence(self) -> None:
+        hints = suggest_memory_write_hints("这是一个 ToB 的 HIS 产品，主要通过网页端使用，前台最近总会漏提醒。")
+
+        self.assertEqual(hints[0]["target"], "project-profile")
+
+    def test_memory_write_hint_can_identify_user_preference(self) -> None:
+        hints = suggest_memory_write_hints("我更喜欢你先给结论再展开，文字短一点，中文就行。")
+
+        self.assertEqual(hints[0]["target"], "user-profile")
+
+    def test_memory_write_hint_can_identify_case_only_signal(self) -> None:
+        hints = suggest_memory_write_hints("这次前台昨天一共漏了 6 次提醒，店长已经来问了。")
+
+        self.assertEqual(hints[0]["target"], "case-memory")
+
+    def test_agent_shell_can_attach_memory_write_hint_to_case_reply(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell.handle_message(
+                "这是一个 ToB 的 HIS 产品，主要通过网页端使用，前台最近总会漏提醒。",
+                workspace_id="memory-hint-case",
+            )
+            response = shell.handle_message(
+                "我更喜欢你先给结论再展开，文字短一点。",
+                workspace_id="memory-hint-case",
+            )
+
+        self.assertEqual(response.action, "reply-case")
+        self.assertEqual(
+            response.case_state.metadata["memory_write_suggestions"][0]["target"],
+            "user-profile",
+        )
+        self.assertIn("## 这句先怎么记", response.rendered_card)
+        self.assertIn("使用偏好", response.rendered_card)
+
+    def test_agent_shell_case_evidence_hint_does_not_become_long_term_memory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "最近诊所前台经常漏掉复诊患者的提醒，昨天就漏了 6 次。",
+                workspace_id="memory-hint-evidence",
+            )
+
+        self.assertEqual(response.action, "create-case")
+        self.assertEqual(
+            response.case_state.metadata["memory_write_suggestions"][0]["target"],
+            "case-memory",
+        )
+        self.assertNotIn("项目背景", response.rendered_card)
+        self.assertNotIn("使用偏好", response.rendered_card)
+
     def test_cli_can_list_and_approve_pending_runtime_operation(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -4559,7 +4797,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(second_response.action, "reply-case")
         self.assertEqual(first_response.workspace.active_case_id, second_response.workspace.active_case_id)
-        self.assertIn("## 我现在的判断", second_response.rendered_card)
+        self.assertIn("## 我先这么看", second_response.rendered_card)
 
     def test_agent_shell_prefers_continuing_active_case_for_follow_up_message(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4580,7 +4818,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(first_response.action, "create-case")
         self.assertEqual(follow_up_response.action, "reply-case")
         self.assertEqual(first_response.workspace.active_case_id, follow_up_response.workspace.active_case_id)
-        self.assertIn("先把这个点定下来", follow_up_response.rendered_card)
+        self.assertIn("先把这件事定一下", follow_up_response.rendered_card)
 
     def test_agent_shell_keeps_short_metric_reply_on_active_case(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4612,13 +4850,13 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("function displayFollowUpQuestions", script)
         self.assertIn("function splitCarryoverFollowUpReason", script)
         self.assertIn("这轮先收：", script)
-        self.assertIn("这轮现在先收什么", script)
-        self.assertIn("顺手记住的线索", script)
+        self.assertIn("这轮先收", script)
+        self.assertIn("顺手记一下", script)
         self.assertIn("最近补充", script)
         self.assertIn("当前焦点", script)
         self.assertIn("renderCardDigest(state.currentCase, state.currentCaseRuntime);", script)
         self.assertIn("function describeCaseDirection(casePayload)", script)
-        self.assertIn("这一轮怎么承接", script)
+        self.assertIn("接下来怎么走", script)
         self.assertIn("当前继续产品化", script)
         self.assertIn("当前先看非产品路径", script)
         self.assertIn("这轮等你拍板", script)
@@ -4903,8 +5141,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(second_response.case_state.context_profile["primary_platform"], "multi-platform")
         self.assertIn("店长", second_response.case_state.context_profile["target_user_roles"])
         self.assertIn("继续往下看", second_response.rendered_card)
-        self.assertIn("提出者：前台", second_response.rendered_card)
-        self.assertIn("结果责任人：店长", second_response.rendered_card)
+        self.assertIn("这次更像是前台先提出来的。", second_response.rendered_card)
+        self.assertIn("店长更需要对结果负责。", second_response.rendered_card)
         self.assertNotIn("当前产品属于企业产品、消费者产品还是内部产品？", second_response.case_state.pending_questions)
         self.assertNotIn("当前主要使用平台是桌面端、移动端、小程序还是多端？", second_response.case_state.pending_questions)
 

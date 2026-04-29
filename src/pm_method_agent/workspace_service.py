@@ -10,6 +10,13 @@ from pm_method_agent.models import WorkspaceState
 
 WORKSPACE_STORE_DIRNAME = ".pm_method_agent/workspaces"
 RECENT_CASE_LIMIT = 10
+USER_PROFILE_KEYS = [
+    "preferred_output_style",
+    "preferred_language",
+    "decision_style",
+    "frequent_product_domains",
+    "common_constraints",
+]
 
 
 @dataclass
@@ -84,6 +91,24 @@ def get_workspace_approval_preferences(workspace_state: WorkspaceState) -> Dict[
     }
 
 
+def get_workspace_user_profile(workspace_state: WorkspaceState) -> Dict[str, object]:
+    raw_profile = workspace_state.metadata.get("user_profile")
+    if not isinstance(raw_profile, dict):
+        return {}
+    normalized: Dict[str, object] = {}
+    for key in USER_PROFILE_KEYS:
+        value = raw_profile.get(key)
+        if key in {"frequent_product_domains", "common_constraints"}:
+            items = _normalize_string_list(value)
+            if items:
+                normalized[key] = items
+            continue
+        rendered = str(value).strip() if value is not None else ""
+        if rendered:
+            normalized[key] = rendered
+    return normalized
+
+
 def update_workspace_approval_preferences(
     workspace_state: WorkspaceState,
     *,
@@ -92,6 +117,38 @@ def update_workspace_approval_preferences(
     workspace_state.metadata["approval_preferences"] = {
         "auto_approve_actions": _normalize_string_list(auto_approve_actions),
     }
+    return workspace_state
+
+
+def update_workspace_user_profile(
+    workspace_state: WorkspaceState,
+    *,
+    preferred_output_style: Optional[str] = None,
+    preferred_language: Optional[str] = None,
+    decision_style: Optional[str] = None,
+    frequent_product_domains: Optional[list[str]] = None,
+    common_constraints: Optional[list[str]] = None,
+) -> WorkspaceState:
+    current = get_workspace_user_profile(workspace_state)
+    updates = {
+        "preferred_output_style": preferred_output_style,
+        "preferred_language": preferred_language,
+        "decision_style": decision_style,
+    }
+    for key, value in updates.items():
+        rendered = str(value).strip() if value is not None else ""
+        if rendered:
+            current[key] = rendered
+    domain_items = _normalize_string_list(frequent_product_domains)
+    if domain_items:
+        current["frequent_product_domains"] = domain_items
+    constraint_items = _normalize_string_list(common_constraints)
+    if constraint_items:
+        current["common_constraints"] = constraint_items
+    if current:
+        workspace_state.metadata["user_profile"] = current
+    else:
+        workspace_state.metadata.pop("user_profile", None)
     return workspace_state
 
 

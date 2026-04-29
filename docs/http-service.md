@@ -319,6 +319,7 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 - 读取当前工作区状态
 - 读取当前工作区审批偏好
+- 读取当前工作区的最小记忆层摘要
 
 ### `GET /workspaces/{workspace_id}/approval-preferences`
 
@@ -334,6 +335,25 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 - 更新当前工作区审批偏好
 - 当前第一版主要支持 `auto_approve_actions`
 
+### `GET /workspaces/{workspace_id}/user-profile`
+
+用途：
+
+- 读取当前工作区记录下来的最小用户偏好
+- 查看系统已经记住了哪些长期交互习惯
+
+### `POST /workspaces/{workspace_id}/user-profile`
+
+用途：
+
+- 更新当前工作区的最小用户偏好
+- 当前支持的典型字段包括：
+  - `preferred_output_style`
+  - `preferred_language`
+  - `decision_style`
+  - `frequent_product_domains`
+  - `common_constraints`
+
 ### `GET /workspaces/{workspace_id}/cases`
 
 用途：
@@ -345,6 +365,13 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 返回内容除了结构化 `cases` 外，还会附带：
 
 - `rendered_workspace`
+- `user_profile`
+
+其中 `cases` 内部也会带一层当前工作区的记忆摘要，包括：
+
+- `project_profile`
+- `user_profile`
+- `workspace_memory`
 
 ### `POST /workspaces/{workspace_id}/active-case`
 

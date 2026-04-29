@@ -8,7 +8,8 @@ from pm_method_agent.follow_up_copywriter import (
     FOLLOW_UP_DISPLAY_QUESTIONS_KEY,
     FOLLOW_UP_DISPLAY_REASON_KEY,
 )
-from pm_method_agent.models import AnalyzerFinding, CaseState, RuntimeSession, WorkspaceState
+from pm_method_agent.memory_write_suggestions import MEMORY_TARGET_LABELS
+from pm_method_agent.models import AnalyzerFinding, CaseState, ProjectProfile, RuntimeSession, WorkspaceState
 from pm_method_agent.prompting import PromptComposition
 from pm_method_agent.rule_loader import LoadedRuleSet
 from pm_method_agent.runtime_config import get_llm_runtime_status
@@ -33,10 +34,10 @@ MODE_LABELS = {
 }
 
 DIMENSION_LABELS = {
-    "problem-framing": "问题定义",
-    "root-cause-and-alternatives": "根因与替代路径",
-    "decision-challenge": "决策挑战",
-    "validation-design": "验证设计",
+    "problem-framing": "先把问题定义说清",
+    "root-cause-and-alternatives": "再看根因和替代路径",
+    "decision-challenge": "再看现在值不值得做",
+    "validation-design": "再看后面怎么验证",
 }
 
 EVIDENCE_LEVEL_LABELS = {
@@ -112,6 +113,14 @@ MEMORY_BUCKET_LABELS = {
     "other_notes": "其他补充",
 }
 
+USER_PROFILE_LABELS = {
+    "preferred_output_style": "输出风格",
+    "preferred_language": "语言偏好",
+    "decision_style": "判断习惯",
+    "frequent_product_domains": "常见业务领域",
+    "common_constraints": "常见约束",
+}
+
 
 def render_case_state(case_state: CaseState, output_format: str = "markdown") -> str:
     if output_format == "json":
@@ -154,6 +163,9 @@ def build_case_history_payload(case_state: CaseState) -> dict:
         "last_gate_choice": case_state.metadata.get("last_gate_choice"),
         "last_reply_parser": case_state.metadata.get("last_reply_parser"),
         "last_partial_pending_questions": case_state.metadata.get("last_partial_pending_questions", []),
+        "memory_write_suggestions": _build_memory_write_suggestions_payload(
+            case_state.metadata.get("memory_write_suggestions")
+        ),
         "follow_up_focus": _display_follow_up_focus(case_state),
         "follow_up_reason": _display_follow_up_reason(case_state),
         "follow_up_questions": _display_follow_up_questions(case_state),
@@ -172,11 +184,22 @@ def render_case_history(case_state: CaseState, output_format: str = "markdown") 
     return _render_history_markdown(history_payload)
 
 
-def build_workspace_cases_payload(workspace_state: WorkspaceState, recent_cases: list[CaseState]) -> dict:
+def build_workspace_cases_payload(
+    workspace_state: WorkspaceState,
+    recent_cases: list[CaseState],
+    active_project_profile: ProjectProfile | None = None,
+    active_case: CaseState | None = None,
+) -> dict:
     return {
         "workspace_id": workspace_state.workspace_id,
         "active_case_id": workspace_state.active_case_id,
         "active_project_profile_id": workspace_state.active_project_profile_id,
+        "user_profile": _build_workspace_user_profile_payload(workspace_state),
+        "project_profile": _build_project_profile_summary(active_project_profile),
+        "workspace_memory": _build_workspace_memory_payload(workspace_state, recent_cases, active_case),
+        "memory_write_suggestions": _build_memory_write_suggestions_payload(
+            workspace_state.metadata.get("memory_write_suggestions")
+        ),
         "recent_cases": [
             {
                 "case_id": case.case_id,
@@ -190,16 +213,31 @@ def build_workspace_cases_payload(workspace_state: WorkspaceState, recent_cases:
     }
 
 
-def render_workspace_overview(workspace_state: WorkspaceState, recent_cases: list[CaseState]) -> str:
-    payload = build_workspace_cases_payload(workspace_state, recent_cases)
+def render_workspace_overview(
+    workspace_state: WorkspaceState,
+    recent_cases: list[CaseState],
+    active_project_profile: ProjectProfile | None = None,
+    active_case: CaseState | None = None,
+) -> str:
+    payload = build_workspace_cases_payload(workspace_state, recent_cases, active_project_profile, active_case)
     lines: List[str] = []
     lines.append("# PM Method Agent 工作区")
     lines.append("")
     lines.append(f"- 工作区：`{payload['workspace_id']}`")
     active_case_id = str(payload.get("active_case_id") or "").strip()
     lines.append(f"- 当前案例：`{active_case_id or '未设置'}`")
+    project_profile = payload.get("project_profile") or {}
     if payload.get("active_project_profile_id"):
-        lines.append(f"- 当前项目背景：`{payload['active_project_profile_id']}`")
+        project_name = str(project_profile.get("project_name", "")).strip()
+        if project_name:
+            lines.append(f"- 当前项目背景：`{project_name}` / `{payload['active_project_profile_id']}`")
+        else:
+            lines.append(f"- 当前项目背景：`{payload['active_project_profile_id']}`")
+    user_profile = payload.get("user_profile") or {}
+    if user_profile:
+        lines.append(f"- 已记录偏好：`{len(user_profile)}` 项")
+    lines.append("")
+    _append_workspace_memory_sections(lines, payload)
     lines.append("")
     lines.append("## 最近案例")
     recent_items = payload.get("recent_cases", [])
@@ -452,56 +490,43 @@ def _render_markdown(case_state: CaseState) -> str:
         return _render_block_card(case_state)
 
     lines: List[str] = []
-    lines.append("# PM Method Agent 分析卡")
+    lines.append("# PM Method Agent 这轮先看到这里")
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
-    lines.append("## 先看背景")
+    lines.append("## 我先按这个场景看")
     if case_state.context_profile:
-        for key, value in case_state.context_profile.items():
-            label = CONTEXT_KEY_LABELS.get(key, key)
-            rendered = _render_context_value(key, value)
-            lines.append(f"- {label}：{rendered}")
+        lines.extend(_render_context_snapshot(case_state))
         _append_role_relationships(lines, case_state)
     else:
         lines.append("- 未提供")
     lines.append("")
-    lines.append("## 原始输入")
+    lines.append("## 你提的是")
     lines.append(case_state.raw_input)
     lines.append("")
-    lines.append("## 我现在的判断")
+    lines.append("## 我先这么看")
     lines.append(case_state.normalized_summary or "暂无")
     lines.append("")
-    lines.append("## 我主要看到这几个点")
+    lines.append("## 我主要卡在")
     for finding in _collect_render_findings(case_state):
         _append_finding(lines, finding)
     lines.append("")
-    lines.append("## 这一步还想先确认")
+    lines.append("## 先别急着往下")
     _append_gate_items(lines, case_state)
     lines.append("")
     follow_up_focus = _display_follow_up_focus(case_state)
     follow_up_reason = _display_follow_up_reason(case_state)
-    if follow_up_focus:
-        lines.append("## 这轮更值得先收")
-        lines.append(_polish_display_text(follow_up_focus))
-        lines.append("")
-    if follow_up_reason:
-        lines.append("## 为什么先收这个")
-        lines.append(_polish_display_text(follow_up_reason))
-        lines.append("")
-    lines.append("## 更建议先补")
-    for action in _collect_next_actions(case_state):
-        lines.append(f"- {action}")
-    follow_up_questions = _display_follow_up_questions(case_state)
-    if follow_up_questions:
-        lines.append("")
-        lines.append("## 如果继续往下聊，优先补这几项")
-        for question in follow_up_questions:
-            lines.append(f"- {question}")
+    lines.append("## 建议先补")
+    intro_line = _render_follow_up_intro(follow_up_focus, follow_up_reason)
+    if intro_line:
+        lines.append(intro_line)
+    for item in _collect_primary_follow_ups(case_state):
+        lines.append(f"- {item}")
     lines.append("")
     _append_unknowns(lines, case_state)
+    _append_memory_write_hints(lines, case_state)
     return "\n".join(lines)
 
 
@@ -518,6 +543,56 @@ def _render_inline_list(items: List[str]) -> str:
     if not items:
         return "无"
     return " / ".join(f"`{item}`" for item in items)
+
+
+def _append_workspace_memory_sections(lines: List[str], payload: dict) -> None:
+    project_profile = payload.get("project_profile") or {}
+    if project_profile:
+        lines.append("## 记住的项目背景")
+        summary = str(project_profile.get("summary", "")).strip()
+        if summary:
+            lines.append(f"- {summary}")
+        for item in project_profile.get("stable_constraints", [])[:2]:
+            lines.append(f"- 稳定约束：{item}")
+        for item in project_profile.get("success_metrics", [])[:2]:
+            lines.append(f"- 常看指标：{item}")
+        lines.append("")
+
+    user_profile = payload.get("user_profile") or {}
+    if user_profile:
+        lines.append("## 记住的使用偏好")
+        for key, label in USER_PROFILE_LABELS.items():
+            value = user_profile.get(key)
+            if not value:
+                continue
+            if isinstance(value, list):
+                lines.append(f"- {label}：{'，'.join(str(item) for item in value)}")
+            else:
+                lines.append(f"- {label}：{value}")
+        lines.append("")
+
+    workspace_memory = payload.get("workspace_memory") or {}
+    if workspace_memory:
+        lines.append("## 当前工作记忆")
+        active_focus = str(workspace_memory.get("active_focus", "")).strip()
+        if active_focus:
+            lines.append(f"- 当前焦点：{active_focus}")
+        open_questions = workspace_memory.get("open_questions", [])
+        for item in open_questions[:2]:
+            lines.append(f"- 还开着的问题：{item}")
+        recent_decisions = workspace_memory.get("recent_decisions", [])
+        for item in recent_decisions[:2]:
+            lines.append(f"- 最近拍过的板：{item}")
+        latest_memory_note = str(workspace_memory.get("latest_memory_note", "")).strip()
+        if latest_memory_note:
+            lines.append(f"- 最近补充：{latest_memory_note}")
+
+    memory_write_suggestions = payload.get("memory_write_suggestions") or []
+    if memory_write_suggestions:
+        lines.append("")
+        lines.append("## 这句先怎么记")
+        for item in memory_write_suggestions[:2]:
+            lines.append(f"- {_render_memory_write_hint(item)}")
 
 
 def _render_history_markdown(history_payload: dict) -> str:
@@ -592,6 +667,14 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append("- 暂无")
     lines.append("")
 
+    memory_write_suggestions = history_payload.get("memory_write_suggestions", [])
+    lines.append("## 这句更适合记到哪")
+    for item in memory_write_suggestions:
+        lines.append(f"- {_render_memory_write_hint(item)}")
+    if not memory_write_suggestions:
+        lines.append("- 暂无")
+    lines.append("")
+
     lines.append("## 这段里已经做过的选择")
     for item in history_payload.get("resolved_gates", []):
         choice = item.get("user_choice")
@@ -625,34 +708,35 @@ def _collect_llm_fallback_components(payload: object) -> List[str]:
 
 def _render_context_question_card(case_state: CaseState) -> str:
     lines: List[str] = []
-    lines.append("# PM Method Agent 先补场景信息")
+    lines.append("# PM Method Agent 先把场景说清")
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
-    lines.append("## 我现在的判断")
-    lines.append(case_state.normalized_summary or "信息还不够，建议先补几项基础信息。")
+    lines.append("## 我先这么看")
+    lines.append(case_state.normalized_summary or "信息还不够，先补几项基础信息。")
     lines.append("")
-    lines.append("## 为什么先补这几项")
+    lines.append("## 先补原因")
     lines.append(_polish_display_text(_display_follow_up_reason(case_state)))
     lines.append("")
-    lines.append("## 先补这几项")
+    lines.append("## 先补这些")
     for question in _display_follow_up_questions(case_state):
         lines.append(f"- {question}")
     lines.append("")
-    lines.append("## 补完后会怎么继续")
+    lines.append("## 补完我继续")
     next_stage = case_state.metadata.get("next_stage", "problem-definition")
-    lines.append(f"- 我会先继续到`{_label_for(STAGE_LABELS, str(next_stage))}`。")
+    lines.append(f"- 补完后，我先往`{_label_for(STAGE_LABELS, str(next_stage))}`走。")
     lines.append("")
-    lines.append("## 可以先这么补")
+    lines.append("## 也可以直接补")
     for action in _collect_next_actions(case_state, limit=3):
         lines.append(f"- {action}")
+    _append_memory_write_hints(lines, case_state)
     return "\n".join(lines)
 
 
 def _render_block_card(case_state: CaseState) -> str:
-    title = "先把这个点定下来" if case_state.output_kind == "decision-gate-card" else "这一步先停一下"
+    title = "先把这件事定一下" if case_state.output_kind == "decision-gate-card" else "这一步先停一下"
     lines: List[str] = []
     lines.append(f"# PM Method Agent {title}")
     lines.append("")
@@ -660,10 +744,10 @@ def _render_block_card(case_state: CaseState) -> str:
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
-    lines.append("## 我现在的判断")
+    lines.append("## 我先这么看")
     lines.append(case_state.normalized_summary or "当前阶段暂不建议继续推进。")
     lines.append("")
-    lines.append("## 为什么先停在这里")
+    lines.append("## 先停原因")
     lines.append(
         _polish_display_text(
             str(case_state.metadata.get("follow_up_reason", "")).strip()
@@ -673,25 +757,25 @@ def _render_block_card(case_state: CaseState) -> str:
     )
     lines.append("")
     if case_state.findings:
-        lines.append("## 我主要看到这几个点")
+        lines.append("## 我主要卡在")
         for finding in case_state.findings:
             _append_finding(lines, finding)
         lines.append("")
-    lines.append("## 继续前想先定这个点")
-    _append_gate_items(lines, case_state, empty_message="当前没有需要立刻拍板的决策点。")
-    lines.append("")
-    lines.append("## 更建议先补")
-    for action in _collect_next_actions(case_state):
-        lines.append(f"- {action}")
-    follow_up_questions = _collect_follow_up_questions(case_state)
-    if follow_up_questions and case_state.output_kind != "decision-gate-card":
+    visible_gates = _select_visible_gates(case_state.decision_gates)
+    if visible_gates:
+        lines.append("## 先定这件事")
+        _append_gate_items(lines, case_state, empty_message="当前没有需要立刻拍板的决策点。")
         lines.append("")
-        lines.append("## 如果继续补，我会先问这几项")
-        for question in follow_up_questions:
-            lines.append(f"- {question}")
+    lines.append("## 建议先补")
+    intro_line = _render_follow_up_intro(_display_follow_up_focus(case_state), _display_follow_up_reason(case_state))
+    if intro_line:
+        lines.append(intro_line)
+    for item in _collect_primary_follow_ups(case_state):
+        lines.append(f"- {item}")
     if case_state.unknowns:
         lines.append("")
         _append_unknowns(lines, case_state)
+    _append_memory_write_hints(lines, case_state)
     return "\n".join(lines)
 
 
@@ -705,28 +789,26 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
     _append_case_id(lines, case_state)
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
-    lines.append("## 现在已经对到哪了")
+    lines.append("## 现在先看到这")
     lines.append(case_state.normalized_summary or "基础背景已经补上，可以开始往问题本身收拢了。")
     lines.append("")
-    lines.append("## 这轮更值得先收")
+    lines.append("## 这轮先收")
     lines.append(_polish_display_text(_display_follow_up_focus(case_state)))
     lines.append("")
-    lines.append("## 为什么先收这个")
+    lines.append("## 先收原因")
     lines.append(_polish_display_text(_display_follow_up_reason(case_state)))
     lines.append("")
-    lines.append("## 目前已经知道的")
+    lines.append("## 现在已知")
     if case_state.context_profile:
-        for key, value in case_state.context_profile.items():
-            label = CONTEXT_KEY_LABELS.get(key, key)
-            rendered = _render_context_value(key, value)
-            lines.append(f"- {label}：{rendered}")
+        lines.extend(_render_context_snapshot(case_state))
         _append_role_relationships(lines, case_state)
     else:
         lines.append("- 还没有明确的基础背景。")
     lines.append("")
-    lines.append("## 接下来更值得先补")
+    lines.append("## 接下来先补")
     for item in _display_follow_up_questions(case_state, fallback_to_background=True):
         lines.append(f"- {item}")
+    _append_memory_write_hints(lines, case_state)
     return "\n".join(lines)
 
 
@@ -741,10 +823,10 @@ def _render_pre_framing_card(case_state: CaseState) -> str:
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
-    lines.append("## 当前判断")
+    lines.append("## 我先这么看")
     lines.append(case_state.normalized_summary or "先把这句话收一收，再继续推进。")
     lines.append("")
-    lines.append("## 我先按这几个方向理解")
+    lines.append("## 我先这样理解")
     for index, direction in enumerate(result.candidate_directions):
         prefix = "更像" if direction.direction_id == result.recommended_direction_id else "也可能是"
         rendered = f"{prefix}「{direction.label}」：{direction.summary}"
@@ -752,15 +834,16 @@ def _render_pre_framing_card(case_state: CaseState) -> str:
             rendered = f"{rendered} {_render_pre_framing_assumption(direction)}"
         lines.append(f"- {rendered}")
     lines.append("")
-    lines.append("## 现在更值得先补")
+    lines.append("## 现在先补")
     for question in result.priority_questions:
         lines.append(f"- {question}")
     lines.append("")
-    lines.append("## 如果先按这个方向继续")
+    lines.append("## 接下来我会")
     recommended = _find_recommended_direction(case_state)
     next_stage = case_state.metadata.get("next_stage", "problem-definition")
     lines.append(f"- 我会先按「{recommended}」往下看。")
     lines.append(f"- {_render_pre_framing_follow_up(str(next_stage))}")
+    _append_memory_write_hints(lines, case_state)
     return "\n".join(lines)
 
 
@@ -768,15 +851,15 @@ def _render_pre_framing_assumption(direction) -> str:
     assumptions = [item.strip() for item in direction.assumptions if item.strip()]
     if not assumptions:
         return ""
-    return f"我先留一个备选判断：{assumptions[0]}。"
+    return f"备选理解：{assumptions[0]}。"
 
 
 def _render_pre_framing_follow_up(next_stage: str) -> str:
     if next_stage == "context-alignment":
-        return "这轮补完后，我先把场景信息对齐，再继续往下看。"
+        return "这轮补完后，我先把场景对齐，再继续往下走。"
     if next_stage == "problem-definition":
-        return "这轮补完后，我再继续把问题本身收稳。"
-    return f"这轮补完后，我再继续往`{_label_for(STAGE_LABELS, next_stage)}`走。"
+        return "这轮补完后，我再把问题收稳。"
+    return f"这轮补完后，我再往`{_label_for(STAGE_LABELS, next_stage)}`走。"
 
 
 def _label_for(mapping: dict, key: str) -> str:
@@ -785,23 +868,26 @@ def _label_for(mapping: dict, key: str) -> str:
 
 def _append_finding(lines: List[str], finding) -> None:
     claim = _polish_display_text(finding.claim)
-    lines.append(f"- [{_label_for(DIMENSION_LABELS, finding.dimension)}] {claim}")
-    compact = _should_render_finding_compact(finding)
-    summary = _render_finding_strength_line(
+    tone = _render_finding_strength_line(
         finding.evidence_level,
         finding.risk_if_wrong,
-        compact=compact,
+        compact=_should_render_finding_compact(finding),
     )
-    if summary:
-        lines.append(f"  {summary}")
+    if tone:
+        claim = f"{claim}（{tone}）"
+    label = _label_for(DIMENSION_LABELS, finding.dimension)
+    lines.append(f"- {label}：{claim}")
+    compact = _should_render_finding_compact(finding)
+    detail_parts: List[str] = []
     if finding.evidence and not compact:
-        evidence = _join_limited([_polish_display_text(item) for item in finding.evidence], limit=1)
-        lines.append(f"  我看到的信号：{evidence}")
+        evidence = _join_limited([_strip_tail_punctuation(_polish_display_text(item)) for item in finding.evidence], limit=1)
+        detail_parts.append(f"看到：{evidence}")
     if finding.unknowns:
         unknown_limit = 1 if compact else 2
-        unknowns = _join_limited([_polish_display_text(item) for item in finding.unknowns], limit=unknown_limit)
-        prefix = "  先顺手补：" if compact else "  还想补："
-        lines.append(f"{prefix}{unknowns}")
+        unknowns = _join_limited([_strip_tail_punctuation(_polish_display_text(item)) for item in finding.unknowns], limit=unknown_limit)
+        detail_parts.append(f"{'补' if compact else '还缺'}：{unknowns}")
+    if detail_parts:
+        lines.append(f"  {'；'.join(detail_parts)}")
 
 
 def _collect_render_findings(case_state: CaseState) -> List[AnalyzerFinding]:
@@ -884,27 +970,19 @@ def _should_render_finding_compact(finding) -> bool:
 def _render_finding_strength_line(evidence_level: str, risk_level: str, compact: bool = False) -> str:
     if compact:
         compact_map = {
-            "low": "这条影响相对可控。",
-            "medium": "这条会影响后面怎么判断，但不用单独放大。",
-            "high": "这条会明显影响后面的判断口径。",
+            "low": "先记着",
+            "medium": "会影响后面判断",
+            "high": "会直接影响后面往哪边走",
         }
         return compact_map.get(str(risk_level), "")
     evidence_map = {
-        "none": "这条现在还没有明确证据，",
-        "weak": "这条现在证据还比较弱，",
-        "medium": "这条已经有一些依据，",
-        "strong": "这条已经有比较扎实的依据，",
-    }
-    risk_map = {
-        "low": "就算看偏了，影响也相对可控。",
-        "medium": "如果看偏了，后面可能会多走一点弯路。",
-        "high": "如果看偏了，后面很容易把力气花错地方。",
+        "none": "还没站住",
+        "weak": "还不稳",
+        "medium": "基本站得住",
+        "strong": "已经比较稳了",
     }
     evidence_text = evidence_map.get(str(evidence_level), "")
-    risk_text = risk_map.get(str(risk_level), "")
-    if not evidence_text and not risk_text:
-        return ""
-    return f"{evidence_text}{risk_text}".strip()
+    return evidence_text.strip()
 
 
 def _append_unknowns(lines: List[str], case_state: CaseState) -> None:
@@ -912,7 +990,7 @@ def _append_unknowns(lines: List[str], case_state: CaseState) -> None:
     has_items = any(grouped_unknowns.get(group_name) for group_name in UNKNOWN_GROUP_ORDER)
     if not has_items:
         return
-    lines.append("## 后面还可以继续补")
+    lines.append("## 先放一边")
     for group_name in UNKNOWN_GROUP_ORDER:
         items = grouped_unknowns.get(group_name, [])
         if not items:
@@ -926,28 +1004,83 @@ def _append_role_relationships(lines: List[str], case_state: CaseState) -> None:
     relationships = case_state.metadata.get("role_relationships", {})
     if not isinstance(relationships, dict):
         return
-    relation_labels = {
-        "proposers": "提出者",
-        "users": "实际使用者",
-        "outcome_owners": "结果责任人",
+    relation_templates = {
+        "proposers": "这次更像是{roles}先提出来的。",
+        "users": "平时主要是{roles}在用。",
+        "outcome_owners": "{roles}更需要对结果负责。",
     }
-    for key, label in relation_labels.items():
+    for key, template in relation_templates.items():
         items = relationships.get(key, [])
         if isinstance(items, list) and items:
-            lines.append(f"- {label}：{'，'.join(str(item) for item in items)}")
+            lines.append(f"- {template.format(roles='，'.join(str(item) for item in items))}")
 
 
-def _append_gate_items(lines: List[str], case_state: CaseState, empty_message: str = "这一步暂时没有额外确认项。") -> None:
-    if not case_state.decision_gates:
+def _append_gate_items(lines: List[str], case_state: CaseState, empty_message: str = "这一步先不用拍板。") -> None:
+    visible_gates = _select_visible_gates(case_state.decision_gates)
+    if not visible_gates:
         lines.append(f"- {empty_message}")
         return
-    for gate in case_state.decision_gates:
+    for gate in visible_gates:
         recommended_option = OPTION_LABELS.get(gate.recommended_option, gate.recommended_option)
         option_labels = [OPTION_LABELS.get(option, option) for option in gate.options]
         lines.append(f"- {_polish_gate_question(gate.question)}")
-        lines.append(f"  倾向：{recommended_option}{'；这一步会卡住' if gate.blocking else ''}")
-        lines.append(f"  可选：{' / '.join(option_labels)}")
-        lines.append(f"  这么判断：{_polish_gate_reason(gate.reason)}")
+        lines.append(f"  我更偏向：{recommended_option}{'（这一步先别急着定）' if gate.blocking else ''}")
+        lines.append(f"  你可以直接选：{' / '.join(option_labels)}")
+        lines.append(f"  我这么看：{_polish_gate_reason(gate.reason)}")
+
+
+def _select_visible_gates(gates: List) -> List:
+    if not gates:
+        return []
+    blocking_gates = [gate for gate in gates if getattr(gate, "blocking", False)]
+    if blocking_gates:
+        return blocking_gates[:1]
+    return list(gates[:1])
+
+
+def _collect_primary_follow_ups(case_state: CaseState, limit: int = 4) -> List[str]:
+    focus = _display_follow_up_focus(case_state)
+    actions = _collect_next_actions(case_state, limit=limit)
+    questions = _display_follow_up_questions(case_state)
+    if "一半" in focus or "半步" in focus:
+        if questions:
+            return questions[:limit]
+        return actions[:limit]
+    if len(actions) >= limit:
+        return actions[:limit]
+    combined = list(actions)
+    for question in questions:
+        normalized = _polish_display_text(question)
+        if not normalized:
+            continue
+        if any(normalized in existing or existing in normalized for existing in combined):
+            continue
+        combined.append(normalized)
+        if len(combined) >= limit:
+            break
+    return combined[:limit]
+
+
+def _render_follow_up_intro(focus: str, reason: str) -> str:
+    rendered_focus = _polish_display_text(str(focus).strip())
+    rendered_reason = _polish_display_text(str(reason).strip())
+    compact_focus = _semantic_compact_text(rendered_focus)
+    compact_reason = _semantic_compact_text(rendered_reason)
+    if compact_focus and compact_focus in compact_reason:
+        return rendered_reason
+    if compact_reason and compact_reason in compact_focus:
+        return rendered_focus
+    if rendered_focus and rendered_reason:
+        return f"{rendered_focus}，{rendered_reason}"
+    if rendered_focus:
+        return rendered_focus
+    if rendered_reason:
+        return rendered_reason
+    return ""
+
+
+def _strip_tail_punctuation(text: str) -> str:
+    return text.rstrip("。；， ")
 
 
 def _collect_next_actions(case_state: CaseState, limit: int = 5) -> List[str]:
@@ -1026,6 +1159,9 @@ def _semantic_compact_text(text: str) -> str:
         ("是什么", ""),
         ("怎么运行的", ""),
         ("是什么", ""),
+        ("本身", ""),
+        ("还没有", ""),
+        ("把", ""),
         ("并和", ""),
         ("一起看", ""),
         ("先", ""),
@@ -1173,6 +1309,142 @@ def _build_case_memory_items(case_state: CaseState) -> List[dict]:
     return items
 
 
+def _build_memory_write_suggestions_payload(raw_payload: object) -> List[dict]:
+    if not isinstance(raw_payload, list):
+        return []
+    items: List[dict] = []
+    for item in raw_payload:
+        if not isinstance(item, dict):
+            continue
+        target = str(item.get("target", "")).strip()
+        label = str(item.get("label", "")).strip() or MEMORY_TARGET_LABELS.get(target, "")
+        summary = str(item.get("summary", "")).strip()
+        action_hint = str(item.get("action_hint", "")).strip()
+        source_excerpt = str(item.get("source_excerpt", "")).strip()
+        if not label and not summary:
+            continue
+        items.append(
+            {
+                "target": target,
+                "label": label,
+                "summary": summary,
+                "action_hint": action_hint,
+                "source_excerpt": source_excerpt,
+            }
+        )
+    return items[:2]
+
+
+def _build_workspace_user_profile_payload(workspace_state: WorkspaceState) -> dict:
+    raw_profile = workspace_state.metadata.get("user_profile")
+    if not isinstance(raw_profile, dict):
+        return {}
+    payload: dict = {}
+    for key in USER_PROFILE_LABELS:
+        value = raw_profile.get(key)
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                payload[key] = cleaned
+            continue
+        rendered = str(value).strip() if value is not None else ""
+        if rendered:
+            payload[key] = rendered
+    return payload
+
+
+def _build_project_profile_summary(project_profile: ProjectProfile | None) -> dict:
+    if project_profile is None:
+        return {}
+    summary_parts: List[str] = []
+    context_profile = project_profile.context_profile or {}
+    for key in ["business_model", "primary_platform", "product_domain"]:
+        value = context_profile.get(key)
+        if value in (None, "", []):
+            continue
+        rendered = _render_context_value(key, value).strip()
+        if rendered:
+            summary_parts.append(rendered)
+    roles = context_profile.get("target_user_roles", [])
+    if isinstance(roles, list):
+        rendered_roles = [str(item).strip() for item in roles if str(item).strip()]
+        if rendered_roles:
+            summary_parts.append(f"核心角色：{'、'.join(rendered_roles[:3])}")
+    return {
+        "project_profile_id": project_profile.project_profile_id,
+        "project_name": project_profile.project_name,
+        "summary": " / ".join(summary_parts),
+        "stable_constraints": list(project_profile.stable_constraints),
+        "success_metrics": list(project_profile.success_metrics),
+        "notes": list(project_profile.notes[-3:]),
+    }
+
+
+def _build_workspace_memory_payload(
+    workspace_state: WorkspaceState,
+    recent_cases: list[CaseState],
+    active_case: CaseState | None,
+) -> dict:
+    target_case = active_case
+    if target_case is None:
+        target_case = next(
+            (case for case in recent_cases if case.case_id == workspace_state.active_case_id),
+            recent_cases[0] if recent_cases else None,
+        )
+    if target_case is None:
+        return {}
+
+    resolved_gates = target_case.metadata.get("resolved_gates", [])
+    recent_decisions: List[str] = []
+    if isinstance(resolved_gates, list):
+        for item in reversed(resolved_gates):
+            if not isinstance(item, dict):
+                continue
+            choice = OPTION_LABELS.get(str(item.get("user_choice", "")).strip(), str(item.get("user_choice", "")).strip())
+            stage = _label_for(STAGE_LABELS, str(item.get("stage", "")).strip())
+            if choice:
+                recent_decisions.append(f"{stage} / {choice}")
+            if len(recent_decisions) >= 2:
+                break
+
+    memory_items = _build_case_memory_items(target_case)
+    latest_memory_note = ""
+    if memory_items:
+        first_item = memory_items[0]
+        latest_memory_note = str(first_item.get("latest_note") or first_item.get("summary") or "").strip()
+
+    return {
+        "active_focus": _display_follow_up_focus(target_case),
+        "open_questions": _display_follow_up_questions(target_case),
+        "recent_decisions": recent_decisions,
+        "latest_memory_note": latest_memory_note,
+    }
+
+
+def _append_memory_write_hints(lines: List[str], case_state: CaseState) -> None:
+    hints = _build_memory_write_suggestions_payload(case_state.metadata.get("memory_write_suggestions"))
+    if not hints:
+        return
+    lines.append("")
+    lines.append("## 这句先怎么记")
+    for item in hints:
+        lines.append(f"- {_render_memory_write_hint(item)}")
+
+
+def _render_memory_write_hint(item: dict) -> str:
+    label = str(item.get("label", "")).strip() or MEMORY_TARGET_LABELS.get(str(item.get("target", "")).strip(), "这轮信息")
+    summary = _strip_tail_punctuation(_polish_display_text(str(item.get("summary", "")).strip()))
+    action_hint = _strip_tail_punctuation(_polish_display_text(str(item.get("action_hint", "")).strip()))
+    source_excerpt = _polish_display_text(str(item.get("source_excerpt", "")).strip())
+    rendered = f"`{label}`"
+    body_parts = [part for part in [summary, action_hint] if part]
+    if body_parts:
+        rendered = f"{rendered}：{'，'.join(body_parts)}"
+    if source_excerpt:
+        rendered = f"{rendered}（例如「{_short_text(source_excerpt, limit=22)}」）"
+    return rendered
+
+
 def _continue_card_focus(case_state: CaseState) -> str:
     if case_state.metadata.get("continue_card_kind") == "pre-framing":
         return "先收理解方向"
@@ -1273,6 +1545,45 @@ def _join_limited(items: List[str], limit: int) -> str:
 def _append_case_id(lines: List[str], case_state: CaseState) -> None:
     if case_state.metadata.get("show_case_id"):
         lines.append(f"- 案例编号：`{case_state.case_id}`")
+
+
+def _render_context_snapshot(case_state: CaseState) -> List[str]:
+    profile = case_state.context_profile or {}
+    lines: List[str] = []
+    summary_parts: List[str] = []
+
+    for key in ["business_model", "primary_platform", "product_domain"]:
+        value = profile.get(key)
+        if value in (None, "", []):
+            continue
+        rendered = _render_context_value(key, value).strip()
+        if rendered:
+            summary_parts.append(rendered)
+
+    if summary_parts:
+        lines.append(f"- 我先按「{' / '.join(summary_parts)}」这个背景看。")
+
+    distribution_channel = _render_context_value(
+        "distribution_channel",
+        profile.get("distribution_channel", ""),
+    ).strip()
+    if distribution_channel:
+        lines.append(f"- 现在先默认这个场景主要靠「{distribution_channel}」触达。")
+
+    roles = profile.get("target_user_roles", [])
+    if isinstance(roles, list):
+        rendered_roles = [str(item).strip() for item in roles if str(item).strip()]
+        if rendered_roles:
+            role_label = "这个角色" if len(rendered_roles) == 1 else "这几个角色"
+            lines.append(f"- 先按「{'、'.join(rendered_roles)}」{role_label}看。")
+
+    constraints = profile.get("constraints", [])
+    if isinstance(constraints, list):
+        rendered_constraints = [str(item).strip() for item in constraints if str(item).strip()]
+        if rendered_constraints:
+            lines.append(f"- 目前还要顾着这些约束：{'；'.join(rendered_constraints[:2])}")
+
+    return lines
 
 
 def _render_context_value(key: str, value: object) -> str:

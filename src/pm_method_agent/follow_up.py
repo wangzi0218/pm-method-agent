@@ -17,6 +17,9 @@ FOLLOW_UP_FOCUS_KEY = "follow_up_focus"
 FOLLOW_UP_REASON_KEY = "follow_up_reason"
 FOLLOW_UP_LOOP_STATE_KEY = "follow_up_loop_state"
 FOLLOW_UP_CARRYOVER_NOTE_KEY = "follow_up_carryover_note"
+FOLLOW_UP_QUESTION_BUDGET_KEY = "follow_up_question_budget"
+FOLLOW_UP_STRATEGY_KEY = "follow_up_strategy"
+FOLLOW_UP_STOP_REASON_KEY = "follow_up_stop_reason"
 
 
 @dataclass
@@ -26,6 +29,9 @@ class FollowUpPlan:
     reason: str = ""
     loop_state: str = "ready"
     carryover_note: str = ""
+    question_budget: int = 0
+    strategy: str = ""
+    stop_reason: str = ""
 
 
 def attach_follow_up_plan(case_state: CaseState) -> CaseState:
@@ -43,6 +49,15 @@ def attach_follow_up_plan(case_state: CaseState) -> CaseState:
         case_state.metadata[FOLLOW_UP_CARRYOVER_NOTE_KEY] = plan.carryover_note
     else:
         case_state.metadata.pop(FOLLOW_UP_CARRYOVER_NOTE_KEY, None)
+    case_state.metadata[FOLLOW_UP_QUESTION_BUDGET_KEY] = max(0, int(plan.question_budget))
+    if plan.strategy:
+        case_state.metadata[FOLLOW_UP_STRATEGY_KEY] = plan.strategy
+    else:
+        case_state.metadata.pop(FOLLOW_UP_STRATEGY_KEY, None)
+    if plan.stop_reason:
+        case_state.metadata[FOLLOW_UP_STOP_REASON_KEY] = plan.stop_reason
+    else:
+        case_state.metadata.pop(FOLLOW_UP_STOP_REASON_KEY, None)
     case_state.metadata[FOLLOW_UP_LOOP_STATE_KEY] = plan.loop_state
     return case_state
 
@@ -54,6 +69,8 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
             focus="先把方向定下来",
             reason=case_state.blocking_reason or "这一步更需要你先拍板，不适合继续补外围信息。",
             loop_state="awaiting-decision",
+            strategy="gate-first",
+            stop_reason="当前已经到人工决策点，这一轮不继续追问外围信息。",
         )
 
     if case_state.workflow_state == "deferred":
@@ -62,25 +79,35 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
             focus="先按暂缓处理",
             reason=case_state.blocking_reason or "这轮先不继续往下推，等条件变化后再接回来。",
             loop_state="deferred",
+            strategy="deferred-stop",
+            stop_reason="用户已经明确表达暂缓倾向，这一轮不继续追问。",
         )
 
     if case_state.output_kind == "context-question-card":
+        questions = _limit_questions(case_state.pending_questions, limit=3)
         return FollowUpPlan(
-            questions=_limit_questions(case_state.pending_questions),
+            questions=questions,
             focus="先把场景对齐",
             reason=case_state.blocking_reason or "基础场景还没对齐，太快往下走容易偏。",
             loop_state="needs-answer",
+            question_budget=len(questions),
+            strategy="context-bundle",
         )
 
     if case_state.metadata.get("continue_card_kind") == "pre-framing" and case_state.pre_framing_result is not None:
+        questions = _limit_questions(case_state.pre_framing_result.priority_questions, limit=2)
         return FollowUpPlan(
-            questions=_limit_questions(case_state.pre_framing_result.priority_questions),
+            questions=questions,
             focus="先把理解方向收一收",
             reason=case_state.blocking_reason or "先收理解方向，再继续往下判断会更稳。",
             loop_state="needs-answer",
+            question_budget=len(questions),
+            strategy="direction-clarification",
         )
 
     questions = _prioritize_partial_questions(case_state, _collect_follow_up_questions(case_state))
+    question_budget = _resolve_question_budget(case_state, questions)
+    questions = _limit_questions(questions, limit=question_budget)
     if not questions:
         return FollowUpPlan(
             questions=[],
@@ -88,6 +115,9 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
             reason="这轮已经能形成一个阶段结论，后面按需要再继续补。",
             loop_state="settled",
             carryover_note=_carryover_partial_note(case_state),
+            question_budget=question_budget,
+            strategy=_resolve_follow_up_strategy(case_state),
+            stop_reason=_resolve_settled_stop_reason(case_state),
         )
 
     return FollowUpPlan(
@@ -96,6 +126,8 @@ def build_follow_up_plan(case_state: CaseState) -> FollowUpPlan:
         reason=_follow_up_reason(case_state),
         loop_state="needs-answer" if case_state.workflow_state == "blocked" else "open",
         carryover_note=_carryover_partial_note(case_state),
+        question_budget=question_budget,
+        strategy=_resolve_follow_up_strategy(case_state),
     )
 
 
@@ -213,14 +245,14 @@ def _follow_up_focus(case_state: CaseState) -> str:
 
 def _follow_up_reason(case_state: CaseState) -> str:
     if _active_partial_questions(case_state):
-        return "你这轮已经碰到关键点了，但还有半步没落稳，顺着这一点补完会更省来回。"
+        return "还差半步。"
     if case_state.workflow_state == "blocked":
         return case_state.blocking_reason or "这一步还有卡点，先补最影响推进的信息会更稳。"
     if case_state.stage == "validation-design":
-        return "这轮已经能往验证走，但先补关键前提，后面会少来回。"
+        return "前提还没补齐。"
     if case_state.stage == "decision-challenge":
-        return "这轮已经能看到方向，但还差几项信息才能把投入判断看稳。"
-    return "这轮已经有基础判断了，再补最关键的几项会更顺。"
+        return "投入判断还没站稳。"
+    return "还有几项关键信息没补。"
 
 
 def _carryover_partial_note(case_state: CaseState) -> str:
@@ -277,7 +309,9 @@ def _question_family_key(text: str) -> str:
     return question_family_key(text)
 
 
-def _limit_questions(items: List[str]) -> List[str]:
+def _limit_questions(items: List[str], limit: int = 3) -> List[str]:
+    if limit <= 0:
+        return []
     deduped: List[str] = []
     for item in items:
         normalized = str(item).strip()
@@ -286,7 +320,7 @@ def _limit_questions(items: List[str]) -> List[str]:
         if any(question_text_matches(normalized, existing) for existing in deduped):
             continue
         deduped.append(normalized)
-        if len(deduped) >= 3:
+        if len(deduped) >= limit:
             break
     return deduped
 
@@ -296,14 +330,19 @@ def _active_partial_questions(case_state: CaseState) -> List[str]:
     if not isinstance(raw_items, list):
         return []
     active_items: List[str] = []
-    current_questions = list(case_state.pending_questions or [])
+    current_questions = [str(item).strip() for item in list(case_state.pending_questions or []) if str(item).strip()]
+    derived_questions = _collect_follow_up_questions(case_state)
+    all_candidates: List[str] = []
+    for item in current_questions + derived_questions:
+        if item and item not in all_candidates:
+            all_candidates.append(item)
     for item in raw_items:
         normalized = str(item).strip()
         if not normalized:
             continue
-        if any(question_text_matches(normalized, current) for current in current_questions):
+        if any(question_text_matches(normalized, current) for current in all_candidates):
             matched = next(
-                (current for current in current_questions if question_text_matches(normalized, current)),
+                (current for current in all_candidates if question_text_matches(normalized, current)),
                 normalized,
             )
             if matched not in active_items:
@@ -325,6 +364,68 @@ def _prioritize_partial_questions(case_state: CaseState, questions: List[str]) -
         if len(ordered) >= 3:
             break
     return ordered[:3]
+
+
+def _resolve_question_budget(case_state: CaseState, questions: List[str]) -> int:
+    if not questions:
+        return 0
+    if _active_partial_questions(case_state):
+        return 1
+    if len(questions) == 1:
+        return 1
+    if _questions_form_context_bundle(questions):
+        return min(3, len(questions))
+    if _questions_are_tightly_coupled(questions[0], questions[1]):
+        return 2
+    return 1
+
+
+def _resolve_follow_up_strategy(case_state: CaseState) -> str:
+    if _active_partial_questions(case_state):
+        return "partial-follow-up"
+    if case_state.stage == "problem-definition":
+        return "stage-critical"
+    if case_state.stage == "decision-challenge":
+        return "decision-evidence"
+    if case_state.stage == "validation-design":
+        return "validation-priority"
+    return "default-follow-up"
+
+
+def _resolve_settled_stop_reason(case_state: CaseState) -> str:
+    if case_state.workflow_state == "deferred":
+        return "这轮已经按暂缓收住，不继续追问。"
+    if case_state.workflow_state == "blocked":
+        return "这轮更需要先停在关口或阻塞点上，不继续补外围问题。"
+    return "当前阶段已经足够先给结论，这一轮不再为了完整性继续追问。"
+
+
+def _questions_form_context_bundle(questions: List[str]) -> bool:
+    family_keys = [_question_family_key(question) for question in questions[:3]]
+    normalized_keys = {key for key in family_keys if key}
+    context_bundle_keys = {"business-model", "primary-platform", "role-triplet"}
+    if context_bundle_keys.issubset(normalized_keys):
+        return True
+    role_bundle_keys = {"proposer", "user", "outcome-owner"}
+    return role_bundle_keys.issubset(normalized_keys)
+
+
+def _questions_are_tightly_coupled(left: str, right: str) -> bool:
+    pair = {_question_family_key(left), _question_family_key(right)}
+    coupled_groups = [
+        {"business-model", "primary-platform"},
+        {"proposer", "user"},
+        {"user", "outcome-owner"},
+        {"proposer", "outcome-owner"},
+        {"why-now", "opportunity-cost"},
+        {"success-metric", "baseline-metric"},
+        {"success-metric", "stop-condition"},
+        {"guardrail-metric", "stop-condition"},
+        {"baseline-metric", "validation-action"},
+        {"non-product-path", "opportunity-cost"},
+        {"role-triplet", "role-alignment"},
+    ]
+    return any(pair == group for group in coupled_groups)
 
 
 def _latest_note(case_state: CaseState) -> str:

@@ -36,8 +36,10 @@ from pm_method_agent.workspace_service import (
     default_workspace_store,
     get_or_create_workspace,
     get_workspace_approval_preferences,
+    get_workspace_user_profile,
     save_workspace,
     update_workspace_approval_preferences,
+    update_workspace_user_profile,
 )
 
 
@@ -169,23 +171,45 @@ class PMMethodHTTPService:
             if workspace_id:
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    active_project_profile = self._load_active_project_profile(workspace)
+                    active_case = self._load_active_case(workspace)
                     return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
                             "approval_preferences": get_workspace_approval_preferences(workspace),
+                            "user_profile": get_workspace_user_profile(workspace),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                self._load_recent_cases(workspace),
+                                active_project_profile,
+                                active_case,
+                            ),
                         },
                     )
 
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/cases":
                     workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
                     recent_cases = self._load_recent_cases(workspace)
+                    active_project_profile = self._load_active_project_profile(workspace)
+                    active_case = self._load_active_case(workspace)
                     return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
-                            "cases": build_workspace_cases_payload(workspace, recent_cases),
-                            "rendered_workspace": render_workspace_overview(workspace, recent_cases),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                recent_cases,
+                                active_project_profile,
+                                active_case,
+                            ),
+                            "user_profile": get_workspace_user_profile(workspace),
+                            "rendered_workspace": render_workspace_overview(
+                                workspace,
+                                recent_cases,
+                                active_project_profile,
+                                active_case,
+                            ),
                         },
                     )
 
@@ -212,6 +236,36 @@ class PMMethodHTTPService:
                         {
                             "workspace": workspace.to_dict(),
                             "approval_preferences": get_workspace_approval_preferences(workspace),
+                        },
+                    )
+
+                if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/user-profile":
+                    workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    return HTTPResponse.json(
+                        200,
+                        {
+                            "workspace_id": workspace_id,
+                            "user_profile": get_workspace_user_profile(workspace),
+                        },
+                    )
+
+                if method == "POST" and normalized_path == f"/workspaces/{workspace_id}/user-profile":
+                    payload = _parse_json_body(body)
+                    workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    update_workspace_user_profile(
+                        workspace,
+                        preferred_output_style=_optional_string(payload.get("preferred_output_style")),
+                        preferred_language=_optional_string(payload.get("preferred_language")),
+                        decision_style=_optional_string(payload.get("decision_style")),
+                        frequent_product_domains=_ensure_string_list(payload.get("frequent_product_domains")),
+                        common_constraints=_ensure_string_list(payload.get("common_constraints")),
+                    )
+                    save_workspace(workspace, store=self._workspace_store)
+                    return HTTPResponse.json(
+                        200,
+                        {
+                            "workspace": workspace.to_dict(),
+                            "user_profile": get_workspace_user_profile(workspace),
                         },
                     )
 
@@ -405,6 +459,25 @@ class PMMethodHTTPService:
             )
         except FileNotFoundError as exc:
             raise HTTPServiceError(404, str(exc)) from exc
+
+    def _load_active_project_profile(self, workspace):
+        if not workspace.active_project_profile_id:
+            return None
+        try:
+            return get_project_profile(
+                workspace.active_project_profile_id,
+                store=self._project_profile_store,
+            )
+        except FileNotFoundError:
+            return None
+
+    def _load_active_case(self, workspace):
+        if not workspace.active_case_id:
+            return None
+        try:
+            return self._load_case(workspace.active_case_id)
+        except HTTPServiceError:
+            return None
 
     def _load_recent_cases(self, workspace) -> list:
         cases = []

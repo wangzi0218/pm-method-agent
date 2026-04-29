@@ -16,6 +16,7 @@ from pm_method_agent.models import CaseState
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.question_resolution import (
     normalize_question_matches,
+    question_text_matches,
     resolve_pending_question_matches,
 )
 from pm_method_agent.role_extraction import (
@@ -154,14 +155,17 @@ class LLMReplyInterpreter:
         gate_choice = _normalize_gate_choice(payload.get("inferred_gate_choice"))
         role_relationships = _normalize_role_relationships(payload.get("role_relationships", {}))
         pending_questions = previous_case.pending_questions if previous_case else []
+        latent_questions = _collect_latent_question_candidates(previous_case)
         answered_matches = _normalize_pending_question_matches(
             payload.get("answered_pending_questions", []),
             pending_questions,
+            fallback_questions=latent_questions,
         )
         partial_matches = _normalize_pending_question_matches(
             payload.get("partial_pending_questions", []),
             pending_questions,
             exclude=answered_matches,
+            fallback_questions=latent_questions,
         )
 
         if (
@@ -405,11 +409,41 @@ def _normalize_pending_question_matches(
     pending_questions: List[str],
     *,
     exclude: Optional[List[str]] = None,
+    fallback_questions: Optional[List[str]] = None,
 ) -> List[str]:
     normalized = normalize_question_matches(payload, pending_questions)
+    if isinstance(payload, list) and fallback_questions:
+        for item in payload:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            rendered = item.strip()
+            if any(question_text_matches(rendered, existing) for existing in normalized):
+                continue
+            if normalize_question_matches([rendered], fallback_questions):
+                normalized.append(rendered)
     if not exclude:
         return normalized
     return [item for item in normalized if item not in exclude]
+
+
+def _collect_latent_question_candidates(previous_case: Optional[CaseState]) -> List[str]:
+    if previous_case is None:
+        return []
+    candidates: List[str] = []
+    for question in previous_case.pending_questions:
+        rendered = str(question).strip()
+        if rendered and rendered not in candidates:
+            candidates.append(rendered)
+    for finding in previous_case.findings:
+        for item in finding.unknowns:
+            rendered = str(item).strip()
+            if rendered and rendered not in candidates:
+                candidates.append(rendered)
+    for item in previous_case.unknowns:
+        rendered = str(item).strip()
+        if rendered and rendered not in candidates:
+            candidates.append(rendered)
+    return candidates
 
 
 def _build_fallback_reply_analysis(
