@@ -72,14 +72,14 @@ WEB_DEMO_HTML = """<!doctype html>
             <button id="clearComposerButton" class="ghost-button" type="button">清空</button>
           </div>
           <div class="example-row">
-            <button class="example-chip" type="button" data-example="最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。">
-              诊所提醒漏发
+            <button class="example-chip" type="button" data-example="门店店员最近反馈 H5 上核销后还要回头查订单，经常会漏核销，我还没想清楚是不是要做。">
+              门店核销漏执行
             </button>
-            <button class="example-chip" type="button" data-example="最近淘宝售后相关反馈不少，但我还没想清楚，这次到底是想提升退货发起率，还是降低售后投诉率。">
-              售后目标没收住
+            <button class="example-chip" type="button" data-example="这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，新用户和内容运营都在关注，运营怀疑他们不知道首帖该发什么。">
+              首帖率偏低
             </button>
-            <button class="example-chip" type="button" data-example="想增加一个新手引导浮层，提升新用户发帖率。">
-              带方案的增长草稿
+            <button class="example-chip" type="button" data-example="想在商品详情页加一个新人优惠浮层，提高新用户首单转化。">
+              新人优惠浮层
             </button>
           </div>
           <textarea

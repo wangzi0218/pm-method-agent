@@ -304,6 +304,8 @@ export PMMA_LLM_MODEL=deepseek-chat
 
 启动本地网页后，如果你只是想先看一眼整体体验，不想自己手工编几轮输入，现在也可以直接点网页里的 `装载示例`。这一组示例会优先尝试由当前模型生成；如果模型暂时不可用，会自动回退到仓库内置样本。
 
+输入框上方也放了 3 个快捷场景，分别覆盖一线漏执行、指标异常和方案先行。它们不是为了展示“标准答案”，而是为了让你快速感受系统如何追问、阻塞和收口。
+
 更完整的入口、HTTP 示例和接入方式，建议直接看：
 
 - [docs/getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
