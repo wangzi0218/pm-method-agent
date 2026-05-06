@@ -360,6 +360,72 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(second_case.output_kind, "decision-gate-card")
         self.assertIn("优先评估非产品路径", rendered_card)
 
+    def test_v02_regression_tob_process_issue_can_hold_non_product_path(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "门店店员最近反馈 H5 上核销后还要回头查订单，经常会漏核销，我还没想清楚是不是要做。",
+                workspace_id="v02-tob-process-regression",
+            )
+            second_response = shell.handle_message(
+                "这是一个 ToB 门店经营产品，主要在 H5 上使用，店员操作，店长会对核销和结算结果负责。",
+                workspace_id="v02-tob-process-regression",
+            )
+            third_response = shell.handle_message(
+                "现在靠交接群和人工查订单补漏，一周大概 20 单会晚核销。店长担心影响结算，我想先试流程和培训，暂时不急着产品化。",
+                workspace_id="v02-tob-process-regression",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertEqual(third_response.action, "reply-case")
+        self.assertEqual(first_response.workspace.active_case_id, third_response.workspace.active_case_id)
+        self.assertIn(third_response.case_state.output_kind, {"stage-block-card", "decision-gate-card"})
+        self.assertEqual(third_response.case_state.workflow_state, "blocked")
+        self.assertIn("非产品路径", third_response.rendered_card)
+        self.assertNotIn("证据=", third_response.rendered_card)
+
+    def test_v02_regression_toc_growth_metric_can_move_to_validation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，新用户和内容运营都在关注，运营怀疑他们不知道首帖该发什么。",
+                workspace_id="v02-toc-growth-regression",
+            )
+            second_response = shell.handle_message(
+                "现在首帖率大概 6%，如果能拉到 10% 就值得继续；如果两周没有明显改善，我们就先停。",
+                workspace_id="v02-toc-growth-regression",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertEqual(first_response.workspace.active_case_id, second_response.workspace.active_case_id)
+        self.assertIn(second_response.case_state.output_kind, {"review-card", "continue-guidance-card"})
+        self.assertIn("发帖率", second_response.rendered_card)
+        self.assertIn("验证", second_response.rendered_card)
+        self.assertNotIn("企业产品场景", second_response.rendered_card)
+
+    def test_v02_regression_solution_first_mobile_case_keeps_problem_framing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "想在商品详情页加一个新人优惠浮层，提高新用户首单转化。",
+                workspace_id="v02-solution-first-regression",
+            )
+            second_response = shell.handle_message(
+                "这是一个 ToC 电商 App，主要在原生 App 上使用，新用户在商品详情页浏览，运营对首单转化负责。",
+                workspace_id="v02-solution-first-regression",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertIn(second_response.case_state.output_kind, {"review-card", "decision-gate-card"})
+        self.assertEqual(second_response.case_state.context_profile["business_model"], "toc")
+        self.assertEqual(second_response.case_state.context_profile["primary_platform"], "native-app")
+        self.assertIn("方案", second_response.rendered_card)
+        self.assertIn("问题", second_response.rendered_card)
+        self.assertNotIn("证据=", second_response.rendered_card)
+
 
 if __name__ == "__main__":
     unittest.main()

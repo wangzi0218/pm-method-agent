@@ -117,6 +117,92 @@
 - 系统能不能把非产品路径一起拿出来比较
 - 会不会过早默认“做功能”就是答案
 
+## v0.2 产品级回归清单
+
+这一组不是为了覆盖所有行业，而是为了固定三类最容易影响体验判断的真实场景。
+
+每次改追问逻辑、文案、LLM 解释或网页入口时，建议至少跑一遍这三类。
+
+### 1. ToB 一线漏执行
+
+第一轮：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-tob-process-regression \
+  "门店店员最近反馈 H5 上核销后还要回头查订单，经常会漏核销，我还没想清楚是不是要做。"
+```
+
+第二轮补场景：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-tob-process-regression \
+  "这是一个 ToB 门店经营产品，主要在 H5 上使用，店员操作，店长会对核销和结算结果负责。"
+```
+
+第三轮补现状和倾向：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-tob-process-regression \
+  "现在靠交接群和人工查订单补漏，一周大概 20 单会晚核销。店长担心影响结算，我想先试流程和培训，暂时不急着产品化。"
+```
+
+观察点：
+
+- 是否能承接一线流程问题，而不是直接默认做功能
+- 是否能在用户倾向非产品路径时停下来
+- 卡片里是否能看到角色责任链和非产品路径
+
+### 2. ToC 指标异常
+
+第一轮：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-toc-growth-regression \
+  "这是一个 ToC 内容社区 App，新用户注册后 3 天内发帖率偏低，新用户和内容运营都在关注，运营怀疑他们不知道首帖该发什么。"
+```
+
+第二轮补基线和停止条件：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-toc-growth-regression \
+  "现在首帖率大概 6%，如果能拉到 10% 就值得继续；如果两周没有明显改善，我们就先停。"
+```
+
+观察点：
+
+- 是否围绕基线、成功指标和停止条件继续推进
+- 是否能进入验证设计相关判断
+- 是否避免把 ToC 增长问题说成组织流程问题
+
+### 3. 方案先行
+
+第一轮：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-solution-first-regression \
+  "想在商品详情页加一个新人优惠浮层，提高新用户首单转化。"
+```
+
+第二轮补场景：
+
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id v02-solution-first-regression \
+  "这是一个 ToC 电商 App，主要在原生 App 上使用，新用户在商品详情页浏览，运营对首单转化负责。"
+```
+
+观察点：
+
+- 是否识别输入里已经带出方案
+- 是否能把讨论拉回问题本身
+- 是否保留移动端展示空间和打断成本这类场景差异
+
 ## 建议怎么跑
 
 ### 路径一：直接测单轮输入

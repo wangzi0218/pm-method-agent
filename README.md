@@ -321,7 +321,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 
 - [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)：推荐体验顺序、覆盖场景与预期观察点
 - [docs/manual-smoke.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/manual-smoke.md)：本地工具链、agent 多轮和真人风格用例的一键手动冒烟
-- [docs/real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：如何拿真实问题试跑、记录反馈并判断体验是否站得住
+- [docs/real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)：如何拿真实问题试跑，并按 `v0.2` 产品级回归清单复测
 
 如果你想判断“现在是不是已经适合公开发到 GitHub”，可以对照：
 
