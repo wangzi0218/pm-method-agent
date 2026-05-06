@@ -1393,13 +1393,14 @@ WEB_DEMO_JS = """\
     if (eventType === "llm-fallback") {
       const component = runtimeComponentLabel(payload.component || "");
       const reason = shortText(payload.reason || "", 88);
+      const message = shortText(payload.user_message || "", 120);
       return {
         key: `fallback-${component}`,
         kind: "回退到本地规则",
-        stage: component,
-        text: reason
+        stage: payload.component_label || component,
+        text: message || (reason
           ? `${component} 这一步先按本地规则继续。${reason}`
-          : `${component} 这一步先按本地规则继续。`,
+          : `${component} 这一步先按本地规则继续。`),
       };
     }
 

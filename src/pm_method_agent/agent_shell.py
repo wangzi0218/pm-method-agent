@@ -16,6 +16,11 @@ from pm_method_agent.project_profile_service import (
 )
 from pm_method_agent.renderers import render_case_history, render_case_state
 from pm_method_agent.renderers import render_workspace_overview
+from pm_method_agent.llm_contract import (
+    llm_component_label,
+    llm_component_user_message,
+    normalize_llm_failure_kind,
+)
 from pm_method_agent.reply_interpreter import ReplyAnalysis, build_reply_interpreter_from_env
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_policy import (
@@ -599,6 +604,31 @@ class PMMethodAgentShell:
             store=self._project_profile_store,
         )
 
+    def _build_llm_fallback_event_payload(
+        self,
+        *,
+        runtime_session: RuntimeSession,
+        component: str,
+        fallback_reason: str,
+        fallback_parser: str,
+    ) -> dict:
+        failure_kind = normalize_llm_failure_kind(fallback_reason)
+        component_label = llm_component_label(component)
+        return {
+            "query_id": runtime_session.current_query_id,
+            "component": component,
+            "component_label": component_label,
+            "reason": fallback_reason,
+            "fallback_parser": fallback_parser,
+            "failure_kind": failure_kind,
+            "user_message": llm_component_user_message(
+                component_label=component_label,
+                status="fallback",
+                failure_kind=failure_kind,
+            ),
+            "affects_main_flow": False,
+        }
+
     def _record_reply_analysis_fallback(
         self,
         runtime_session: RuntimeSession,
@@ -609,13 +639,13 @@ class PMMethodAgentShell:
         append_runtime_event(
             runtime_session,
             "llm-fallback",
-            {
-                "query_id": runtime_session.current_query_id,
-                "component": "reply-interpreter",
-                "reason": reply_analysis.fallback_reason,
-                "fallback_parser": str(reply_analysis.raw_payload.get("fallback_parser", "")).strip()
+            self._build_llm_fallback_event_payload(
+                runtime_session=runtime_session,
+                component="reply-interpreter",
+                fallback_reason=reply_analysis.fallback_reason,
+                fallback_parser=str(reply_analysis.raw_payload.get("fallback_parser", "")).strip()
                 or reply_analysis.parser_name,
-            },
+            ),
         )
 
     def _continue_active_case_with_project_profile(
@@ -755,12 +785,12 @@ class PMMethodAgentShell:
             append_runtime_event(
                 runtime_session,
                 "llm-fallback",
-                {
-                    "query_id": runtime_session.current_query_id,
-                    "component": component,
-                    "reason": str(payload.get("fallback_reason", "")),
-                    "fallback_parser": str(payload.get("engine", "")),
-                },
+                self._build_llm_fallback_event_payload(
+                    runtime_session=runtime_session,
+                    component=str(component),
+                    fallback_reason=str(payload.get("fallback_reason", "")),
+                    fallback_parser=str(payload.get("engine", "")),
+                ),
             )
 
     def _attach_memory_write_hints(

@@ -29,6 +29,19 @@
 - 维护当前工作区绑定的 project profile
 - 调用现有的 case service、project profile service 和渲染器
 
+## LLM 回退事件
+
+当某个 LLM 增强组件失败时，runtime event log 会记录 `llm-fallback`，但不会默认把整轮运行标记为失败。
+
+事件 payload 会包含：
+
+- `component` / `component_label`：失败发生在哪一层，例如回复理解、前置收敛、文案增强。
+- `failure_kind`：归一化后的失败类型，例如 `timeout`、`network-error`、`invalid-json`、`empty-result`、`contract-violation`。
+- `user_message`：给网页、IDE 或 agent 外壳展示的一句话解释。
+- `affects_main_flow`：当前默认是 `false`，表示该增强失败不直接改变主线阶段推进。
+
+这层事件的作用，是让外壳和调试工具知道“哪一层回退了”，而不是要求用户阅读底层异常文本。
+
 ## 当前状态模型
 
 ### `workspace`

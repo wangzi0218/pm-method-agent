@@ -3071,6 +3071,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("模型不可用，已回到本地判断", js_body)
         self.assertIn("fallbackComponentMessages", js_body)
         self.assertIn("user_message", js_body)
+        self.assertIn("component_label", js_body)
         self.assertIn("需要人工确认", js_body)
         self.assertIn("历史已收拢", js_response.encoded_body().decode("utf-8"))
         self.assertIn("眼下正带着哪些线索", js_response.encoded_body().decode("utf-8"))
@@ -5549,14 +5550,16 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         self.assertNotEqual(response.runtime_session.last_terminal_event["action"], "runtime-error")
         self.assertEqual(runtime_session.runtime_status, "idle")
-        self.assertTrue(
-            any(
-                item["event_type"] == "llm-fallback"
-                and item["payload"].get("component") == "reply-interpreter"
-                and item["payload"].get("fallback_parser") == "heuristic"
-                for item in runtime_session.event_log
-            )
+        fallback_payload = next(
+            item["payload"]
+            for item in runtime_session.event_log
+            if item["event_type"] == "llm-fallback" and item["payload"].get("component") == "reply-interpreter"
         )
+        self.assertEqual(fallback_payload.get("fallback_parser"), "heuristic")
+        self.assertEqual(fallback_payload.get("failure_kind"), "network-error")
+        self.assertEqual(fallback_payload.get("component_label"), "回复理解")
+        self.assertFalse(fallback_payload.get("affects_main_flow"))
+        self.assertIn("回复理解已回到本地规则", fallback_payload.get("user_message", ""))
 
     def test_agent_shell_can_record_case_level_llm_fallback_events(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -5593,8 +5596,14 @@ class OrchestratorSmokeTest(unittest.TestCase):
             for item in runtime_session.event_log
             if item["event_type"] == "llm-fallback"
         ]
-        self.assertTrue(any(item.get("component") == "pre-framing" for item in event_payloads))
-        self.assertTrue(any(item.get("component") == "copywriter" for item in event_payloads))
+        pre_framing_payload = next(item for item in event_payloads if item.get("component") == "pre-framing")
+        copywriter_payload = next(item for item in event_payloads if item.get("component") == "copywriter")
+        self.assertEqual(pre_framing_payload.get("failure_kind"), "timeout")
+        self.assertEqual(pre_framing_payload.get("component_label"), "前置收敛")
+        self.assertIn("前置收敛已回到本地规则", pre_framing_payload.get("user_message", ""))
+        self.assertEqual(copywriter_payload.get("failure_kind"), "network-error")
+        self.assertEqual(copywriter_payload.get("component_label"), "文案增强")
+        self.assertFalse(copywriter_payload.get("affects_main_flow"))
 
     def test_cli_runtime_command_can_render_runtime_session(self) -> None:
         with TemporaryDirectory() as tmpdir:

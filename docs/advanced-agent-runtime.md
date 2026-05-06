@@ -48,7 +48,7 @@
 - 已有最小 `context budget`
 - 已开始把历史分成 `raw history / working memory / summary memory`
 - 已能通过 CLI / HTTP 直接观察 runtime session、压缩状态和最近工作记忆
-- 已能在模型服务不可用时自动回退到本地规则，并把降级事件写进 runtime event log
+- 已能在模型服务不可用时自动回退到本地规则，并把带有 `failure_kind` 和 `user_message` 的降级事件写进 runtime event log
 - 已开始把回复解释、前置收敛、文案增强的降级状态收敛到统一案例元数据
 
 ## 一句话定义
