@@ -48,6 +48,8 @@
 
 每一轮新输入开始时，runtime 会先做一次恢复检查：未完成的 hook 和工具调用会被自动收口并写回账本，待人工确认的审批不会自动关闭。检查结果会写入 `recovery_summary`，如果上一轮确实有未闭环事项，还会产生 `runtime-recovery-applied` 事件，外壳可以直接通过 `event_summaries` 展示“系统刚刚处理了什么、还有什么需要人确认”。
 
+如果要展示“这一轮到底怎么走的”，优先读取 `query_loop`。它不是新的业务判断层，而是从 `event_log`、`last_terminal_event`、`open_items` 和 `recovery_summary` 推导出来的查询循环摘要，用来回答：这一轮编号是什么、现在是否结束、最后停在哪一步、还有多少待闭环事项、关键步骤有哪些。
+
 ## 当前状态模型
 
 ### `workspace`

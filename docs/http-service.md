@@ -248,6 +248,17 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 如果恢复检查实际处理了未闭环事项，`event_summaries` 里也会出现“恢复检查”提醒。外壳不需要自己从底层账本推断恢复动作。
 
+同一份响应还会返回 `query_loop`。它面向网页、IDE 侧边栏和调试工具，用来展示单轮查询循环，而不是让外壳自己遍历完整 `event_log`：
+
+- `query_id`：当前或最近一轮查询编号。
+- `runtime_status` / `loop_state`：运行时状态和循环位置。
+- `terminal_state`：如果这一轮已经收尾，这里表示完成、阻塞、失败、取消等终止语义。
+- `open_item_count` / `actionable_open_item_count`：未闭环事项数量，以及其中需要人处理的数量。
+- `steps`：保留关键步骤和最近步骤，例如收到输入、开始处理、识别意图、恢复检查、等待确认、终止事件。
+- `last_step`：这一轮最后一个可读步骤。
+
+`query_loop` 是 runtime 推导出的观察口，不替代底层事件日志。需要审计完整过程时仍应查看 `event_log` 和 `execution_ledger`。
+
 ### `GET /workspaces/{workspace_id}/runtime/approvals`
 
 用途：

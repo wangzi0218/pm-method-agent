@@ -3069,7 +3069,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("renderWorkingMemoryItem", js_body)
         self.assertIn("event_summaries", js_body)
         self.assertIn("open_items", js_body)
+        self.assertIn("query_loop", js_body)
         self.assertIn("待闭环事项", js_body)
+        self.assertIn("这轮怎么走的", js_body)
         self.assertIn("understandingPayload", js_body)
         self.assertIn("理解方式", js_body)
         self.assertIn("模型不可用，已回到本地判断", js_body)
@@ -5688,6 +5690,33 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("待闭环事项", rendered)
         self.assertIn("需要确认是否更新项目背景", rendered)
 
+    def test_runtime_session_payload_exposes_query_loop_summary(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "前台最近老是漏提醒患者，我在想是不是要处理一下。",
+                workspace_id="demo-query-loop",
+            )
+
+        payload = build_runtime_session_payload(response.runtime_session)
+        rendered = render_runtime_session(response.runtime_session)
+        query_loop = payload["query_loop"]
+
+        self.assertEqual(query_loop["query_id"], "query-0001")
+        self.assertEqual(query_loop["turn_count"], 1)
+        self.assertTrue(query_loop["is_terminal"])
+        self.assertFalse(query_loop["is_active"])
+        self.assertEqual(query_loop["open_item_count"], 0)
+        self.assertEqual(query_loop["terminal_state"], response.runtime_session.last_terminal_event["terminal_state"])
+        step_kinds = [item["kind"] for item in query_loop["steps"]]
+        self.assertIn("收到输入", step_kinds)
+        self.assertIn("开始处理", step_kinds)
+        self.assertIn("识别意图", step_kinds)
+        self.assertIn("推进状态", step_kinds)
+        self.assertIn(response.runtime_session.last_terminal_event["terminal_state"], query_loop["last_step"]["state"])
+        self.assertEqual(query_loop["last_step"]["event_type"], "terminal-state-emitted")
+        self.assertIn("查询循环", rendered)
+
     def test_runtime_session_query_start_exposes_recovery_summary(self) -> None:
         runtime_session = RuntimeSession(session_id="runtime-demo", workspace_id="demo")
         runtime_session.current_query_id = "query-0001"
@@ -5743,6 +5772,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("恢复检查", rendered)
         self.assertEqual(len(payload["open_items"]), 1)
         self.assertEqual(payload["open_items"][0]["item_type"], "approval")
+        self.assertEqual(payload["query_loop"]["query_id"], "query-0002")
+        self.assertEqual(payload["query_loop"]["open_item_count"], 1)
+        self.assertEqual(payload["query_loop"]["actionable_open_item_count"], 1)
+        self.assertEqual(payload["query_loop"]["steps"][0]["kind"], "恢复检查")
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(

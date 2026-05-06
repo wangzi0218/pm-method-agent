@@ -2035,6 +2035,7 @@ WEB_DEMO_JS = """\
     const latestFallback = fallbackEvents[fallbackEvents.length - 1] || null;
     const pendingApprovals = runtimeSession.pending_approvals || [];
     const openItems = runtimeSession.open_items || [];
+    const queryLoop = runtimeSession.query_loop || {};
     const workingMemory = runtimeSession.working_memory || [];
     const summaryMemory = runtimeSession.summary_memory || [];
     const highlightedEvents = pickRuntimeHighlights(runtimeSession);
@@ -2071,6 +2072,10 @@ WEB_DEMO_JS = """\
       </article>
     `
       : "";
+    const queryLoopLastStep = queryLoop.last_step || {};
+    const queryLoopText = queryLoop.query_id
+      ? `这轮是 ${queryLoop.query_id}，最后停在 ${queryLoopLastStep.kind || runtimeLoopLabel(queryLoop.loop_state || "idle")}；还有 ${Number(queryLoop.open_item_count || 0)} 项未闭环。`
+      : "还没有可展示的查询循环。";
 
     els.runtimeDigest.className = "history-digest";
     els.runtimeDigest.innerHTML = `
@@ -2094,7 +2099,14 @@ WEB_DEMO_JS = """\
           下一次大概率会从 ${inlineFormat(resumeLabel)} 接着看；当前工作区已经累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
         </span>
       </article>
+      <article class="digest-card is-muted">
+        <span class="digest-label">这轮怎么走的</span>
+        <span class="digest-value">
+          ${inlineFormat(queryLoopText)}
+        </span>
+      </article>
       ${fallbackCard}
+      ${openItemCard}
     `;
 
     if (!highlightedEvents.length) {

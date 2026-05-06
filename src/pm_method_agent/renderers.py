@@ -271,13 +271,148 @@ def render_workspace_overview(
 def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
     payload = runtime_session.to_dict()
     payload["event_summaries"] = _build_runtime_event_summaries(payload.get("event_log", []))
-    payload["open_items"] = _build_runtime_open_items(payload)
+    open_items = _build_runtime_open_items(payload)
+    payload["open_items"] = open_items
     runtime_metadata = payload.get("runtime_metadata", {})
     if isinstance(runtime_metadata, dict):
-        payload["recovery_summary"] = runtime_metadata.get("last_recovery_summary", {}) or {}
+        recovery_summary = runtime_metadata.get("last_recovery_summary", {}) or {}
     else:
-        payload["recovery_summary"] = {}
+        recovery_summary = {}
+    if not isinstance(recovery_summary, dict):
+        recovery_summary = {}
+    payload["recovery_summary"] = recovery_summary
+    payload["query_loop"] = _build_runtime_query_loop(payload, open_items=open_items, recovery_summary=recovery_summary)
     return payload
+
+
+def _build_runtime_query_loop(payload: dict, *, open_items: List[dict], recovery_summary: dict) -> dict:
+    last_terminal = payload.get("last_terminal_event") or {}
+    if not isinstance(last_terminal, dict):
+        last_terminal = {}
+    current_query_id = str(payload.get("current_query_id", "") or "")
+    terminal_query_id = str(last_terminal.get("query_id", "") or "")
+    recovery_query_id = str(recovery_summary.get("query_id", "") or "")
+    query_id = current_query_id or terminal_query_id or recovery_query_id
+    steps = _build_runtime_query_loop_steps(payload.get("event_log", []), query_id=query_id)
+    terminal_state = ""
+    action = ""
+    resume_from = str(payload.get("resume_from", "") or "")
+    if terminal_query_id == query_id:
+        terminal_state = str(last_terminal.get("terminal_state", "") or "")
+        action = str(last_terminal.get("action", "") or "")
+        resume_from = str(last_terminal.get("resume_from", "") or resume_from)
+    actionable_count = sum(1 for item in open_items if item.get("actionable"))
+    return {
+        "query_id": query_id,
+        "turn_count": int(payload.get("turn_count", 0) or 0),
+        "runtime_status": str(payload.get("runtime_status", "") or "idle"),
+        "loop_state": str(payload.get("current_loop_state", "") or "idle"),
+        "terminal_state": terminal_state,
+        "action": action,
+        "resume_from": resume_from,
+        "is_active": bool(current_query_id),
+        "is_terminal": bool(terminal_state),
+        "open_item_count": len(open_items),
+        "actionable_open_item_count": actionable_count,
+        "recovery_summary": recovery_summary,
+        "steps": steps,
+        "last_step": steps[-1] if steps else {},
+    }
+
+
+def _build_runtime_query_loop_steps(event_log: object, *, query_id: str, limit: int = 12) -> List[dict]:
+    if not isinstance(event_log, list) or not query_id:
+        return []
+    steps: List[dict] = []
+    for item in event_log:
+        if not isinstance(item, dict):
+            continue
+        payload = item.get("payload", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        if str(payload.get("query_id", "") or "") != query_id:
+            continue
+        step = _runtime_query_loop_step(item, payload)
+        if step:
+            steps.append(step)
+    if len(steps) <= limit:
+        return steps
+    preserved_event_types = {
+        "runtime-recovery-applied",
+        "turn-received",
+        "loop-started",
+        "turn-classified",
+        "approval-created",
+        "terminal-state-emitted",
+    }
+    selected_indexes = set()
+    for index, step in enumerate(steps):
+        if str(step.get("event_type", "") or "") in preserved_event_types:
+            selected_indexes.add(index)
+    for index in range(len(steps) - 1, -1, -1):
+        if len(selected_indexes) >= limit:
+            break
+        selected_indexes.add(index)
+    return [steps[index] for index in sorted(selected_indexes)][-limit:]
+
+
+def _runtime_query_loop_step(item: dict, payload: dict) -> dict:
+    event_type = str(item.get("event_type", "") or "")
+    base = {
+        "event_id": str(item.get("event_id", "") or ""),
+        "event_type": event_type,
+    }
+    if event_type == "runtime-recovery-applied":
+        return {**base, "kind": "恢复检查", "state": "recovering", "text": str(payload.get("message", "") or "已检查上一轮未闭环事项。")}
+    if event_type == "turn-received":
+        return {**base, "kind": "收到输入", "state": "received", "text": "已收到这一轮输入。"}
+    if event_type == "loop-started":
+        return {**base, "kind": "开始处理", "state": str(payload.get("loop_state", "") or "classifying-turn"), "text": "开始判断这一轮应该怎么接。"}
+    if event_type == "turn-classified":
+        intent = str(payload.get("intent", "") or "unknown")
+        return {**base, "kind": "识别意图", "state": "classified", "text": f"这一轮先按 {_runtime_intent_label(intent)} 处理。"}
+    if event_type == "loop-state-changed":
+        loop_state = str(payload.get("to_loop_state", "") or "executing")
+        reason = str(payload.get("reason", "") or "系统正在推进这一轮处理。")
+        return {**base, "kind": "推进状态", "state": loop_state, "text": reason}
+    if event_type == "approval-created":
+        return {**base, "kind": "等待确认", "state": "approval-required", "text": str(payload.get("reason", "") or "这一步需要人工确认。")}
+    if event_type == "terminal-state-emitted":
+        terminal_state = str(payload.get("terminal_state", "") or "")
+        return {**base, "kind": _runtime_terminal_label(terminal_state), "state": terminal_state or "terminal", "text": _runtime_terminal_text(terminal_state, payload)}
+    if event_type in {"tool-call-requested", "tool-call-completed", "tool-call-failed"}:
+        labels = {
+            "tool-call-requested": ("调用工具", "tool-requested", "已发起工具调用。"),
+            "tool-call-completed": ("工具完成", "tool-completed", "工具调用已经返回结果。"),
+            "tool-call-failed": ("工具失败", "tool-failed", "工具调用没有完成，已写入执行账本。"),
+        }
+        kind, state, text = labels[event_type]
+        return {**base, "kind": kind, "state": state, "text": text}
+    if event_type in {"hook-call-requested", "hook-call-completed", "hook-call-failed"}:
+        labels = {
+            "hook-call-requested": ("执行检查", "hook-requested", "已发起运行时检查。"),
+            "hook-call-completed": ("检查通过", "hook-completed", "运行时检查已经完成。"),
+            "hook-call-failed": ("检查收口", "hook-failed", "运行时检查没有完成，已收口到账本。"),
+        }
+        kind, state, text = labels[event_type]
+        return {**base, "kind": kind, "state": state, "text": text}
+    if event_type == "llm-fallback":
+        component_label = str(payload.get("component_label", "") or payload.get("component", "") or "模型增强")
+        return {**base, "kind": "回到本地规则", "state": "llm-fallback", "text": f"{component_label}先按本地规则接住。"}
+    return {}
+
+
+def _runtime_intent_label(value: str) -> str:
+    labels = {
+        "create-case": "新建案例",
+        "continue-case": "继续案例",
+        "project-profile": "补充项目背景",
+        "workspace-overview": "查看工作区",
+        "switch-case": "切换案例",
+        "history": "查看历史",
+        "guidance": "查看建议",
+    }
+    return labels.get(value, value or "当前输入")
 
 
 def _build_runtime_open_items(payload: dict) -> List[dict]:
@@ -539,6 +674,24 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
         lines.append(f"- 动作：`{last_terminal.get('action', '')}`")
         lines.append(f"- 输出类型：`{last_terminal.get('output_kind', '') or '无'}`")
         lines.append(f"- 工作流状态：`{last_terminal.get('workflow_state', '') or '无'}`")
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    lines.append("## 查询循环")
+    query_loop = payload.get("query_loop") or {}
+    if isinstance(query_loop, dict) and query_loop.get("query_id"):
+        lines.append(f"- 当前轮次：`{query_loop.get('query_id', '')}`")
+        lines.append(f"- 是否结束：`{'是' if query_loop.get('is_terminal') else '否'}`")
+        lines.append(f"- 待闭环事项：`{query_loop.get('open_item_count', 0)}`")
+        steps = query_loop.get("steps") or []
+        if steps:
+            for item in steps[-6:]:
+                kind = str(item.get("kind", "") or "步骤")
+                state = str(item.get("state", "") or "unknown")
+                text = str(item.get("text", "") or "")
+                lines.append(f"- {kind} / `{state}`：{text}")
+        else:
+            lines.append("- 暂无步骤")
     else:
         lines.append("- 暂无")
     lines.append("")
