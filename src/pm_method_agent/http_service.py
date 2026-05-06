@@ -553,7 +553,7 @@ def _build_agent_response_payload(response) -> JsonDict:
         "action": response.action,
         "message": response.message,
         "workspace": response.workspace.to_dict(),
-        "runtime_session": response.runtime_session.to_dict(),
+        "runtime_session": build_runtime_session_payload(response.runtime_session),
         "case": response.case_state.to_dict() if response.case_state else None,
         "case_runtime": build_case_runtime_payload(response.case_state) if response.case_state else None,
         "project_profile": response.project_profile.to_dict() if response.project_profile else None,

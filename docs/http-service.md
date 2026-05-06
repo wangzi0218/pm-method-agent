@@ -227,6 +227,17 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 外壳应该优先展示 `event_summaries`，只有调试模式才需要直接展开 `event_log`。
 
+同一个 `runtime_session` 里也会返回 `open_items`，用于表示当前还没有闭环的运行时事项。它会把待审批、未完成 hook 和未完成工具调用收成统一结构：
+
+- `item_type`：`approval`、`hook` 或 `tool-call`
+- `status`：当前状态
+- `stage`：发生在哪一层
+- `text`：给用户看的说明
+- `actionable`：是否需要人处理
+- `resume_from`：后续恢复点
+
+网页或 IDE 外壳可以把 `open_items` 放在运行时面板里，帮助用户知道“现在到底卡在哪”。
+
 ### `GET /workspaces/{workspace_id}/runtime/approvals`
 
 用途：

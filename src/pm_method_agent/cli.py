@@ -447,7 +447,7 @@ def _run_session_command(argv: List[str]) -> int:
                             "action": response.action,
                             "message": response.message,
                             "workspace": response.workspace.to_dict(),
-                            "runtime_session": response.runtime_session.to_dict(),
+                            "runtime_session": build_runtime_session_payload(response.runtime_session),
                             "case": response.case_state.to_dict() if response.case_state else None,
                             "case_runtime": (
                                 build_case_runtime_payload(response.case_state) if response.case_state else None

@@ -2034,6 +2034,7 @@ WEB_DEMO_JS = """\
     const fallbackEvents = (runtimeSession.event_log || []).filter((item) => item.event_type === "llm-fallback");
     const latestFallback = fallbackEvents[fallbackEvents.length - 1] || null;
     const pendingApprovals = runtimeSession.pending_approvals || [];
+    const openItems = runtimeSession.open_items || [];
     const workingMemory = runtimeSession.working_memory || [];
     const summaryMemory = runtimeSession.summary_memory || [];
     const highlightedEvents = pickRuntimeHighlights(runtimeSession);
@@ -2050,14 +2051,22 @@ WEB_DEMO_JS = """\
       focusText = `系统正在${runtimeLoopLabel(runtimeSession.current_loop_state || "executing")}，这会儿还不用额外打断它。`;
     }
 
+    const openItemCard = openItems.length
+      ? `
+      <article class="digest-card">
+        <span class="digest-label">待闭环事项</span>
+        <span class="digest-value">
+          ${inlineFormat(shortText(openItems[0].text || "还有一项运行时事项没有闭环。", 96))}
+        </span>
+      </article>
+    `
+      : "";
     const fallbackCard = latestFallback
       ? `
       <article class="digest-card">
         <span class="digest-label">最近一次兜底</span>
         <span class="digest-value">
-          ${inlineFormat(runtimeComponentLabel(latestFallback.payload?.component || ""))} 这一步先按本地规则接住了。${inlineFormat(
-            shortText(latestFallback.payload?.reason || "", 72)
-          )}
+          ${inlineFormat(shortText(latestFallback.payload?.user_message || `${runtimeComponentLabel(latestFallback.payload?.component || "")} 这一步先按本地规则接住了。`, 96))}
         </span>
       </article>
     `

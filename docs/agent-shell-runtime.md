@@ -44,6 +44,8 @@
 
 对外展示时，外壳应优先消费 runtime payload 中的 `event_summaries`。它已经把底层事件收成 `kind`、`stage`、`text`、`severity` 和 `actionable`，适合直接放进网页运行时面板或 IDE 侧边栏。
 
+如果要展示“还有什么没闭环”，优先读取 `open_items`。它会统一表达待审批、未完成 hook 和未完成工具调用，避免外壳自己分别拆 `pending_approvals`、`pending_hooks` 和 `pending_tool_calls`。
+
 ## 当前状态模型
 
 ### `workspace`

@@ -271,7 +271,71 @@ def render_workspace_overview(
 def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
     payload = runtime_session.to_dict()
     payload["event_summaries"] = _build_runtime_event_summaries(payload.get("event_log", []))
+    payload["open_items"] = _build_runtime_open_items(payload)
     return payload
+
+
+def _build_runtime_open_items(payload: dict) -> List[dict]:
+    items: List[dict] = []
+    for approval in payload.get("pending_approvals", []) or []:
+        if not isinstance(approval, dict):
+            continue
+        action_name = str(approval.get("action_name", "") or "")
+        approval_id = str(approval.get("approval_id", "") or "")
+        violation = approval.get("violation", {})
+        reason = ""
+        if isinstance(violation, dict):
+            reason = str(violation.get("reason", "") or "")
+        items.append(
+            {
+                "item_id": approval_id,
+                "item_type": "approval",
+                "status": str(approval.get("status", "pending") or "pending"),
+                "stage": _runtime_action_label(action_name),
+                "text": reason or "这项操作需要人工确认后才能继续。",
+                "actionable": True,
+                "resume_from": str(approval.get("resume_from", "") or payload.get("resume_from", "") or ""),
+                "metadata": {
+                    "tool_name": str(approval.get("tool_name", "") or ""),
+                    "action_name": action_name,
+                },
+            }
+        )
+    for hook in payload.get("pending_hooks", []) or []:
+        if not isinstance(hook, dict):
+            continue
+        hook_id = str(hook.get("hook_call_id", "") or "")
+        hook_name = str(hook.get("hook_name", "") or "")
+        items.append(
+            {
+                "item_id": hook_id,
+                "item_type": "hook",
+                "status": str(hook.get("status", "requested") or "requested"),
+                "stage": hook_name or "运行时 hook",
+                "text": "有一个运行时 hook 还没有闭环，下一轮开始时会先收口。",
+                "actionable": False,
+                "resume_from": str(payload.get("resume_from", "") or ""),
+                "metadata": {"hook_stage": str(hook.get("hook_stage", "") or "")},
+            }
+        )
+    for call in payload.get("pending_tool_calls", []) or []:
+        if not isinstance(call, dict):
+            continue
+        call_id = str(call.get("call_id", "") or "")
+        tool_name = str(call.get("tool_name", "") or "")
+        items.append(
+            {
+                "item_id": call_id,
+                "item_type": "tool-call",
+                "status": str(call.get("status", "requested") or "requested"),
+                "stage": tool_name or "工具调用",
+                "text": "有一个工具调用还没有返回结果，恢复时需要先补齐执行账本。",
+                "actionable": False,
+                "resume_from": str(payload.get("resume_from", "") or ""),
+                "metadata": {"tool_name": tool_name},
+            }
+        )
+    return items
 
 
 def _build_runtime_event_summaries(event_log: object, *, limit: int = 6) -> List[dict]:
@@ -459,6 +523,18 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
             kind = str(item.get("kind", "") or "提醒")
             text = str(item.get("text", "") or "")
             lines.append(f"- {kind} / {stage}：{text}")
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    lines.append("## 待闭环事项")
+    open_items = payload.get("open_items") or []
+    if open_items:
+        for item in open_items:
+            item_type = str(item.get("item_type", "") or "item")
+            stage = str(item.get("stage", "") or "运行时")
+            text = str(item.get("text", "") or "")
+            actionable = "需要处理" if item.get("actionable") else "系统可收口"
+            lines.append(f"- `{item_type}` / {stage} / {actionable}：{text}")
     else:
         lines.append("- 暂无")
     lines.append("")

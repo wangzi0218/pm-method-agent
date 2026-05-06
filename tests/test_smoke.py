@@ -41,7 +41,7 @@ from pm_method_agent.follow_up_copywriter import (
     apply_follow_up_copywriting,
 )
 from pm_method_agent.follow_up import attach_follow_up_plan
-from pm_method_agent.models import CaseState
+from pm_method_agent.models import CaseState, RuntimeSession
 from pm_method_agent.operation_enforcement import evaluate_operation_enforcement
 from pm_method_agent.orchestrator import continue_analysis_with_context, run_analysis, run_analysis_with_context
 from pm_method_agent.pre_framing import LLMPreFramingGenerator, build_pre_framing_result
@@ -65,6 +65,7 @@ from pm_method_agent.runtime_session_service import (
     get_or_create_runtime_session,
     interrupt_runtime_query,
     request_hook_call,
+    request_runtime_approval,
     request_tool_call,
     save_runtime_session,
     start_runtime_query,
@@ -3067,6 +3068,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("seedWorkspaceDemo", js_body)
         self.assertIn("renderWorkingMemoryItem", js_body)
         self.assertIn("event_summaries", js_body)
+        self.assertIn("open_items", js_body)
+        self.assertIn("待闭环事项", js_body)
         self.assertIn("understandingPayload", js_body)
         self.assertIn("理解方式", js_body)
         self.assertIn("模型不可用，已回到本地判断", js_body)
@@ -5637,6 +5640,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("PM Method Agent Runtime Session", rendered)
         self.assertIn("最近运行提醒", rendered)
+        self.assertIn("待闭环事项", rendered)
         self.assertIn("工作记忆", rendered)
 
     def test_http_service_can_return_runtime_session_payload(self) -> None:
@@ -5658,6 +5662,31 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("working_memory", runtime_session)
         self.assertIn("summary_memory", runtime_session)
         self.assertIn("event_summaries", runtime_session)
+        self.assertIn("open_items", runtime_session)
+
+    def test_runtime_session_payload_can_expose_open_items(self) -> None:
+        runtime_session = RuntimeSession(session_id="runtime-demo", workspace_id="demo")
+        runtime_session.resume_from = "tool-runtime.execute"
+        runtime_session.current_query_id = "query-0001"
+        request_tool_call(runtime_session, tool_name="local-text-search", request_payload={"query": "demo"})
+        request_hook_call(runtime_session, hook_name="runtime-policy-enforcement", hook_stage="pre-operation")
+        request_runtime_approval(
+            runtime_session,
+            tool_name="platform-project-profile-upsert",
+            action_name="project-profile-service.update-or-create",
+            violation={"reason": "需要确认是否更新项目背景"},
+            resume_from="approval-required",
+        )
+
+        payload = build_runtime_session_payload(runtime_session)
+        rendered = render_runtime_session(runtime_session)
+
+        self.assertEqual(len(payload["open_items"]), 3)
+        self.assertEqual([item["item_type"] for item in payload["open_items"]], ["approval", "hook", "tool-call"])
+        self.assertTrue(payload["open_items"][0]["actionable"])
+        self.assertIn("需要确认是否更新项目背景", payload["open_items"][0]["text"])
+        self.assertIn("待闭环事项", rendered)
+        self.assertIn("需要确认是否更新项目背景", rendered)
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(

@@ -84,7 +84,7 @@ mkdir -p "${STORE_DIR}"
 
 (
   cd "${ROOT_DIR}"
-  PYTHONPATH=src python3 -m pm_method_agent.cli --store-dir "${STORE_DIR}" serve --port "${PORT}"
+  PMMA_DISABLE_ENV_AUTOLOAD=1 PYTHONPATH=src python3 -m pm_method_agent.cli --store-dir "${STORE_DIR}" serve --port "${PORT}"
 ) >/tmp/pmma-web-acceptance.log 2>&1 &
 SERVER_PID=$!
 
