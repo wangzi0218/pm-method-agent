@@ -618,9 +618,9 @@ def _render_history_markdown(history_payload: dict) -> str:
         lines.append(
             f"- 最近一次选择：`{OPTION_LABELS.get(history_payload['last_gate_choice'], history_payload['last_gate_choice'])}`"
         )
-    fallback_components = _render_llm_fallback_components(history_payload.get("llm_enhancements", {}))
-    if fallback_components:
-        lines.append(f"- 最近走过本地兜底：`{fallback_components}`")
+    component_messages = _collect_llm_component_user_messages(history_payload.get("case_runtime", {}))
+    if component_messages:
+        lines.append(f"- 理解层提示：{component_messages[0]}")
     lines.append("")
 
     lines.append("## 这段对话里说过什么")
@@ -702,6 +702,25 @@ def _render_llm_fallback_components(payload: object) -> str:
     return " / ".join(_collect_llm_fallback_components(payload))
 
 
+def _collect_llm_component_user_messages(case_runtime_payload: object) -> List[str]:
+    if not isinstance(case_runtime_payload, dict):
+        return []
+    understanding = case_runtime_payload.get("understanding", {})
+    if not isinstance(understanding, dict):
+        return []
+    component_states = understanding.get("component_states", [])
+    if not isinstance(component_states, list):
+        return []
+    messages: List[str] = []
+    for item in component_states:
+        if not isinstance(item, dict):
+            continue
+        message = str(item.get("user_message", "") or "").strip()
+        if message and message not in messages:
+            messages.append(message)
+    return messages
+
+
 def _collect_llm_fallback_components(payload: object) -> List[str]:
     if not isinstance(payload, dict):
         return []
@@ -739,6 +758,9 @@ def _build_llm_understanding_payload(
         engine = str(payload.get("engine", "") or "")
         fallback_used = bool(payload.get("fallback_used"))
         fallback_reason = str(payload.get("fallback_reason", "") or "")
+        failure_kind = _normalize_llm_failure_kind(fallback_reason) if fallback_used else ""
+        status = _llm_component_status(engine=engine, fallback_used=fallback_used)
+        component_label = _llm_component_label(str(component))
         if fallback_used and _is_contract_fallback_reason(fallback_reason):
             has_contract_fallback = True
         if not fallback_used and _is_llm_success_engine(engine):
@@ -746,10 +768,18 @@ def _build_llm_understanding_payload(
         component_states.append(
             {
                 "component": str(component),
-                "component_label": _llm_component_label(str(component)),
+                "component_label": component_label,
                 "engine": engine,
+                "status": status,
                 "fallback_used": fallback_used,
                 "fallback_reason": fallback_reason,
+                "failure_kind": failure_kind,
+                "user_message": _llm_component_user_message(
+                    component_label=component_label,
+                    status=status,
+                    failure_kind=failure_kind,
+                ),
+                "affects_main_flow": False,
             }
         )
 
@@ -794,6 +824,47 @@ def _build_llm_understanding_payload(
 def _is_llm_success_engine(engine: str) -> bool:
     normalized = engine.strip().lower()
     return normalized in {"llm", "hybrid"}
+
+
+def _llm_component_status(*, engine: str, fallback_used: bool) -> str:
+    if fallback_used:
+        return "fallback"
+    if _is_llm_success_engine(engine):
+        return "llm-assisted"
+    return "local"
+
+
+def _normalize_llm_failure_kind(reason: str) -> str:
+    normalized = reason.strip().lower()
+    if not normalized:
+        return "unknown"
+    if "empty-result" in normalized or "empty result" in normalized or "empty" in normalized:
+        return "empty-result"
+    if "json" in normalized or "decode" in normalized:
+        return "invalid-json"
+    if "timeout" in normalized or "timed out" in normalized or "gateway-timeout" in normalized:
+        return "timeout"
+    if any(keyword in normalized for keyword in ["network", "offline", "connection", "dns", "unreachable", "urlerror"]):
+        return "network-error"
+    if any(keyword in normalized for keyword in ["invalid", "contract", "schema", "校验", "契约"]):
+        return "contract-violation"
+    return "unknown"
+
+
+def _llm_component_user_message(*, component_label: str, status: str, failure_kind: str) -> str:
+    if status == "llm-assisted":
+        return f"{component_label}已使用模型辅助，主线判断仍由方法运行时控制。"
+    if status == "local":
+        return f"{component_label}由本地规则完成。"
+    reason_label = {
+        "timeout": "模型响应超时",
+        "network-error": "模型服务暂时不可达",
+        "invalid-json": "模型返回内容无法解析",
+        "empty-result": "模型没有返回可用结果",
+        "contract-violation": "模型输出未通过契约校验",
+        "unknown": "模型增强没有稳定完成",
+    }.get(failure_kind, "模型增强没有稳定完成")
+    return f"{component_label}已回到本地规则（{reason_label}），不影响继续分析。"
 
 
 def _is_contract_fallback_reason(reason: str) -> bool:

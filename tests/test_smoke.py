@@ -1843,8 +1843,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertTrue(enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_used"])
         self.assertIn("RuntimeError", enhanced_case.metadata["llm_enhancements"]["copywriter"]["fallback_reason"])
         rendered_history = render_case_history(enhanced_case)
-        self.assertIn("最近走过本地兜底", rendered_history)
-        self.assertIn("copywriter", rendered_history)
+        self.assertIn("理解层提示", rendered_history)
+        self.assertIn("文案增强已回到本地规则", rendered_history)
+        self.assertIn("不影响继续分析", rendered_history)
 
     def test_llm_follow_up_copywriter_can_only_enhance_display_slots(self) -> None:
         adapter = StubLLMAdapter(
@@ -1917,7 +1918,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
             enhanced_case.metadata["llm_enhancements"]["follow-up-copywriter"]["fallback_reason"],
         )
         rendered_history = render_case_history(enhanced_case)
-        self.assertIn("follow-up-copywriter", rendered_history)
+        self.assertIn("理解层提示", rendered_history)
+        self.assertIn("追问润色已回到本地规则", rendered_history)
+        self.assertIn("不影响继续分析", rendered_history)
 
     def test_llm_follow_up_copywriter_request_includes_partial_pending_questions(self) -> None:
         adapter = StubLLMAdapter(
@@ -2910,6 +2913,16 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(payload["understanding_mode"], "partial-fallback")
         self.assertEqual(payload["understanding_label"], "模型部分辅助，部分回退")
         self.assertIn("本地规则", payload["understanding_description"])
+        component_states = payload["understanding"]["component_states"]
+        reply_state = next(item for item in component_states if item["component"] == "reply-interpreter")
+        copywriter_state = next(item for item in component_states if item["component"] == "copywriter")
+        self.assertEqual(reply_state["status"], "fallback")
+        self.assertEqual(reply_state["failure_kind"], "network-error")
+        self.assertFalse(reply_state["affects_main_flow"])
+        self.assertIn("回复理解已回到本地规则", reply_state["user_message"])
+        self.assertIn("不影响继续分析", reply_state["user_message"])
+        self.assertEqual(copywriter_state["status"], "llm-assisted")
+        self.assertIn("文案增强已使用模型辅助", copywriter_state["user_message"])
 
     def test_build_case_runtime_payload_can_explain_local_and_contract_fallback_modes(self) -> None:
         local_case = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
@@ -2930,6 +2943,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(local_payload["understanding_label"], "本地规则")
         self.assertEqual(contract_payload["understanding_mode"], "contract-fallback")
         self.assertIn("未通过校验", contract_payload["understanding_label"])
+        contract_state = contract_payload["understanding"]["component_states"][0]
+        self.assertEqual(contract_state["failure_kind"], "empty-result")
+        self.assertIn("模型没有返回可用结果", contract_state["user_message"])
 
     def test_http_service_can_create_reply_and_load_history(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -3015,6 +3031,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("understandingPayload", js_body)
         self.assertIn("理解方式", js_body)
         self.assertIn("模型不可用，已回到本地判断", js_body)
+        self.assertIn("fallbackComponentMessages", js_body)
+        self.assertIn("user_message", js_body)
         self.assertIn("需要人工确认", js_body)
         self.assertIn("历史已收拢", js_response.encoded_body().decode("utf-8"))
         self.assertIn("眼下正带着哪些线索", js_response.encoded_body().decode("utf-8"))

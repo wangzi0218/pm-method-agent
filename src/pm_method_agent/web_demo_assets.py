@@ -1917,6 +1917,16 @@ WEB_DEMO_JS = """\
     els.cardDigest.innerHTML = cards.join("");
   }
 
+  function fallbackComponentMessages(caseRuntime) {
+    const states = caseRuntime?.understanding?.component_states || [];
+    if (!Array.isArray(states)) {
+      return [];
+    }
+    return states
+      .map((item) => item && item.user_message ? String(item.user_message).trim() : "")
+      .filter((item, index, list) => item && list.indexOf(item) === index);
+  }
+
   function renderHistoryDigest(historyPayload) {
     if (!historyPayload) {
       els.historyDigest.className = "history-digest empty-list";
@@ -1937,13 +1947,12 @@ WEB_DEMO_JS = """\
       ? `${latestTurn.kind || "turn"}：${latestTurn.text || latestTurn.content || ""}`
       : "当前还没有更多历史。";
 
-    const fallbackCard = caseRuntime && caseRuntime.fallback_active
+    const componentMessages = fallbackComponentMessages(caseRuntime);
+    const fallbackCard = componentMessages.length
       ? `
       <article class="digest-card">
         <span class="digest-label">补充说明</span>
-        <span class="digest-value">
-          这段过程里，${inlineFormat((caseRuntime.fallback_components || []).join(" / "))} 有走过本地规则兜底，但不影响继续查看。
-        </span>
+        <span class="digest-value">${inlineFormat(shortText(componentMessages[0], 96))}</span>
       </article>
     `
       : "";

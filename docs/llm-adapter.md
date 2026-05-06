@@ -236,6 +236,16 @@ cp .env.example .env.local
 
 这层状态是给用户和外壳看的解释层，不是新的决策层。它不应该改变阶段、关口、阻塞与恢复语义。
 
+`component_states` 会继续说明每一层的具体状态：
+
+- `component` / `component_label`：组件名和中文标签，例如回复理解、前置收敛、文案增强。
+- `status`：`local`、`llm-assisted` 或 `fallback`。
+- `failure_kind`：当发生回退时，归一化为 `timeout`、`network-error`、`invalid-json`、`empty-result`、`contract-violation` 或 `unknown`。
+- `user_message`：给普通用户看的自然说明，例如“回复理解已回到本地规则，不影响继续分析。”
+- `affects_main_flow`：当前默认是 `false`，表示 LLM 增强失败不会直接改变阶段推进和关口控制。
+
+这让外壳可以对普通用户展示一句自然解释，对调试工具保留结构化细节。
+
 ## 当前限制
 
 当前仓库还没有直接提供某个供应商的生产级适配器。

@@ -427,6 +427,8 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 - `description`：给用户看的简短说明
 - `component_states`：组件级状态，便于调试或更细的外壳展示
 
+`component_states` 中每一项会包含 `status`、`failure_kind`、`user_message` 和 `affects_main_flow`。普通网页或 IDE 外壳可以优先展示 `user_message`；调试工具再读取 `engine`、`fallback_reason` 等细节。
+
 外壳可以优先展示 `label` 和 `description`，不要直接把底层 `llm_enhancements` 原样暴露给普通用户。
 
 对于运行时策略校验接口，还会返回：
