@@ -420,6 +420,15 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 这层字段的目标，是把 `LLM` 增强状态、回退组件和运行摘要收成一份稳定契约，给网页、IDE 外壳或其他客户端直接消费，而不是让它们自己去拆 `case.metadata`。
 
+其中 `case_runtime.understanding` 是当前推荐消费的理解方式摘要，常用字段包括：
+
+- `mode`：`local-only`、`llm-assisted`、`partial-fallback`、`llm-fallback`、`contract-fallback` 或 `llm-configured`
+- `label`：给用户看的短标签，例如“本地规则”“模型辅助”“模型不可用，已回到本地判断”
+- `description`：给用户看的简短说明
+- `component_states`：组件级状态，便于调试或更细的外壳展示
+
+外壳可以优先展示 `label` 和 `description`，不要直接把底层 `llm_enhancements` 原样暴露给普通用户。
+
 对于运行时策略校验接口，还会返回：
 
 - `decision`

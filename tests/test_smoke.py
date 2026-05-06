@@ -2870,12 +2870,20 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
     def test_rendered_card_can_show_llm_runtime_summary(self) -> None:
         case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
-        case_state.metadata["llm_runtime"] = {"summary": "LLM 混合（回复解释、前置收敛）"}
+        case_state.metadata["llm_runtime"] = {
+            "mode": "hybrid",
+            "components": ["reply-interpreter", "pre-framing"],
+            "summary": "LLM 混合（回复解释、前置收敛）",
+        }
+        case_state.metadata["llm_enhancements"] = {
+            "pre-framing": {"engine": "llm", "fallback_used": False, "fallback_reason": ""}
+        }
 
         rendered = render_case_state(case_state)
 
-        self.assertIn("增强模式", rendered)
-        self.assertIn("LLM 混合（回复解释、前置收敛）", rendered)
+        self.assertIn("理解方式", rendered)
+        self.assertIn("模型辅助", rendered)
+        self.assertIn("阶段推进和关口仍由方法运行时控制", rendered)
 
     def test_build_case_runtime_payload_can_expose_fallback_components(self) -> None:
         case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
@@ -2899,6 +2907,29 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertTrue(payload["fallback_active"])
         self.assertEqual(payload["fallback_count"], 1)
         self.assertEqual(payload["fallback_components"], ["reply-interpreter"])
+        self.assertEqual(payload["understanding_mode"], "partial-fallback")
+        self.assertEqual(payload["understanding_label"], "模型部分辅助，部分回退")
+        self.assertIn("本地规则", payload["understanding_description"])
+
+    def test_build_case_runtime_payload_can_explain_local_and_contract_fallback_modes(self) -> None:
+        local_case = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
+        local_payload = build_case_runtime_payload(local_case)
+
+        contract_case = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
+        contract_case.metadata["llm_runtime"] = {"mode": "hybrid", "components": ["pre-framing"], "summary": "LLM 混合（前置收敛）"}
+        contract_case.metadata["llm_enhancements"] = {
+            "pre-framing": {
+                "engine": "llm-fallback",
+                "fallback_used": True,
+                "fallback_reason": "llm-empty-result",
+            }
+        }
+        contract_payload = build_case_runtime_payload(contract_case)
+
+        self.assertEqual(local_payload["understanding_mode"], "local-only")
+        self.assertEqual(local_payload["understanding_label"], "本地规则")
+        self.assertEqual(contract_payload["understanding_mode"], "contract-fallback")
+        self.assertIn("未通过校验", contract_payload["understanding_label"])
 
     def test_http_service_can_create_reply_and_load_history(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -2978,9 +3009,13 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("/runtime/session", js_response.encoded_body().decode("utf-8"))
         self.assertIn("runtimeLoopLabel", js_response.encoded_body().decode("utf-8"))
         self.assertIn("pickRuntimeHighlights", js_response.encoded_body().decode("utf-8"))
-        self.assertIn("seedWorkspaceDemo", js_response.encoded_body().decode("utf-8"))
-        self.assertIn("renderWorkingMemoryItem", js_response.encoded_body().decode("utf-8"))
-        self.assertIn("需要人工确认", js_response.encoded_body().decode("utf-8"))
+        js_body = js_response.encoded_body().decode("utf-8")
+        self.assertIn("seedWorkspaceDemo", js_body)
+        self.assertIn("renderWorkingMemoryItem", js_body)
+        self.assertIn("understandingPayload", js_body)
+        self.assertIn("理解方式", js_body)
+        self.assertIn("模型不可用，已回到本地判断", js_body)
+        self.assertIn("需要人工确认", js_body)
         self.assertIn("历史已收拢", js_response.encoded_body().decode("utf-8"))
         self.assertIn("眼下正带着哪些线索", js_response.encoded_body().decode("utf-8"))
         self.assertIn("更早的内容怎么被收住", js_response.encoded_body().decode("utf-8"))

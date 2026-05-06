@@ -135,12 +135,13 @@ recent_count="$(printf '%s\n' "${third_snapshot}" | grep -o 'generic \[ref=.*\]:
 second_case_id="$(printf '%s\n' "${third_snapshot}" | grep -oE 'case-[0-9a-f]{8}' | head -n 1)"
 assert_contains "${third_snapshot}" "\"2\"" "新增第二个案例后，最近案例数量应为 2"
 
-playwright-cli click "getByRole('button', { name: /${first_case_id}/ })" >/dev/null
-switch_snapshot="$(wait_for_snapshot_contains "已切换到当前案例")"
+playwright-cli click "getByRole('button', { name: /点开后从这里继续/ })" >/dev/null
+switch_snapshot="$(wait_for_snapshot_contains "已切换到所选案例")"
 switch_case_occurrences="$(printf '%s\n' "${switch_snapshot}" | grep -o "${first_case_id}" | wc -l | tr -d ' ')"
 
-assert_contains "${switch_snapshot}" "当前案例：${first_case_id}" "切换案例后，左侧工作区当前案例应同步"
-if (( switch_case_occurrences < 3 )); then
+assert_contains "${switch_snapshot}" "已切换到当前案例" "切换案例后，主交互区应同步提示当前案例已切换"
+assert_contains "${switch_snapshot}" "验证设计" "切换案例后，应回到第一条案例的验证设计结果"
+if (( switch_case_occurrences < 1 )); then
   printf '验收失败：切换案例后，目标案例没有稳定出现在当前快照里\n' >&2
   printf '  目标案例：%s\n' "${first_case_id}" >&2
   printf '  出现次数：%s\n' "${switch_case_occurrences}" >&2

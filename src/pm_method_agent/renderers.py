@@ -138,8 +138,17 @@ def build_case_runtime_payload(case_state: CaseState) -> dict:
     if not isinstance(llm_enhancements, dict):
         llm_enhancements = {}
     fallback_components = _collect_llm_fallback_components(llm_enhancements)
+    understanding = _build_llm_understanding_payload(
+        llm_runtime=llm_runtime,
+        llm_enhancements=llm_enhancements,
+        fallback_components=fallback_components,
+    )
     return {
         "summary": _runtime_summary(case_state),
+        "understanding": understanding,
+        "understanding_mode": understanding["mode"],
+        "understanding_label": understanding["label"],
+        "understanding_description": understanding["description"],
         "llm_runtime": llm_runtime,
         "llm_enhancements": llm_enhancements,
         "fallback_components": fallback_components,
@@ -704,6 +713,114 @@ def _collect_llm_fallback_components(payload: object) -> List[str]:
         if rendered and rendered not in components:
             components.append(rendered)
     return components
+
+
+def _build_llm_understanding_payload(
+    *,
+    llm_runtime: dict,
+    llm_enhancements: dict,
+    fallback_components: List[str],
+) -> dict:
+    runtime_summary = str(llm_runtime.get("summary", "") or "")
+    runtime_mode = str(llm_runtime.get("mode", "") or "").strip()
+    if not runtime_mode:
+        runtime_mode = "hybrid" if runtime_summary.startswith("LLM") else "local-only"
+    runtime_components = llm_runtime.get("components", [])
+    if not isinstance(runtime_components, list):
+        runtime_components = []
+
+    component_states = []
+    has_llm_success = False
+    has_fallback = bool(fallback_components)
+    has_contract_fallback = False
+    for component, payload in llm_enhancements.items():
+        if not isinstance(payload, dict):
+            continue
+        engine = str(payload.get("engine", "") or "")
+        fallback_used = bool(payload.get("fallback_used"))
+        fallback_reason = str(payload.get("fallback_reason", "") or "")
+        if fallback_used and _is_contract_fallback_reason(fallback_reason):
+            has_contract_fallback = True
+        if not fallback_used and _is_llm_success_engine(engine):
+            has_llm_success = True
+        component_states.append(
+            {
+                "component": str(component),
+                "component_label": _llm_component_label(str(component)),
+                "engine": engine,
+                "fallback_used": fallback_used,
+                "fallback_reason": fallback_reason,
+            }
+        )
+
+    if runtime_mode == "local-only":
+        mode = "local-only"
+        label = "本地规则"
+        description = "未启用模型，本轮由本地规则和方法运行时完成。"
+    elif has_llm_success and has_fallback:
+        mode = "partial-fallback"
+        label = "模型部分辅助，部分回退"
+        description = "本轮有些语义增强已生效，也有部分增强失败后回到本地规则。"
+    elif has_fallback and has_contract_fallback:
+        mode = "contract-fallback"
+        label = "模型输出未通过校验，已回到本地判断"
+        description = "模型返回内容不满足当前契约，本轮关键判断仍由本地规则接住。"
+    elif has_fallback:
+        mode = "llm-fallback"
+        label = "模型不可用，已回到本地判断"
+        description = "模型增强没有稳定完成，本轮先按本地规则继续。"
+    elif has_llm_success:
+        mode = "llm-assisted"
+        label = "模型辅助"
+        description = "模型参与了语义理解或文案增强，阶段推进和关口仍由方法运行时控制。"
+    else:
+        mode = "llm-configured"
+        label = "模型已配置，当前轮未触发增强"
+        description = "环境中已配置模型，但这一轮没有需要模型增强的组件。"
+
+    return {
+        "mode": mode,
+        "label": label,
+        "description": description,
+        "runtime_mode": runtime_mode,
+        "configured_components": [str(item) for item in runtime_components],
+        "component_states": component_states,
+        "llm_used": has_llm_success,
+        "fallback_used": has_fallback,
+        "contract_fallback_used": has_contract_fallback,
+    }
+
+
+def _is_llm_success_engine(engine: str) -> bool:
+    normalized = engine.strip().lower()
+    return normalized in {"llm", "hybrid"}
+
+
+def _is_contract_fallback_reason(reason: str) -> bool:
+    normalized = reason.strip().lower()
+    return any(
+        keyword in normalized
+        for keyword in [
+            "json",
+            "decode",
+            "empty-result",
+            "invalid",
+            "contract",
+            "schema",
+            "校验",
+            "契约",
+        ]
+    )
+
+
+def _llm_component_label(component: str) -> str:
+    labels = {
+        "reply-interpreter": "回复理解",
+        "pre-framing": "前置收敛",
+        "copywriter": "文案增强",
+        "follow-up-copywriter": "追问润色",
+    }
+    return labels.get(component, component)
 
 
 def _render_context_question_card(case_state: CaseState) -> str:
@@ -1512,10 +1629,16 @@ def _runtime_summary(case_state: CaseState) -> str:
 
 
 def _append_runtime_summary_line(lines: List[str], case_state: CaseState) -> None:
-    summary = _runtime_summary(case_state)
-    if summary.strip() == "本地规则":
+    understanding = build_case_runtime_payload(case_state).get("understanding", {})
+    if not isinstance(understanding, dict):
         return
-    lines.append(f"- 增强模式：`{summary}`")
+    label = str(understanding.get("label", "") or "").strip()
+    description = str(understanding.get("description", "") or "").strip()
+    if not label:
+        return
+    lines.append(f"- 理解方式：`{label}`")
+    if description and label != "本地规则":
+        lines.append(f"- 说明：{description}")
 
 
 def _group_unknowns(items: List[str]) -> dict[str, List[str]]:

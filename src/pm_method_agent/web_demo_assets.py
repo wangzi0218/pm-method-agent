@@ -1786,6 +1786,25 @@ WEB_DEMO_JS = """\
     return "例如：补一句现状、证据、角色关系，或者直接回答上面的判断点。";
   }
 
+  function understandingPayload(caseRuntime) {
+    const payload = caseRuntime?.understanding || null;
+    if (payload && payload.label) {
+      return payload;
+    }
+    if (caseRuntime && caseRuntime.fallback_active) {
+      return {
+        label: "模型不可用，已回到本地判断",
+        description: "模型增强没有稳定完成，本轮先按本地规则继续。",
+        fallback_used: true,
+      };
+    }
+    return {
+      label: "本地规则",
+      description: "未启用模型，本轮由本地规则和方法运行时完成。",
+      fallback_used: false,
+    };
+  }
+
   function renderCardDigest(casePayload, caseRuntime) {
     if (!casePayload) {
       els.cardDigest.className = "card-digest empty-list";
@@ -1853,14 +1872,13 @@ WEB_DEMO_JS = """\
       `);
     }
 
-    if (caseRuntime && caseRuntime.fallback_active) {
+    const understanding = understandingPayload(caseRuntime);
+    if (understanding && understanding.label) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">这轮怎么接住的</span>
+          <span class="digest-label">理解方式</span>
           <span class="digest-value">
-            这轮里有 ${inlineFormat(String(caseRuntime.fallback_count || 0))} 处增强先按本地规则接住了：${inlineFormat(
-              (caseRuntime.fallback_components || []).join(" / ")
-            )}。
+            ${inlineFormat(understanding.label)}${understanding.description ? `：${inlineFormat(shortText(understanding.description, 88))}` : ""}
           </span>
         </article>
       `);
@@ -2250,10 +2268,9 @@ WEB_DEMO_JS = """\
     if (direction && direction.label) {
       pills.push(`<span class="pill">${inlineFormat(direction.label)}</span>`);
     }
-    if (caseRuntime && caseRuntime.fallback_active) {
-      pills.push(
-        `<span class="pill">已回退：${inlineFormat((caseRuntime.fallback_components || []).join(" / "))}</span>`
-      );
+    const understanding = understandingPayload(caseRuntime);
+    if (understanding && understanding.label) {
+      pills.push(`<span class="pill">理解方式：${inlineFormat(understanding.label)}</span>`);
     }
     els.cardMeta.innerHTML = pills.join("");
   }
@@ -2322,10 +2339,9 @@ WEB_DEMO_JS = """\
     } else if (response.case && response.case.workflow_state === "deferred") {
       statusBits.push('<span class="pill">这轮先往后放一放</span>');
     }
-    if (response.case_runtime && response.case_runtime.fallback_active) {
-      statusBits.push(
-        `<span class="pill">有 ${inlineFormat(String(response.case_runtime.fallback_count || 0))} 处先按本地规则接住</span>`
-      );
+    const understanding = understandingPayload(response.case_runtime || null);
+    if (understanding && understanding.label && understanding.label !== "本地规则") {
+      statusBits.push(`<span class="pill">理解方式：${inlineFormat(understanding.label)}</span>`);
     }
     els.statusPills.innerHTML = statusBits.join("");
   }
