@@ -5688,6 +5688,62 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("待闭环事项", rendered)
         self.assertIn("需要确认是否更新项目背景", rendered)
 
+    def test_runtime_session_query_start_exposes_recovery_summary(self) -> None:
+        runtime_session = RuntimeSession(session_id="runtime-demo", workspace_id="demo")
+        runtime_session.current_query_id = "query-0001"
+        runtime_session.turn_count = 1
+        hook_entry = request_hook_call(
+            runtime_session,
+            hook_name="runtime-policy-enforcement",
+            hook_stage="pre-operation",
+            request_payload={"action_name": "demo.action"},
+        )
+        tool_entry = request_tool_call(
+            runtime_session,
+            tool_name="local-text-search",
+            request_payload={"query": "demo"},
+        )
+        approval_entry = request_runtime_approval(
+            runtime_session,
+            tool_name="platform-project-profile-upsert",
+            action_name="project-profile-service.update-or-create",
+            violation={"reason": "需要确认是否更新项目背景"},
+            resume_from="approval-required",
+        )
+
+        start_runtime_query(runtime_session, message="继续处理这个案例")
+        payload = build_runtime_session_payload(runtime_session)
+        rendered = render_runtime_session(runtime_session)
+
+        self.assertEqual(runtime_session.pending_hooks, [])
+        self.assertEqual(runtime_session.pending_tool_calls, [])
+        self.assertEqual(len(runtime_session.pending_approvals), 1)
+        self.assertEqual(runtime_session.pending_approvals[0]["approval_id"], approval_entry["approval_id"])
+        self.assertEqual(runtime_session.execution_ledger[-1]["call_id"], tool_entry["call_id"])
+        self.assertEqual(runtime_session.execution_ledger[-1]["status"], "failed")
+        self.assertEqual(runtime_session.execution_ledger[-1]["error"]["reason"], "next-query-started")
+
+        recovery_summary = payload["recovery_summary"]
+        self.assertEqual(recovery_summary["previous_query_id"], "query-0001")
+        self.assertEqual(recovery_summary["query_id"], "query-0002")
+        self.assertEqual(recovery_summary["closed_hooks"], 1)
+        self.assertEqual(recovery_summary["closed_tool_calls"], 1)
+        self.assertEqual(recovery_summary["kept_approvals"], 1)
+        self.assertIn(hook_entry["hook_call_id"], recovery_summary["hook_call_ids"])
+        self.assertIn(tool_entry["call_id"], recovery_summary["tool_call_ids"])
+        self.assertIn(approval_entry["approval_id"], recovery_summary["approval_ids"])
+
+        recovery_events = [item for item in runtime_session.event_log if item["event_type"] == "runtime-recovery-applied"]
+        self.assertEqual(len(recovery_events), 1)
+        recovery_summaries = [
+            item for item in payload["event_summaries"] if item["event_type"] == "runtime-recovery-applied"
+        ]
+        self.assertEqual(len(recovery_summaries), 1)
+        self.assertTrue(recovery_summaries[0]["actionable"])
+        self.assertIn("恢复检查", rendered)
+        self.assertEqual(len(payload["open_items"]), 1)
+        self.assertEqual(payload["open_items"][0]["item_type"], "approval")
+
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(
             response_text=(

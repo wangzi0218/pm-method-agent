@@ -272,6 +272,11 @@ def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
     payload = runtime_session.to_dict()
     payload["event_summaries"] = _build_runtime_event_summaries(payload.get("event_log", []))
     payload["open_items"] = _build_runtime_open_items(payload)
+    runtime_metadata = payload.get("runtime_metadata", {})
+    if isinstance(runtime_metadata, dict):
+        payload["recovery_summary"] = runtime_metadata.get("last_recovery_summary", {}) or {}
+    else:
+        payload["recovery_summary"] = {}
     return payload
 
 
@@ -379,6 +384,28 @@ def _summarize_runtime_event(item: dict) -> dict:
                 "component": str(payload.get("component", "") or ""),
                 "failure_kind": str(payload.get("failure_kind", "") or ""),
                 "affects_main_flow": bool(payload.get("affects_main_flow", False)),
+            },
+        }
+
+    if event_type == "runtime-recovery-applied":
+        closed_hooks = int(payload.get("closed_hooks", 0) or 0)
+        closed_tool_calls = int(payload.get("closed_tool_calls", 0) or 0)
+        kept_approvals = int(payload.get("kept_approvals", 0) or 0)
+        text = str(payload.get("message", "") or "已完成上一轮未闭环事项检查。")
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "query_id": query_id,
+            "kind": "恢复检查",
+            "stage": "运行时恢复",
+            "text": text,
+            "severity": "warning" if kept_approvals else "info",
+            "actionable": bool(kept_approvals),
+            "metadata": {
+                "closed_hooks": closed_hooks,
+                "closed_tool_calls": closed_tool_calls,
+                "kept_approvals": kept_approvals,
+                "strategy": str(payload.get("strategy", "") or ""),
             },
         }
 

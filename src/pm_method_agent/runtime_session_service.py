@@ -87,6 +87,7 @@ def start_runtime_query(
     message: str,
 ) -> RuntimeSession:
     _ensure_runtime_memory_defaults(runtime_session)
+    recovery_summary = _capture_runtime_recovery_summary(runtime_session)
     close_incomplete_hooks(runtime_session, reason="next-query-started")
     close_incomplete_tool_calls(runtime_session, reason="next-query-started")
     runtime_session.turn_count += 1
@@ -95,6 +96,10 @@ def start_runtime_query(
     runtime_session.current_loop_state = "classifying-turn"
     if active_case_id:
         runtime_session.active_case_id = active_case_id
+    recovery_summary["query_id"] = runtime_session.current_query_id
+    runtime_session.runtime_metadata["last_recovery_summary"] = recovery_summary
+    if recovery_summary.get("has_recovery"):
+        append_runtime_event(runtime_session, "runtime-recovery-applied", recovery_summary)
     append_runtime_event(
         runtime_session,
         "turn-received",
@@ -114,6 +119,39 @@ def start_runtime_query(
         },
     )
     return runtime_session
+
+
+def _capture_runtime_recovery_summary(runtime_session: RuntimeSession) -> Dict[str, object]:
+    pending_hooks = [item for item in runtime_session.pending_hooks if isinstance(item, dict)]
+    pending_tool_calls = [item for item in runtime_session.pending_tool_calls if isinstance(item, dict)]
+    pending_approvals = [item for item in runtime_session.pending_approvals if isinstance(item, dict)]
+    closed_hooks = len(pending_hooks)
+    closed_tool_calls = len(pending_tool_calls)
+    kept_approvals = len(pending_approvals)
+    has_recovery = bool(closed_hooks or closed_tool_calls or kept_approvals)
+    message = "上一轮没有未闭环事项，这一轮可以直接开始。"
+    if has_recovery:
+        parts = []
+        if closed_hooks:
+            parts.append(f"收口 {closed_hooks} 个未完成 hook")
+        if closed_tool_calls:
+            parts.append(f"收口 {closed_tool_calls} 个未完成工具调用")
+        if kept_approvals:
+            parts.append(f"保留 {kept_approvals} 个待确认审批")
+        message = "已" + "，".join(parts) + "。"
+    return {
+        "query_id": "",
+        "previous_query_id": runtime_session.current_query_id,
+        "closed_hooks": closed_hooks,
+        "closed_tool_calls": closed_tool_calls,
+        "kept_approvals": kept_approvals,
+        "hook_call_ids": [str(item.get("hook_call_id", "") or "") for item in pending_hooks],
+        "tool_call_ids": [str(item.get("call_id", "") or "") for item in pending_tool_calls],
+        "approval_ids": [str(item.get("approval_id", "") or "") for item in pending_approvals],
+        "strategy": "auto-close-hooks-and-tools-keep-approvals",
+        "has_recovery": has_recovery,
+        "message": message,
+    }
 
 
 def record_runtime_turn_classification(

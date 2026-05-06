@@ -238,6 +238,16 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 网页或 IDE 外壳可以把 `open_items` 放在运行时面板里，帮助用户知道“现在到底卡在哪”。
 
+`runtime_session` 里还会返回 `recovery_summary`，表示最近一轮开始前的恢复检查结果：
+
+- `closed_hooks`：自动收口的未完成 hook 数量。
+- `closed_tool_calls`：自动收口的未完成工具调用数量。
+- `kept_approvals`：继续保留、等待人工确认的审批数量。
+- `strategy`：当前恢复策略，现阶段为自动收口 hook 和工具调用、保留审批。
+- `message`：给外壳展示的一句话说明。
+
+如果恢复检查实际处理了未闭环事项，`event_summaries` 里也会出现“恢复检查”提醒。外壳不需要自己从底层账本推断恢复动作。
+
 ### `GET /workspaces/{workspace_id}/runtime/approvals`
 
 用途：

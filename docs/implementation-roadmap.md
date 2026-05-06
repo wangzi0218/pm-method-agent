@@ -201,6 +201,7 @@
 - 已把组件级 LLM 回退解释写入 runtime event log，运行时面板和后续 agent 外壳可直接消费
 - 已补 `event_summaries` 运行时摘要，让 CLI、HTTP 和网页优先消费同一套可读事件解释
 - 已补 `open_items` 待闭环事项摘要，把审批、hook 和工具调用的未完成状态统一暴露给外壳
+- 已补最小 `recovery_summary`，每轮开始前会自动收口未完成 hook 和工具调用，同时保留待人工确认审批
 - 还没有完整的 query loop、事件流语义和更细的工具恢复闭环
 
 建议交付物：
