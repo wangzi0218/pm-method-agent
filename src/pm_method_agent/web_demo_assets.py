@@ -1455,6 +1455,16 @@ WEB_DEMO_JS = """\
   }
 
   function pickRuntimeHighlights(runtimeSession) {
+    const eventSummaries = runtimeSession?.event_summaries || [];
+    if (Array.isArray(eventSummaries) && eventSummaries.length) {
+      return eventSummaries.slice(-3).map((item) => ({
+        key: item.event_id || `${item.event_type || "event"}-${item.kind || "summary"}`,
+        kind: item.kind || "运行提醒",
+        stage: item.stage || "运行时",
+        text: item.text || "",
+      }));
+    }
+
     const eventLog = runtimeSession?.event_log || [];
     const highlights = [];
     const usedKeys = new Set();

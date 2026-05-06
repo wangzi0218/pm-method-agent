@@ -215,6 +215,18 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 }
 ```
 
+`runtime_session` 里现在会额外返回 `event_summaries`，这是给网页、IDE 外壳和调试工具直接展示的运行时提醒摘要。
+
+它会把底层 `event_log` 中较重要的事件整理成：
+
+- `kind`：提醒类型，例如“回退到本地规则”“需要人工确认”“历史已收拢”。
+- `stage`：发生在哪一层，例如“回复理解”“文案增强”“上下文预算”。
+- `text`：给用户看的自然说明。
+- `severity`：`info`、`warning` 或 `error`。
+- `actionable`：是否需要人进一步处理。
+
+外壳应该优先展示 `event_summaries`，只有调试模式才需要直接展开 `event_log`。
+
 ### `GET /workspaces/{workspace_id}/runtime/approvals`
 
 用途：

@@ -269,7 +269,137 @@ def render_workspace_overview(
 
 
 def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
-    return runtime_session.to_dict()
+    payload = runtime_session.to_dict()
+    payload["event_summaries"] = _build_runtime_event_summaries(payload.get("event_log", []))
+    return payload
+
+
+def _build_runtime_event_summaries(event_log: object, *, limit: int = 6) -> List[dict]:
+    if not isinstance(event_log, list):
+        return []
+    summaries: List[dict] = []
+    for item in reversed(event_log):
+        if not isinstance(item, dict):
+            continue
+        summary = _summarize_runtime_event(item)
+        if summary:
+            summaries.append(summary)
+        if len(summaries) >= limit:
+            break
+    return list(reversed(summaries))
+
+
+def _summarize_runtime_event(item: dict) -> dict:
+    event_type = str(item.get("event_type", "") or "")
+    payload = item.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    event_id = str(item.get("event_id", "") or "")
+    query_id = str(payload.get("query_id", "") or "")
+
+    if event_type == "llm-fallback":
+        component_label = str(payload.get("component_label", "") or payload.get("component", "") or "模型增强")
+        message = str(payload.get("user_message", "") or "").strip()
+        if not message:
+            message = f"{component_label}已回到本地规则，不影响继续分析。"
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "query_id": query_id,
+            "kind": "回退到本地规则",
+            "stage": component_label,
+            "text": message,
+            "severity": "info",
+            "actionable": False,
+            "metadata": {
+                "component": str(payload.get("component", "") or ""),
+                "failure_kind": str(payload.get("failure_kind", "") or ""),
+                "affects_main_flow": bool(payload.get("affects_main_flow", False)),
+            },
+        }
+
+    if event_type == "approval-created":
+        action_name = str(payload.get("action_name", "") or "")
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "query_id": query_id,
+            "kind": "需要人工确认",
+            "stage": _runtime_action_label(action_name),
+            "text": str(payload.get("reason", "") or "这项操作需要先确认，再继续执行。"),
+            "severity": "warning",
+            "actionable": True,
+            "metadata": {"approval_id": str(payload.get("approval_id", "") or "")},
+        }
+
+    if event_type == "terminal-state-emitted":
+        terminal_state = str(payload.get("terminal_state", "") or "")
+        action = str(payload.get("action", "") or "")
+        if terminal_state in {"failed", "interrupted", "cancelled", "blocked"}:
+            return {
+                "event_id": event_id,
+                "event_type": event_type,
+                "query_id": query_id,
+                "kind": _runtime_terminal_label(terminal_state),
+                "stage": _runtime_action_label(action),
+                "text": _runtime_terminal_text(terminal_state, payload),
+                "severity": "warning" if terminal_state == "blocked" else "error",
+                "actionable": terminal_state in {"blocked", "interrupted"},
+                "metadata": {"terminal_state": terminal_state, "action": action},
+            }
+
+    if event_type == "context-compressed":
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "query_id": query_id,
+            "kind": "历史已收拢",
+            "stage": "上下文预算",
+            "text": f"已把更早的 {payload.get('compressed_turns', 0)} 轮收进摘要，保留最近工作记忆。",
+            "severity": "info",
+            "actionable": False,
+            "metadata": {"compressed_turns": int(payload.get("compressed_turns", 0) or 0)},
+        }
+
+    return {}
+
+
+def _runtime_action_label(value: str) -> str:
+    labels = {
+        "create-case": "创建案例",
+        "reply-case": "继续案例",
+        "switch-case": "切换案例",
+        "project-profile-updated": "更新项目背景",
+        "project-profile-service.update-or-create": "更新项目背景",
+        "runtime-error": "运行时错误",
+    }
+    return labels.get(value, value or "运行时")
+
+
+def _runtime_terminal_label(value: str) -> str:
+    labels = {
+        "completed": "已完成",
+        "failed": "执行失败",
+        "blocked": "已阻塞",
+        "interrupted": "已中断",
+        "cancelled": "已取消",
+    }
+    return labels.get(value, value or "终止事件")
+
+
+def _runtime_terminal_text(terminal_state: str, payload: dict) -> str:
+    if terminal_state == "failed":
+        error = payload.get("error", {})
+        if isinstance(error, dict) and error.get("message"):
+            return f"运行时失败：{error.get('message')}"
+        return "运行时遇到错误，当前轮没有继续执行。"
+    if terminal_state == "blocked":
+        return "当前轮先停住，等待补充材料或人工确认后再继续。"
+    if terminal_state == "interrupted":
+        return "当前轮被新的输入打断，后续会从恢复点继续。"
+    if terminal_state == "cancelled":
+        return "当前轮已经取消。"
+    return "当前轮已结束。"
 
 
 def render_runtime_session(runtime_session: RuntimeSession, output_format: str = "markdown") -> str:
@@ -318,6 +448,17 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
         lines.append(f"- 动作：`{last_terminal.get('action', '')}`")
         lines.append(f"- 输出类型：`{last_terminal.get('output_kind', '') or '无'}`")
         lines.append(f"- 工作流状态：`{last_terminal.get('workflow_state', '') or '无'}`")
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    lines.append("## 最近运行提醒")
+    event_summaries = payload.get("event_summaries") or []
+    if event_summaries:
+        for item in event_summaries:
+            stage = str(item.get("stage", "") or "运行时")
+            kind = str(item.get("kind", "") or "提醒")
+            text = str(item.get("text", "") or "")
+            lines.append(f"- {kind} / {stage}：{text}")
     else:
         lines.append("- 暂无")
     lines.append("")

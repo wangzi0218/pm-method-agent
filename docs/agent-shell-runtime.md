@@ -42,6 +42,8 @@
 
 这层事件的作用，是让外壳和调试工具知道“哪一层回退了”，而不是要求用户阅读底层异常文本。
 
+对外展示时，外壳应优先消费 runtime payload 中的 `event_summaries`。它已经把底层事件收成 `kind`、`stage`、`text`、`severity` 和 `actionable`，适合直接放进网页运行时面板或 IDE 侧边栏。
+
 ## 当前状态模型
 
 ### `workspace`

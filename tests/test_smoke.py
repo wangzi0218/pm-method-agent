@@ -82,7 +82,7 @@ from pm_method_agent.renderers import (
     render_runtime_session,
     render_workspace_overview,
 )
-from pm_method_agent.renderers import build_case_runtime_payload
+from pm_method_agent.renderers import build_case_runtime_payload, build_runtime_session_payload
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.runtime_policy import (
     check_runtime_action_policy,
@@ -3066,6 +3066,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         js_body = js_response.encoded_body().decode("utf-8")
         self.assertIn("seedWorkspaceDemo", js_body)
         self.assertIn("renderWorkingMemoryItem", js_body)
+        self.assertIn("event_summaries", js_body)
         self.assertIn("understandingPayload", js_body)
         self.assertIn("理解方式", js_body)
         self.assertIn("模型不可用，已回到本地判断", js_body)
@@ -5560,6 +5561,14 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(fallback_payload.get("component_label"), "回复理解")
         self.assertFalse(fallback_payload.get("affects_main_flow"))
         self.assertIn("回复理解已回到本地规则", fallback_payload.get("user_message", ""))
+        runtime_payload = build_runtime_session_payload(runtime_session)
+        fallback_summary = next(
+            item for item in runtime_payload["event_summaries"] if item["event_type"] == "llm-fallback"
+        )
+        self.assertEqual(fallback_summary["kind"], "回退到本地规则")
+        self.assertEqual(fallback_summary["stage"], "回复理解")
+        self.assertIn("回复理解已回到本地规则", fallback_summary["text"])
+        self.assertFalse(fallback_summary["metadata"]["affects_main_flow"])
 
     def test_agent_shell_can_record_case_level_llm_fallback_events(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -5627,6 +5636,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         rendered = stdout.getvalue()
         self.assertIn("PM Method Agent Runtime Session", rendered)
+        self.assertIn("最近运行提醒", rendered)
         self.assertIn("工作记忆", rendered)
 
     def test_http_service_can_return_runtime_session_payload(self) -> None:
@@ -5647,6 +5657,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("raw_history", runtime_session)
         self.assertIn("working_memory", runtime_session)
         self.assertIn("summary_memory", runtime_session)
+        self.assertIn("event_summaries", runtime_session)
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(
