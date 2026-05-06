@@ -236,6 +236,14 @@ cp .env.example .env.local
 
 这层状态是给用户和外壳看的解释层，不是新的决策层。它不应该改变阶段、关口、阻塞与恢复语义。
 
+模型输出现在先经过共享契约层处理：
+
+- 所有 LLM 入口都先要求返回 JSON object。
+- 非 JSON 会归为 `invalid-json`。
+- JSON 类型不符合组件契约会归为 `contract-violation`。
+- 解析成功但没有可用业务字段，会走 `empty-result`。
+- 这些错误只触发当前组件回退，不直接中断整轮分析。
+
 `component_states` 会继续说明每一层的具体状态：
 
 - `component` / `component_label`：组件名和中文标签，例如回复理解、前置收敛、文案增强。

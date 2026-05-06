@@ -12,6 +12,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     load_openai_compatible_config_from_env,
 )
+from pm_method_agent.llm_contract import empty_result_reason, parse_llm_json_object
 from pm_method_agent.models import CaseState
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.question_resolution import (
@@ -137,7 +138,7 @@ class LLMReplyInterpreter:
         request = _build_interpretation_request(reply_text, previous_case)
         try:
             response = self._adapter.generate(request)
-            payload = json.loads(response.content)
+            payload = parse_llm_json_object(response.content, component="reply-interpreter")
         except Exception as exc:
             return _build_fallback_reply_analysis(
                 self._fallback.analyze_reply(reply_text, previous_case=previous_case),
@@ -179,7 +180,7 @@ class LLMReplyInterpreter:
             return _build_fallback_reply_analysis(
                 self._fallback.analyze_reply(reply_text, previous_case=previous_case),
                 parser_name="llm-fallback",
-                reason="llm-empty-result",
+                reason=empty_result_reason("reply-interpreter"),
             )
 
         if not categories:

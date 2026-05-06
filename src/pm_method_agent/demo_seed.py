@@ -13,6 +13,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     load_openai_compatible_config_from_env,
 )
+from pm_method_agent.llm_contract import empty_result_reason, parse_llm_json_object
 from pm_method_agent.prompting import build_prompt_composition
 
 
@@ -139,7 +140,7 @@ class LLMDemoScenarioGenerator:
         request = _build_demo_seed_request(theme=theme, scenario_count=normalized_count)
         try:
             response = self._adapter.generate(request)
-            payload = json.loads(response.content)
+            payload = parse_llm_json_object(response.content, component="demo-seed")
         except Exception as exc:
             return _build_demo_seed_fallback(
                 self._fallback.generate(theme=theme, scenario_count=normalized_count),
@@ -150,7 +151,7 @@ class LLMDemoScenarioGenerator:
         if not scenarios:
             return _build_demo_seed_fallback(
                 self._fallback.generate(theme=theme, scenario_count=normalized_count),
-                reason="llm-empty-result",
+                reason=empty_result_reason("demo-seed"),
             )
         return DemoScenarioGeneration(
             scenarios=scenarios,

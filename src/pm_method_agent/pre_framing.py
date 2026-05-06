@@ -11,6 +11,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     load_openai_compatible_config_from_env,
 )
+from pm_method_agent.llm_contract import empty_result_reason, parse_llm_json_object
 from pm_method_agent.models import CaseState, PreFramingDirection, PreFramingResult
 from pm_method_agent.prompting import build_prompt_composition
 
@@ -219,7 +220,7 @@ class LLMPreFramingGenerator:
         request = _build_pre_framing_request(case_state, fallback_result)
         try:
             response = self._adapter.generate(request)
-            payload = json.loads(response.content)
+            payload = parse_llm_json_object(response.content, component="pre-framing")
         except Exception as exc:
             return _build_pre_framing_fallback_result(
                 fallback_result,
@@ -232,7 +233,7 @@ class LLMPreFramingGenerator:
             return _build_pre_framing_fallback_result(
                 fallback_result,
                 generator_name="llm-fallback",
-                reason="llm-empty-result",
+                reason=empty_result_reason("pre-framing"),
             )
         return replace(
             enhanced_result,

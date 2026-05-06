@@ -31,6 +31,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     OpenAICompatibleConfig,
 )
+from pm_method_agent.llm_contract import LLMContractError, empty_result_reason, parse_llm_json_object
 from pm_method_agent.memory_write_suggestions import suggest_memory_write_hints
 from pm_method_agent.follow_up_copywriter import (
     FOLLOW_UP_DISPLAY_FOCUS_KEY,
@@ -171,6 +172,19 @@ class StubLocalToolHandler(LocalToolHandler):
 
 
 class OrchestratorSmokeTest(unittest.TestCase):
+    def test_llm_contract_can_parse_only_json_objects(self) -> None:
+        payload = parse_llm_json_object('{"ok":true}', component="reply-interpreter")
+
+        self.assertTrue(payload["ok"])
+        with self.assertRaises(LLMContractError) as invalid_json:
+            parse_llm_json_object('{bad json', component="reply-interpreter")
+        with self.assertRaises(LLMContractError) as invalid_shape:
+            parse_llm_json_object('[1, 2, 3]', component="reply-interpreter")
+
+        self.assertIn("invalid-json", str(invalid_json.exception))
+        self.assertIn("contract-violation", str(invalid_shape.exception))
+        self.assertIn("reply-interpreter", empty_result_reason("reply-interpreter"))
+
     def test_heuristic_reply_interpreter_can_extract_multi_platform_background(self) -> None:
         interpreter = HeuristicReplyInterpreter()
         analysis = interpreter.analyze_reply(
@@ -262,6 +276,16 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("RuntimeError", analysis.fallback_reason)
         self.assertEqual(analysis.context_updates["business_model"], "tob")
         self.assertEqual(analysis.context_updates["primary_platform"], "pc")
+
+    def test_llm_reply_interpreter_can_fall_back_on_contract_error(self) -> None:
+        interpreter = LLMReplyInterpreter(adapter=StubLLMAdapter('[1, 2, 3]'))
+
+        analysis = interpreter.analyze_reply("这是一个 ToB 的 HIS 产品，前台在网页端操作提醒。")
+
+        self.assertEqual(analysis.parser_name, "llm-fallback")
+        self.assertTrue(analysis.fallback_used)
+        self.assertIn("contract-violation", analysis.fallback_reason)
+        self.assertEqual(analysis.context_updates["business_model"], "tob")
 
     def test_hybrid_reply_interpreter_can_keep_working_when_llm_fails(self) -> None:
         interpreter = HybridReplyInterpreter(
@@ -2946,6 +2970,20 @@ class OrchestratorSmokeTest(unittest.TestCase):
         contract_state = contract_payload["understanding"]["component_states"][0]
         self.assertEqual(contract_state["failure_kind"], "empty-result")
         self.assertIn("模型没有返回可用结果", contract_state["user_message"])
+
+        invalid_json_case = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
+        invalid_json_case.metadata["llm_runtime"] = {"mode": "hybrid", "components": ["copywriter"], "summary": "LLM 混合（文案增强）"}
+        invalid_json_case.metadata["llm_enhancements"] = {
+            "copywriter": {
+                "engine": "llm-fallback",
+                "fallback_used": True,
+                "fallback_reason": "LLMContractError: invalid-json: Expecting value",
+            }
+        }
+        invalid_payload = build_case_runtime_payload(invalid_json_case)
+        invalid_state = invalid_payload["understanding"]["component_states"][0]
+        self.assertEqual(invalid_state["failure_kind"], "invalid-json")
+        self.assertIn("无法解析", invalid_state["user_message"])
 
     def test_http_service_can_create_reply_and_load_history(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -12,6 +12,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     load_openai_compatible_config_from_env,
 )
+from pm_method_agent.llm_contract import parse_llm_json_object
 from pm_method_agent.models import CaseState
 from pm_method_agent.prompting import build_prompt_composition
 from pm_method_agent.question_resolution import question_family_key
@@ -48,7 +49,7 @@ class LLMFollowUpCopywriter:
         request = _build_follow_up_request(case_state)
         try:
             response = self._adapter.generate(request)
-            payload = json.loads(response.content)
+            payload = parse_llm_json_object(response.content, component="follow-up-copywriter")
         except Exception as exc:
             return FollowUpCopyUpdate(
                 enhancer_name="llm-fallback",

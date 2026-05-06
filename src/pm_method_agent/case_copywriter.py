@@ -12,6 +12,7 @@ from pm_method_agent.llm_adapter import (
     OpenAICompatibleAdapter,
     load_openai_compatible_config_from_env,
 )
+from pm_method_agent.llm_contract import parse_llm_json_object
 from pm_method_agent.models import CaseState
 from pm_method_agent.prompting import build_prompt_composition
 
@@ -47,7 +48,7 @@ class LLMCaseCopywriter:
         request = _build_copy_request(case_state)
         try:
             response = self._adapter.generate(request)
-            payload = json.loads(response.content)
+            payload = parse_llm_json_object(response.content, component="copywriter")
         except Exception as exc:
             return CaseCopyUpdate(
                 enhancer_name="llm-fallback",
