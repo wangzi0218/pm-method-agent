@@ -2036,6 +2036,7 @@ WEB_DEMO_JS = """\
     const pendingApprovals = runtimeSession.pending_approvals || [];
     const openItems = runtimeSession.open_items || [];
     const queryLoop = runtimeSession.query_loop || {};
+    const resumeSuggestions = runtimeSession.resume_suggestions || [];
     const workingMemory = runtimeSession.working_memory || [];
     const summaryMemory = runtimeSession.summary_memory || [];
     const highlightedEvents = pickRuntimeHighlights(runtimeSession);
@@ -2076,6 +2077,17 @@ WEB_DEMO_JS = """\
     const queryLoopText = queryLoop.query_id
       ? `这轮是 ${queryLoop.query_id}，最后停在 ${queryLoopLastStep.kind || runtimeLoopLabel(queryLoop.loop_state || "idle")}；还有 ${Number(queryLoop.open_item_count || 0)} 项未闭环。`
       : "还没有可展示的查询循环。";
+    const firstResumeSuggestion = resumeSuggestions[0] || null;
+    const resumeSuggestionCard = firstResumeSuggestion
+      ? `
+      <article class="digest-card is-calm">
+        <span class="digest-label">现在可以这样继续</span>
+        <span class="digest-value">
+          ${inlineFormat(`${firstResumeSuggestion.title || "继续处理"}：${shortText(firstResumeSuggestion.text || firstResumeSuggestion.command_hint || "直接补充下一句即可。", 96)}`)}
+        </span>
+      </article>
+    `
+      : "";
 
     els.runtimeDigest.className = "history-digest";
     els.runtimeDigest.innerHTML = `
@@ -2099,6 +2111,7 @@ WEB_DEMO_JS = """\
           下一次大概率会从 ${inlineFormat(resumeLabel)} 接着看；当前工作区已经累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
         </span>
       </article>
+      ${resumeSuggestionCard}
       <article class="digest-card is-muted">
         <span class="digest-label">这轮怎么走的</span>
         <span class="digest-value">

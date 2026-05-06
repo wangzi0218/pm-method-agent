@@ -50,6 +50,8 @@
 
 如果要展示“这一轮到底怎么走的”，优先读取 `query_loop`。它不是新的业务判断层，而是从 `event_log`、`last_terminal_event`、`open_items` 和 `recovery_summary` 推导出来的查询循环摘要，用来回答：这一轮编号是什么、现在是否结束、最后停在哪一步、还有多少待闭环事项、关键步骤有哪些。
 
+如果要给用户一个“现在怎么继续”的提示，优先读取 `resume_suggestions`。它会基于待审批、阻塞状态、暂缓状态、失败状态和活跃案例，给出少量下一步建议。`query_loop` 解释发生了什么，`resume_suggestions` 告诉用户接下来可以怎么接。
+
 ## 当前状态模型
 
 ### `workspace`

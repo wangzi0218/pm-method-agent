@@ -259,6 +259,18 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 `query_loop` 是 runtime 推导出的观察口，不替代底层事件日志。需要审计完整过程时仍应查看 `event_log` 和 `execution_ledger`。
 
+同一份响应还会返回 `resume_suggestions`，用于展示“现在可以怎么继续”：
+
+- `title`：建议标题，例如先处理待确认事项、补上当前卡点、继续补当前案例。
+- `text`：给用户看的简短解释。
+- `priority`：`high`、`medium` 或 `low`。
+- `action`：建议动作，例如 `resolve-approval`、`reply-current-case`、`inspect-runtime`。
+- `resume_from`：如果要恢复，建议从哪里接。
+- `command_hint`：给 CLI、网页或 IDE 外壳展示的操作提示。
+- `actionable`：是否需要用户现在处理。
+
+`resume_suggestions` 只提供下一步建议，不会替用户自动批准审批，也不会改变案例阶段。
+
 ### `GET /workspaces/{workspace_id}/runtime/approvals`
 
 用途：

@@ -3070,8 +3070,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("event_summaries", js_body)
         self.assertIn("open_items", js_body)
         self.assertIn("query_loop", js_body)
+        self.assertIn("resume_suggestions", js_body)
         self.assertIn("待闭环事项", js_body)
         self.assertIn("这轮怎么走的", js_body)
+        self.assertIn("现在可以这样继续", js_body)
         self.assertIn("understandingPayload", js_body)
         self.assertIn("理解方式", js_body)
         self.assertIn("模型不可用，已回到本地判断", js_body)
@@ -5716,6 +5718,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn(response.runtime_session.last_terminal_event["terminal_state"], query_loop["last_step"]["state"])
         self.assertEqual(query_loop["last_step"]["event_type"], "terminal-state-emitted")
         self.assertIn("查询循环", rendered)
+        self.assertIn("建议继续方式", rendered)
+        self.assertGreaterEqual(len(payload["resume_suggestions"]), 1)
+        self.assertEqual(payload["resume_suggestions"][0]["action"], "reply-current-case")
 
     def test_runtime_session_query_start_exposes_recovery_summary(self) -> None:
         runtime_session = RuntimeSession(session_id="runtime-demo", workspace_id="demo")
@@ -5776,6 +5781,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(payload["query_loop"]["open_item_count"], 1)
         self.assertEqual(payload["query_loop"]["actionable_open_item_count"], 1)
         self.assertEqual(payload["query_loop"]["steps"][0]["kind"], "恢复检查")
+        self.assertEqual(payload["resume_suggestions"][0]["action"], "resolve-approval")
+        self.assertEqual(payload["resume_suggestions"][0]["priority"], "high")
+        self.assertIn("待确认", payload["resume_suggestions"][0]["title"])
 
     def test_openai_compatible_adapter_uses_base_url_and_api_key(self) -> None:
         transport = StubTransport(

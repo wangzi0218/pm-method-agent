@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import List
+from typing import List, Optional
 
 from pm_method_agent.follow_up_copywriter import (
     FOLLOW_UP_DISPLAY_FOCUS_KEY,
@@ -281,7 +281,13 @@ def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
     if not isinstance(recovery_summary, dict):
         recovery_summary = {}
     payload["recovery_summary"] = recovery_summary
-    payload["query_loop"] = _build_runtime_query_loop(payload, open_items=open_items, recovery_summary=recovery_summary)
+    query_loop = _build_runtime_query_loop(payload, open_items=open_items, recovery_summary=recovery_summary)
+    payload["query_loop"] = query_loop
+    payload["resume_suggestions"] = _build_runtime_resume_suggestions(
+        payload,
+        open_items=open_items,
+        query_loop=query_loop,
+    )
     return payload
 
 
@@ -413,6 +419,158 @@ def _runtime_intent_label(value: str) -> str:
         "guidance": "查看建议",
     }
     return labels.get(value, value or "当前输入")
+
+
+def _build_runtime_resume_suggestions(payload: dict, *, open_items: List[dict], query_loop: dict) -> List[dict]:
+    suggestions: List[dict] = []
+    resume_from = str(query_loop.get("resume_from", "") or payload.get("resume_from", "") or "")
+    active_case_id = str(payload.get("active_case_id", "") or "")
+    actionable_items = [item for item in open_items if item.get("actionable")]
+    terminal_state = str(query_loop.get("terminal_state", "") or "")
+    runtime_status = str(query_loop.get("runtime_status", "") or payload.get("runtime_status", "") or "idle")
+
+    if actionable_items:
+        first_item = actionable_items[0]
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="resolve-open-approval",
+                kind="approval",
+                title="先处理待确认事项",
+                text=str(first_item.get("text", "") or "这一步需要人工确认，确认后系统才能继续。"),
+                priority="high",
+                action="resolve-approval",
+                resume_from=str(first_item.get("resume_from", "") or resume_from),
+                command_hint="在运行时面板里同意或拒绝这项确认。",
+                actionable=True,
+                metadata={"item_id": str(first_item.get("item_id", "") or "")},
+            )
+        )
+
+    if terminal_state == "blocked":
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="supplement-blocked-case",
+                kind="supplement",
+                title="补上当前卡点",
+                text="直接补充缺的背景、证据或选择，系统会从当前案例继续接住。",
+                priority="high" if not actionable_items else "medium",
+                action="reply-current-case",
+                resume_from=resume_from,
+                command_hint="直接输入补充信息即可。",
+                actionable=True,
+            )
+        )
+    elif terminal_state == "deferred":
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="resume-deferred-case",
+                kind="resume",
+                title="从暂缓点重新接上",
+                text="如果这件事现在又值得看，可以直接说继续，系统会从之前停下的位置接着判断。",
+                priority="medium",
+                action="resume-current-case",
+                resume_from=resume_from,
+                command_hint="可以输入：继续看这个案例。",
+                actionable=True,
+            )
+        )
+    elif terminal_state in {"failed", "interrupted", "cancelled"}:
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="inspect-runtime-before-retry",
+                kind="inspect",
+                title="先看一下运行状态",
+                text="这一轮没有正常收尾，建议先查看运行提醒和待闭环事项，再决定是否重试。",
+                priority="high",
+                action="inspect-runtime",
+                resume_from=resume_from,
+                command_hint="查看 runtime session 后再继续输入。",
+                actionable=True,
+            )
+        )
+    elif runtime_status == "running":
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="wait-current-loop",
+                kind="wait",
+                title="先等当前轮处理完",
+                text="系统还在处理这一轮，暂时不需要追加新的输入。",
+                priority="medium",
+                action="wait-current-query",
+                resume_from=resume_from,
+                command_hint="稍后刷新运行时状态。",
+                actionable=False,
+            )
+        )
+
+    if active_case_id and terminal_state not in {"failed", "interrupted", "cancelled"}:
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="continue-active-case",
+                kind="continue",
+                title="继续补当前案例",
+                text="如果你已经有新的事实、约束或判断，可以直接补一句，系统会默认接到当前案例里。",
+                priority="medium" if suggestions else "high",
+                action="reply-current-case",
+                resume_from=resume_from or "active-case",
+                command_hint="直接输入新的补充信息。",
+                actionable=True,
+                metadata={"case_id": active_case_id},
+            )
+        )
+    elif not active_case_id:
+        suggestions.append(
+            _runtime_resume_suggestion(
+                suggestion_id="start-new-case",
+                kind="start",
+                title="开始一个新问题",
+                text="可以直接输入一个需求草稿、用户反馈或业务现象，系统会先帮你收问题定义。",
+                priority="high" if not suggestions else "medium",
+                action="create-case",
+                resume_from="",
+                command_hint="直接输入你想分析的问题。",
+                actionable=True,
+            )
+        )
+
+    deduped: List[dict] = []
+    seen = set()
+    for item in suggestions:
+        suggestion_id = str(item.get("suggestion_id", "") or "")
+        if suggestion_id in seen:
+            continue
+        seen.add(suggestion_id)
+        deduped.append(item)
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    deduped.sort(key=lambda item: priority_order.get(str(item.get("priority", "") or "low"), 2))
+    return deduped[:3]
+
+
+def _runtime_resume_suggestion(
+    *,
+    suggestion_id: str,
+    kind: str,
+    title: str,
+    text: str,
+    priority: str,
+    action: str,
+    resume_from: str,
+    command_hint: str,
+    actionable: bool,
+    metadata: Optional[dict] = None,
+) -> dict:
+    return {
+        "suggestion_id": suggestion_id,
+        "kind": kind,
+        "title": title,
+        "text": text,
+        "priority": priority,
+        "action": action,
+        "resume_from": resume_from,
+        "command_hint": command_hint,
+        "actionable": actionable,
+        "metadata": metadata or {},
+    }
 
 
 def _build_runtime_open_items(payload: dict) -> List[dict]:
@@ -692,6 +850,20 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
                 lines.append(f"- {kind} / `{state}`：{text}")
         else:
             lines.append("- 暂无步骤")
+    else:
+        lines.append("- 暂无")
+    lines.append("")
+    lines.append("## 建议继续方式")
+    resume_suggestions = payload.get("resume_suggestions") or []
+    if resume_suggestions:
+        for item in resume_suggestions:
+            title = str(item.get("title", "") or "继续处理")
+            priority = str(item.get("priority", "") or "medium")
+            text = str(item.get("text", "") or "")
+            command_hint = str(item.get("command_hint", "") or "")
+            lines.append(f"- {title} / `{priority}`：{text}")
+            if command_hint:
+                lines.append(f"  提示：{command_hint}")
     else:
         lines.append("- 暂无")
     lines.append("")
