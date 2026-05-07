@@ -52,6 +52,8 @@
 
 如果要给用户一个“现在怎么继续”的提示，优先读取 `resume_suggestions`。它会基于待审批、阻塞状态、暂缓状态、失败状态和活跃案例，给出少量下一步建议。`query_loop` 解释发生了什么，`resume_suggestions` 告诉用户接下来可以怎么接。
 
+如果外壳要真正执行建议，优先走 `POST /workspaces/{workspace_id}/runtime/resume-actions` 或 CLI 的 `resume` 子命令。这个入口会把建议动作分发到消息入口、审批入口或运行时查看入口，但不会替用户补写内容，也不会绕过审批。
+
 ## 当前状态模型
 
 ### `workspace`

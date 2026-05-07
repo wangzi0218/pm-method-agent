@@ -90,11 +90,13 @@
 - `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/approve`
 - `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/reject`
 - `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/expire`
+- `POST /workspaces/{workspace_id}/runtime/resume-actions`
 
 这一层适合：
 
 - 有真实工具动作的 skill
 - 需要在 IDE 里弹审批确认的外壳
+- 需要把 `resume_suggestions` 变成统一继续动作的外壳
 
 如果第一版只是做需求分析体验，不一定马上要把审批流露给最终用户。
 

@@ -271,6 +271,45 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 `resume_suggestions` 只提供下一步建议，不会替用户自动批准审批，也不会改变案例阶段。
 
+### `POST /workspaces/{workspace_id}/runtime/resume-actions`
+
+用途：
+
+- 执行 `resume_suggestions` 里的建议动作
+- 给网页、CLI 和 IDE agent 一个统一的继续入口
+- 避免外壳自己猜应该调用消息入口、审批入口还是运行时查看入口
+
+请求体示例：
+
+```json
+{
+  "suggestion_id": "supplement-blocked-case",
+  "action": "reply-current-case",
+  "message": "这个问题一周大概出现 3 次，主要发生在晚班交接时。"
+}
+```
+
+审批场景示例：
+
+```json
+{
+  "action": "resolve-approval",
+  "approval_id": "approval-0001",
+  "approval_decision": "approve"
+}
+```
+
+当前支持的动作包括：
+
+- `resolve-approval`：处理待确认事项，需要传 `approval_decision`，取值为 `approve`、`reject` 或 `expire`。
+- `reply-current-case`：继续当前案例，需要传 `message`。
+- `resume-current-case`：从暂缓点继续，需要传 `message`。
+- `create-case`：开始新案例，需要传 `message`。
+- `inspect-runtime`：读取当前运行时状态。
+- `wait-current-query`：当前轮仍在处理中时的空操作。
+
+如果动作需要用户补一句内容但请求里没有 `message`，接口会返回 `status=needs-input`，不会替用户生成或发送内容。
+
 ### `GET /workspaces/{workspace_id}/runtime/approvals`
 
 用途：

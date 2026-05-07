@@ -2085,6 +2085,9 @@ WEB_DEMO_JS = """\
         <span class="digest-value">
           ${inlineFormat(`${firstResumeSuggestion.title || "继续处理"}：${shortText(firstResumeSuggestion.text || firstResumeSuggestion.command_hint || "直接补充下一句即可。", 96)}`)}
         </span>
+        <button class="ghost-button runtime-resume-button" type="button" data-resume-suggestion-id="${escapeHtml(
+          firstResumeSuggestion.suggestion_id || ""
+        )}" data-resume-action="${escapeHtml(firstResumeSuggestion.action || "")}">处理</button>
       </article>
     `
       : "";
@@ -2121,6 +2124,11 @@ WEB_DEMO_JS = """\
       ${fallbackCard}
       ${openItemCard}
     `;
+    els.runtimeDigest.querySelectorAll("[data-resume-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await handleResumeSuggestion(button);
+      });
+    });
 
     if (!highlightedEvents.length) {
       els.runtimeTimeline.className = "history-timeline empty-list";
@@ -2600,6 +2608,35 @@ WEB_DEMO_JS = """\
       showToast(`已处理审批：${approvalId}`);
     } catch (error) {
       showToast(error.message || "审批处理失败", true);
+    } finally {
+      setLoading(button, false);
+    }
+  }
+
+  async function handleResumeSuggestion(button) {
+    const action = button.getAttribute("data-resume-action") || "";
+    const suggestionId = button.getAttribute("data-resume-suggestion-id") || "";
+    if (action === "resolve-approval") {
+      document.querySelector('[data-tab="approvals"]')?.click();
+      showToast("先在审批面板里处理待确认事项。");
+      return;
+    }
+    if (action === "reply-current-case" || action === "resume-current-case" || action === "create-case") {
+      els.composerInput.focus();
+      showToast("直接补一句内容，系统会接着当前建议继续。")
+      return;
+    }
+    setLoading(button, true);
+    try {
+      const payload = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/runtime/resume-actions`, {
+        method: "POST",
+        body: JSON.stringify({ action, suggestion_id: suggestionId }),
+      });
+      state.currentRuntimeSession = payload.result?.runtime_session || state.currentRuntimeSession;
+      renderRuntimePanel(state.currentRuntimeSession);
+      showToast(payload.result?.message || "已处理继续动作。");
+    } catch (error) {
+      showToast(error.message || "继续动作处理失败", true);
     } finally {
       setLoading(button, false);
     }

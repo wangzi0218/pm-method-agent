@@ -22,6 +22,7 @@ from pm_method_agent.renderers import (
     render_workspace_overview,
 )
 from pm_method_agent.runtime_tools import RuntimeToolRegistry
+from pm_method_agent.runtime_resume_actions import RuntimeResumeActionExecutor
 from pm_method_agent.rule_loader import load_rule_set
 from pm_method_agent.runtime_config import ensure_local_env_loaded
 from pm_method_agent.runtime_policy import load_runtime_policy
@@ -174,6 +175,20 @@ def build_session_parser() -> argparse.ArgumentParser:
     runtime_parser = subparsers.add_parser("runtime", help="查看当前工作区的运行时状态与压缩记忆。")
     runtime_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
 
+    resume_parser = subparsers.add_parser("resume", help="执行运行时建议的继续动作。")
+    resume_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
+    resume_parser.add_argument("--suggestion-id", default="", help="要执行的建议编号。默认取第一条建议。")
+    resume_parser.add_argument("--action", default="", help="要执行的建议动作，例如 reply-current-case。")
+    resume_parser.add_argument("--message", default="", help="继续当前案例或创建案例时要发送的内容。")
+    resume_parser.add_argument("--approval-id", default="", help="处理审批时的审批编号。")
+    resume_parser.add_argument(
+        "--approval-decision",
+        default="",
+        choices=["", "approve", "reject", "expire"],
+        help="处理审批时的选择。",
+    )
+    resume_parser.add_argument("--reason", default="", help="拒绝或过期审批时的原因。")
+
     approve_parser = subparsers.add_parser("approve", help="批准一个待确认操作并继续执行。")
     approve_parser.add_argument("--workspace-id", default="default", help="工作区标识。默认 default。")
     approve_parser.add_argument("approval_id", help="待确认操作编号。")
@@ -290,6 +305,7 @@ def _run_session_command(argv: List[str]) -> int:
     project_profile_store = default_project_profile_store(args.store_dir)
     agent_shell = PMMethodAgentShell(base_dir=args.store_dir)
     local_tools = RuntimeToolRegistry(base_dir=args.store_dir)
+    resume_action_executor = RuntimeResumeActionExecutor(base_dir=args.store_dir)
     runtime_store = default_runtime_session_store(args.store_dir)
 
     try:
@@ -506,6 +522,27 @@ def _run_session_command(argv: List[str]) -> int:
                 print(json.dumps(build_runtime_session_payload(runtime_session), ensure_ascii=False, indent=2))
             else:
                 print(render_runtime_session(runtime_session))
+            return 0
+        elif args.command == "resume":
+            result = resume_action_executor.execute(
+                workspace_id=args.workspace_id,
+                action=args.action,
+                suggestion_id=args.suggestion_id,
+                message=args.message,
+                approval_id=args.approval_id,
+                approval_decision=args.approval_decision,
+                reason=args.reason,
+            )
+            if args.format == "json":
+                print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(result.message or "已处理继续动作。")
+                print(f"动作：{result.action}")
+                print(f"状态：{result.status}")
+                if result.output_payload:
+                    print("")
+                    print("## 输出")
+                    print(json.dumps(result.output_payload, ensure_ascii=False, indent=2))
             return 0
         elif args.command == "approve":
             result = local_tools.approve_pending_approval(
@@ -809,6 +846,7 @@ def _is_session_command(args_list: List[str]) -> bool:
         "agent",
         "approvals",
         "runtime",
+        "resume",
         "approve",
         "reject",
         "expire",

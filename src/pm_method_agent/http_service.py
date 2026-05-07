@@ -27,6 +27,7 @@ from pm_method_agent.renderers import (
 )
 from pm_method_agent.runtime_config import ensure_local_env_loaded, get_llm_runtime_status
 from pm_method_agent.runtime_policy import load_runtime_policy, runtime_policy_to_dict
+from pm_method_agent.runtime_resume_actions import RuntimeResumeActionExecutor
 from pm_method_agent.runtime_session_service import default_runtime_session_store, get_or_create_runtime_session
 from pm_method_agent.runtime_tools import RuntimeToolRegistry
 from pm_method_agent.session_service import create_case, default_store, get_case, reply_to_case
@@ -77,6 +78,7 @@ class PMMethodHTTPService:
         self._runtime_policy = load_runtime_policy(base_dir=store_dir)
         self._agent_shell = PMMethodAgentShell(base_dir=store_dir)
         self._local_tools = RuntimeToolRegistry(base_dir=store_dir)
+        self._resume_action_executor = RuntimeResumeActionExecutor(base_dir=store_dir)
         self._demo_scenario_generator = build_demo_scenario_generator_from_env()
 
     def handle(self, method: str, path: str, body: Optional[bytes] = None) -> HTTPResponse:
@@ -292,6 +294,19 @@ class PMMethodHTTPService:
                             "runtime_session": build_runtime_session_payload(runtime_session),
                         },
                     )
+
+                if method == "POST" and normalized_path == f"/workspaces/{workspace_id}/runtime/resume-actions":
+                    payload = _parse_json_body(body)
+                    result = self._resume_action_executor.execute(
+                        workspace_id=workspace_id,
+                        action=str(payload.get("action", "") or "").strip(),
+                        suggestion_id=str(payload.get("suggestion_id", "") or "").strip(),
+                        message=str(payload.get("message", "") or "").strip(),
+                        approval_id=str(payload.get("approval_id", "") or "").strip(),
+                        approval_decision=str(payload.get("approval_decision", "") or "").strip(),
+                        reason=str(payload.get("reason", "") or "").strip(),
+                    )
+                    return HTTPResponse.json(200, {"result": result.to_dict()})
 
                 approval_id = _extract_workspace_runtime_approval_id(normalized_path, workspace_id)
                 if method == "POST" and approval_id:

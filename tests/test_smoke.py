@@ -3071,6 +3071,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("open_items", js_body)
         self.assertIn("query_loop", js_body)
         self.assertIn("resume_suggestions", js_body)
+        self.assertIn("runtime/resume-actions", js_body)
+        self.assertIn("data-resume-action", js_body)
         self.assertIn("待闭环事项", js_body)
         self.assertIn("这轮怎么走的", js_body)
         self.assertIn("现在可以这样继续", js_body)
@@ -3896,6 +3898,81 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("approval-requested", event_types)
         self.assertIn("approval-approved", event_types)
         self.assertIn("approval-override-applied", event_types)
+
+    def test_http_service_can_execute_resume_action_for_pending_approval(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".pmma").mkdir(parents=True, exist_ok=True)
+            (root / ".pmma" / "policy.json").write_text(
+                json.dumps(
+                    {
+                        "runtime_policy": {
+                            "approval_required_actions": ["project-profile-service.*"],
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            blocked_response = service.handle(
+                method="POST",
+                path="/runtime/tools/execute",
+                body=json.dumps(
+                    {
+                        "tool_name": "platform-project-profile-upsert",
+                        "workspace_id": "resume-approval-http",
+                        "project_name": "医疗服务平台",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            approval_id = blocked_response.payload["result"]["output_payload"]["pending_approval"]["approval_id"]
+            resume_response = service.handle(
+                method="POST",
+                path="/workspaces/resume-approval-http/runtime/resume-actions",
+                body=json.dumps(
+                    {
+                        "action": "resolve-approval",
+                        "approval_id": approval_id,
+                        "approval_decision": "approve",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(resume_response.status_code, 200)
+        result = resume_response.payload["result"]
+        self.assertEqual(result["action"], "resolve-approval")
+        self.assertEqual(result["status"], "completed")
+        approval_result = result["output_payload"]["approval_result"]
+        self.assertEqual(approval_result["action"], "platform-project-profile-created")
+        self.assertEqual(result["runtime_session"]["pending_approvals"], [])
+
+    def test_cli_can_execute_runtime_resume_inspect_action(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--store-dir",
+                        tmpdir,
+                        "--format",
+                        "json",
+                        "resume",
+                        "--workspace-id",
+                        "resume-inspect-cli",
+                        "--action",
+                        "inspect-runtime",
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["action"], "inspect-runtime")
+        self.assertEqual(payload["status"], "completed")
+        self.assertIn("runtime_session", payload)
+        self.assertIn("resume_suggestions", payload["runtime_session"])
 
     def test_http_service_can_reject_pending_platform_write_operation(self) -> None:
         with TemporaryDirectory() as tmpdir:
