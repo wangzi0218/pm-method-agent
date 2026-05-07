@@ -152,6 +152,33 @@ def update_workspace_user_profile(
     return workspace_state
 
 
+def replace_workspace_user_profile(
+    workspace_state: WorkspaceState,
+    profile_updates: Dict[str, object],
+) -> WorkspaceState:
+    current = get_workspace_user_profile(workspace_state)
+    for key, value in profile_updates.items():
+        if key not in USER_PROFILE_KEYS:
+            continue
+        if key in {"frequent_product_domains", "common_constraints"}:
+            items = _normalize_string_list(value)
+            if items:
+                current[key] = items
+            else:
+                current.pop(key, None)
+            continue
+        rendered = str(value).strip() if value is not None else ""
+        if rendered:
+            current[key] = rendered
+        else:
+            current.pop(key, None)
+    if current:
+        workspace_state.metadata["user_profile"] = current
+    else:
+        workspace_state.metadata.pop("user_profile", None)
+    return workspace_state
+
+
 def _normalize_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []

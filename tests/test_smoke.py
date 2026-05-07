@@ -3078,6 +3078,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("renderWorkspaceMemory", js_body)
         self.assertIn("handleMemorySuggestionAction", js_body)
         self.assertIn("/memory-suggestions", js_body)
+        self.assertIn("handleMemoryRecordAction", js_body)
+        self.assertIn("/memory-records", js_body)
+        self.assertIn("不用这个项目", js_body)
+        self.assertIn("改成什么", js_body)
         self.assertIn("这句可能值得记住", js_body)
         self.assertIn("记住", js_body)
         self.assertIn("只用于这次", js_body)
@@ -5010,6 +5014,96 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertFalse(use_once_response.payload["workspace"].get("active_project_profile_id"))
         self.assertEqual(use_once_response.payload["cases"]["memory_write_suggestions"], [])
 
+    def test_http_service_can_update_and_clear_memory_records(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            create_response = service.handle(
+                method="POST",
+                path="/project-profiles",
+                body=json.dumps(
+                    {
+                        "project_name": "诊所工作台",
+                        "context_profile": {
+                            "business_model": "tob",
+                            "primary_platform": "pc",
+                            "target_user_roles": ["前台", "店长"],
+                        },
+                        "success_metrics": ["到诊率"],
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            profile_id = str(create_response.payload["project_profile"]["project_profile_id"])
+            workspace = get_or_create_workspace("demo", store=default_workspace_store(tmpdir))
+            workspace.active_project_profile_id = profile_id
+            save_workspace(workspace, store=default_workspace_store(tmpdir))
+            update_platform_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-records",
+                body=json.dumps(
+                    {
+                        "target": "project-profile",
+                        "key": "primary_platform",
+                        "action": "update",
+                        "value": "multi-platform",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            remove_metric_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-records",
+                body=json.dumps(
+                    {
+                        "target": "project-profile",
+                        "key": "success_metrics",
+                        "action": "remove-list-item",
+                        "value": "到诊率",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            service.handle(
+                method="POST",
+                path="/workspaces/demo/user-profile",
+                body=json.dumps({"preferred_language": "中文", "common_constraints": ["研发资源紧"]}, ensure_ascii=False).encode(
+                    "utf-8"
+                ),
+            )
+            clear_language_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-records",
+                body=json.dumps(
+                    {
+                        "target": "user-profile",
+                        "key": "preferred_language",
+                        "action": "clear",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            detach_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-records",
+                body=json.dumps(
+                    {"target": "project-profile", "key": "active_project_profile_id", "action": "detach-project-profile"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(update_platform_response.status_code, 200)
+        self.assertEqual(
+            update_platform_response.payload["cases"]["project_profile"]["context_profile"]["primary_platform"],
+            "multi-platform",
+        )
+        self.assertEqual(remove_metric_response.status_code, 200)
+        self.assertEqual(remove_metric_response.payload["cases"]["project_profile"]["success_metrics"], [])
+        self.assertEqual(clear_language_response.status_code, 200)
+        self.assertNotIn("preferred_language", clear_language_response.payload["cases"]["user_profile"])
+        self.assertEqual(detach_response.status_code, 200)
+        self.assertFalse(detach_response.payload["workspace"].get("active_project_profile_id"))
+
     def test_http_service_can_handle_agent_messages_with_workspace(self) -> None:
         with TemporaryDirectory() as tmpdir:
             service = PMMethodHTTPService(store_dir=tmpdir)
@@ -5172,7 +5266,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("当前焦点", script)
         self.assertIn("function renderWorkspaceMemory", script)
         self.assertIn("function handleMemorySuggestionAction", script)
+        self.assertIn("function handleMemoryRecordAction", script)
         self.assertIn("data-memory-suggestion-action", script)
+        self.assertIn("data-memory-record-action", script)
         self.assertIn("已记住这条信息", script)
         self.assertIn("还开着的问题", script)
         self.assertIn("project_profile_confirmation", script)

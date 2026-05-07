@@ -497,6 +497,39 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 这一接口有意保持轻量，不替用户静默写长期记忆。记忆识别可以由本地规则或 LLM 辅助完成，但最终写入由 runtime 和用户确认共同决定。
 
+### `POST /workspaces/{workspace_id}/memory-records`
+
+用途：
+
+- 管理已经写入的记忆记录
+- 支持用户改写、删除或停止沿用当前项目背景
+- 让网页、CLI 或未来 agent 外壳复用同一套记忆纠错入口
+
+示例请求体：
+
+```json
+{
+  "target": "project-profile",
+  "key": "primary_platform",
+  "action": "update",
+  "value": "multi-platform"
+}
+```
+
+`target` 当前支持：
+
+- `project-profile`
+- `user-profile`
+
+`action` 当前支持：
+
+- `update`：改写字段。
+- `clear`：清空字段。
+- `remove-list-item`：从多值字段中删除一条。
+- `detach-project-profile`：停止沿用当前项目背景，但不删除项目背景文件。
+
+这个接口只允许修改白名单内的项目背景和个人偏好字段，不开放任意 metadata 写入。
+
 ### `GET /workspaces/{workspace_id}/cases`
 
 用途：

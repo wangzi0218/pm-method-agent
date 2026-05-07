@@ -39,6 +39,7 @@ from pm_method_agent.workspace_service import (
     get_or_create_workspace,
     get_workspace_approval_preferences,
     get_workspace_user_profile,
+    replace_workspace_user_profile,
     save_workspace,
     update_workspace_approval_preferences,
     update_workspace_user_profile,
@@ -288,6 +289,28 @@ class PMMethodHTTPService:
                         workspace,
                         str(result.get("suggestion", {}).get("suggestion_id", "") or ""),
                     )
+                    recent_cases = self._load_recent_cases(workspace)
+                    active_case = self._load_active_case(workspace)
+                    active_project_profile = self._load_active_project_profile(workspace)
+                    return HTTPResponse.json(
+                        200,
+                        {
+                            "workspace": workspace.to_dict(),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                recent_cases,
+                                active_project_profile,
+                                active_case,
+                            ),
+                            "result": result,
+                        },
+                    )
+
+                if method == "POST" and normalized_path == f"/workspaces/{workspace_id}/memory-records":
+                    payload = _parse_json_body(body)
+                    workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    result = self._handle_memory_record_action(workspace=workspace, payload=payload)
+                    save_workspace(workspace, store=self._workspace_store)
                     recent_cases = self._load_recent_cases(workspace)
                     active_case = self._load_active_case(workspace)
                     active_project_profile = self._load_active_project_profile(workspace)
@@ -609,6 +632,125 @@ class PMMethodHTTPService:
             "message": "已按确认写入记忆。",
         }
 
+    def _handle_memory_record_action(self, *, workspace, payload: JsonDict) -> JsonDict:
+        action = str(payload.get("action", "") or "").strip()
+        target = str(payload.get("target", "") or "").strip()
+        key = str(payload.get("key", "") or "").strip()
+        if action not in {"update", "clear", "remove-list-item", "detach-project-profile"}:
+            raise HTTPServiceError(400, "Unsupported memory record action.")
+        if action == "detach-project-profile":
+            workspace.active_project_profile_id = ""
+            return {
+                "action": action,
+                "target": "project-profile",
+                "status": "detached",
+                "message": "已停止沿用当前项目背景。",
+            }
+        if target == "project-profile":
+            return self._handle_project_profile_memory_record_action(workspace, action, key, payload)
+        if target == "user-profile":
+            return self._handle_user_profile_memory_record_action(workspace, action, key, payload)
+        raise HTTPServiceError(400, "Unsupported memory record target.")
+
+    def _handle_project_profile_memory_record_action(
+        self,
+        workspace,
+        action: str,
+        key: str,
+        payload: JsonDict,
+    ) -> JsonDict:
+        if not workspace.active_project_profile_id:
+            raise HTTPServiceError(404, "Active project profile not found.")
+        try:
+            project_profile = get_project_profile(
+                workspace.active_project_profile_id,
+                store=self._project_profile_store,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPServiceError(404, "Active project profile not found.") from exc
+        if key == "project_name":
+            value = str(payload.get("value", "") or "").strip()
+            if action == "clear":
+                value = ""
+            if not value:
+                raise HTTPServiceError(400, "Project name cannot be empty.")
+            project_profile.project_name = value
+        elif key in {"business_model", "primary_platform", "product_domain"}:
+            if action == "remove-list-item":
+                raise HTTPServiceError(400, "This memory field is not a list.")
+            value = str(payload.get("value", "") or "").strip()
+            if action == "clear" or not value:
+                project_profile.context_profile.pop(key, None)
+            else:
+                project_profile.context_profile[key] = value
+        elif key in {"target_user_roles", "constraints"}:
+            if action == "remove-list-item":
+                project_profile.context_profile[key] = _remove_text_from_list(
+                    project_profile.context_profile.get(key),
+                    str(payload.get("value", "") or ""),
+                )
+                if not project_profile.context_profile[key]:
+                    project_profile.context_profile.pop(key, None)
+            else:
+                items = _ensure_string_list(payload.get("value")) or []
+                if action == "clear" or not items:
+                    project_profile.context_profile.pop(key, None)
+                else:
+                    project_profile.context_profile[key] = items
+        elif key in {"stable_constraints", "success_metrics", "notes"}:
+            current_items = getattr(project_profile, key)
+            if action == "remove-list-item":
+                setattr(project_profile, key, _remove_text_from_list(current_items, str(payload.get("value", "") or "")))
+            else:
+                items = _ensure_string_list(payload.get("value")) or []
+                setattr(project_profile, key, [] if action == "clear" else items)
+        else:
+            raise HTTPServiceError(400, "Unsupported project profile memory key.")
+        self._project_profile_store.save(project_profile)
+        return {
+            "action": action,
+            "target": "project-profile",
+            "key": key,
+            "status": "updated",
+            "project_profile": project_profile.to_dict(),
+            "message": "已更新项目背景。",
+        }
+
+    def _handle_user_profile_memory_record_action(
+        self,
+        workspace,
+        action: str,
+        key: str,
+        payload: JsonDict,
+    ) -> JsonDict:
+        if key not in {
+            "preferred_output_style",
+            "preferred_language",
+            "decision_style",
+            "frequent_product_domains",
+            "common_constraints",
+        }:
+            raise HTTPServiceError(400, "Unsupported user profile memory key.")
+        if key in {"frequent_product_domains", "common_constraints"}:
+            if action == "remove-list-item":
+                current = get_workspace_user_profile(workspace)
+                updates = {key: _remove_text_from_list(current.get(key), str(payload.get("value", "") or ""))}
+            else:
+                updates = {key: [] if action == "clear" else (_ensure_string_list(payload.get("value")) or [])}
+        elif action == "remove-list-item":
+            raise HTTPServiceError(400, "This memory field is not a list.")
+        else:
+            updates = {key: "" if action == "clear" else str(payload.get("value", "") or "").strip()}
+        replace_workspace_user_profile(workspace, updates)
+        return {
+            "action": action,
+            "target": "user-profile",
+            "key": key,
+            "status": "updated",
+            "user_profile": get_workspace_user_profile(workspace),
+            "message": "已更新个人偏好。",
+        }
+
     def _accept_project_profile_memory_suggestion(self, workspace, suggestion: JsonDict) -> JsonDict:
         source_text = str(suggestion.get("source_text", "") or suggestion.get("source_excerpt", "") or "").strip()
         context_updates = _ensure_dict(suggestion.get("context_updates")) or {}
@@ -852,6 +994,13 @@ def _ensure_string_list(payload: object) -> Optional[list[str]]:
         if text:
             normalized.append(text)
     return normalized
+
+
+def _remove_text_from_list(payload: object, value: str) -> list[str]:
+    normalized_value = value.strip()
+    if not normalized_value:
+        return _ensure_string_list(payload) or []
+    return [item for item in (_ensure_string_list(payload) or []) if item != normalized_value]
 
 
 def _optional_string(value: object) -> Optional[str]:

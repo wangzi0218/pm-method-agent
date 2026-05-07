@@ -374,6 +374,19 @@ textarea {
   background: linear-gradient(180deg, rgba(255, 244, 238, 0.76), rgba(255, 255, 255, 0.44));
 }
 
+.workspace-memory-card.is-pinned {
+  border-color: rgba(61, 52, 41, 0.12);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.workspace-memory-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .memory-suggestion-card {
   border-color: rgba(79, 124, 115, 0.18);
   background:
@@ -406,6 +419,43 @@ textarea {
   color: rgba(36, 31, 26, 0.82);
   font-size: 13px;
   line-height: 1.64;
+}
+
+.workspace-memory-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-memory-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(36, 31, 26, 0.82);
+  font-size: 13px;
+  line-height: 1.52;
+}
+
+.workspace-memory-item-text {
+  min-width: 0;
+}
+
+.memory-record-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.memory-record-button {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(61, 52, 41, 0.1);
+  background: rgba(255, 255, 255, 0.52);
+  color: rgba(36, 31, 26, 0.62);
+  font-size: 12px;
 }
 
 .memory-suggestion-source {
@@ -1861,79 +1911,186 @@ WEB_DEMO_JS = """\
     return "已忽略这条记忆建议。";
   }
 
+  function memoryValueToText(value) {
+    if (Array.isArray(value)) {
+      return value.filter(Boolean).join("、");
+    }
+    return String(value || "").trim();
+  }
+
+  function splitMemoryInput(value) {
+    return String(value || "")
+      .split(/[、,，;；\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function renderMemoryRecordActions(target, key, value, { listItem = false } = {}) {
+    const actionValue = memoryValueToText(value);
+    return `
+      <span class="memory-record-actions">
+        ${
+          listItem
+            ? ""
+            : `<button class="memory-record-button" type="button" data-memory-record-action="update" data-memory-record-target="${escapeHtml(
+                target
+              )}" data-memory-record-key="${escapeHtml(key)}" data-memory-record-value="${escapeHtml(actionValue)}">改</button>`
+        }
+        <button class="memory-record-button" type="button" data-memory-record-action="${
+          listItem ? "remove-list-item" : "clear"
+        }" data-memory-record-target="${escapeHtml(target)}" data-memory-record-key="${escapeHtml(
+      key
+    )}" data-memory-record-value="${escapeHtml(actionValue)}">删除</button>
+      </span>
+    `;
+  }
+
+  function renderMemoryListItem(label, value, target, key) {
+    const text = memoryValueToText(value);
+    if (!text) {
+      return "";
+    }
+    return `
+      <li class="workspace-memory-item">
+        <span class="workspace-memory-item-text">${inlineFormat(label)}：${inlineFormat(text)}</span>
+        ${renderMemoryRecordActions(target, key, value)}
+      </li>
+    `;
+  }
+
+  function renderMemoryArrayItems(label, values, target, key) {
+    if (!Array.isArray(values) || !values.length) {
+      return "";
+    }
+    return values
+      .filter(Boolean)
+      .map(
+        (item) => `
+          <li class="workspace-memory-item">
+            <span class="workspace-memory-item-text">${inlineFormat(label)}：${inlineFormat(item)}</span>
+            ${renderMemoryRecordActions(target, key, item, { listItem: true })}
+          </li>
+        `
+      )
+      .join("");
+  }
+
+  function renderProjectProfileMemoryCard(projectProfile, activeProjectProfileId = "") {
+    const contextProfile = projectProfile?.context_profile || {};
+    const rows = [
+      renderMemoryListItem("项目名", projectProfile?.project_name || "", "project-profile", "project_name"),
+      renderMemoryListItem("产品类型", contextProfile.business_model || "", "project-profile", "business_model"),
+      renderMemoryListItem("主要平台", contextProfile.primary_platform || "", "project-profile", "primary_platform"),
+      renderMemoryListItem("业务领域", contextProfile.product_domain || "", "project-profile", "product_domain"),
+      renderMemoryArrayItems("关键角色", contextProfile.target_user_roles || [], "project-profile", "target_user_roles"),
+      renderMemoryArrayItems("稳定约束", projectProfile?.stable_constraints || [], "project-profile", "stable_constraints"),
+      renderMemoryArrayItems("关注指标", projectProfile?.success_metrics || [], "project-profile", "success_metrics"),
+      renderMemoryArrayItems("备注", projectProfile?.notes || [], "project-profile", "notes"),
+    ]
+      .filter(Boolean)
+      .join("");
+    if (!rows && !activeProjectProfileId) {
+      return "";
+    }
+    return `
+      <article class="workspace-memory-card is-warm is-pinned">
+        <div class="workspace-memory-head">
+          <span class="workspace-memory-label">项目背景</span>
+          ${
+            activeProjectProfileId
+              ? `<button class="memory-record-button" type="button" data-memory-record-action="detach-project-profile" data-memory-record-target="project-profile" data-memory-record-key="active_project_profile_id" data-memory-record-value="${escapeHtml(
+                  activeProjectProfileId
+                )}">不用这个项目</button>`
+              : ""
+          }
+        </div>
+        ${rows ? `<ul class="workspace-memory-list">${rows}</ul>` : `<span class="workspace-memory-text">已带项目背景：${inlineFormat(activeProjectProfileId)}</span>`}
+      </article>
+    `;
+  }
+
+  function renderUserProfileMemoryCard(userProfile) {
+    const rows = [
+      renderMemoryListItem("输出风格", userProfile.preferred_output_style || "", "user-profile", "preferred_output_style"),
+      renderMemoryListItem("语言偏好", userProfile.preferred_language || "", "user-profile", "preferred_language"),
+      renderMemoryListItem("判断习惯", userProfile.decision_style || "", "user-profile", "decision_style"),
+      renderMemoryArrayItems("常见领域", userProfile.frequent_product_domains || [], "user-profile", "frequent_product_domains"),
+      renderMemoryArrayItems("常见约束", userProfile.common_constraints || [], "user-profile", "common_constraints"),
+    ]
+      .filter(Boolean)
+      .join("");
+    if (!rows) {
+      return "";
+    }
+    return `
+      <article class="workspace-memory-card is-pinned">
+        <div class="workspace-memory-head">
+          <span class="workspace-memory-label">个人偏好</span>
+        </div>
+        <ul class="workspace-memory-list">${rows}</ul>
+      </article>
+    `;
+  }
+
   function renderWorkspaceMemory(casesPayload = state.currentWorkspaceCases) {
     if (!els.workspaceMemory) {
       return;
     }
-    const items = [];
     const projectProfile = casesPayload?.project_profile || {};
-    const projectSummary = String(projectProfile.summary || "").trim();
-    if (projectSummary) {
-      items.push({
-        label: "项目背景",
-        text: projectSummary,
-        tone: "warm",
-      });
-    } else if (casesPayload?.active_project_profile_id) {
-      items.push({
-        label: "项目背景",
-        text: `已带项目背景：${casesPayload.active_project_profile_id}`,
-        tone: "warm",
-      });
+    const cards = [];
+    const projectCard = renderProjectProfileMemoryCard(projectProfile, casesPayload?.active_project_profile_id || "");
+    if (projectCard) {
+      cards.push(projectCard);
     }
 
     const workspaceMemory = casesPayload?.workspace_memory || {};
     const activeFocus = String(workspaceMemory.active_focus || "").trim();
     if (activeFocus) {
-      items.push({ label: "当前焦点", text: activeFocus, tone: "warm" });
+      cards.push(`
+        <article class="workspace-memory-card is-warm">
+          <span class="workspace-memory-label">当前焦点</span>
+          <span class="workspace-memory-text">${inlineFormat(shortText(activeFocus, 116))}</span>
+        </article>
+      `);
     }
     const latestMemoryNote = String(workspaceMemory.latest_memory_note || "").trim();
     if (latestMemoryNote) {
-      items.push({ label: "最近补充", text: latestMemoryNote });
+      cards.push(`
+        <article class="workspace-memory-card">
+          <span class="workspace-memory-label">最近补充</span>
+          <span class="workspace-memory-text">${inlineFormat(shortText(latestMemoryNote, 116))}</span>
+        </article>
+      `);
     }
     const openQuestions = Array.isArray(workspaceMemory.open_questions)
       ? workspaceMemory.open_questions.filter(Boolean)
       : [];
     if (openQuestions.length) {
-      items.push({ label: "还开着的问题", text: shortText(openQuestions[0], 96) });
+      cards.push(`
+        <article class="workspace-memory-card">
+          <span class="workspace-memory-label">还开着的问题</span>
+          <span class="workspace-memory-text">${inlineFormat(shortText(openQuestions[0], 96))}</span>
+        </article>
+      `);
     }
 
     const userProfile = casesPayload?.user_profile || {};
-    const userProfileTexts = [];
-    if (userProfile.preferred_output_style) {
-      userProfileTexts.push(`输出：${userProfile.preferred_output_style}`);
-    }
-    if (userProfile.decision_style) {
-      userProfileTexts.push(`判断：${userProfile.decision_style}`);
-    }
-    if (Array.isArray(userProfile.common_constraints) && userProfile.common_constraints.length) {
-      userProfileTexts.push(`常见约束：${userProfile.common_constraints.slice(0, 2).join("、")}`);
-    }
-    if (userProfileTexts.length) {
-      items.push({ label: "个人偏好", text: userProfileTexts.join("；") });
+    const userProfileCard = renderUserProfileMemoryCard(userProfile);
+    if (userProfileCard) {
+      cards.push(userProfileCard);
     }
 
     const suggestions = Array.isArray(casesPayload?.memory_write_suggestions)
       ? casesPayload.memory_write_suggestions.filter((item) => item && item.suggestion_id)
       : [];
 
-    if (!items.length && !suggestions.length) {
+    if (!cards.length && !suggestions.length) {
       els.workspaceMemory.className = "workspace-memory empty-list";
       els.workspaceMemory.innerHTML = "<p>还没有稳定背景。先聊一轮，系统会把项目背景、当前焦点和偏好收在这里。</p>";
       return;
     }
     els.workspaceMemory.className = "workspace-memory";
-    const memoryCards = items
-      .slice(0, 4)
-      .map(
-        (item) => `
-          <article class="workspace-memory-card${item.tone === "warm" ? " is-warm" : ""}">
-            <span class="workspace-memory-label">${inlineFormat(item.label)}</span>
-            <span class="workspace-memory-text">${inlineFormat(shortText(item.text, 116))}</span>
-          </article>
-        `
-      )
-      .join("");
+    const memoryCards = cards.slice(0, 6).join("");
 
     const suggestionCards = suggestions
       .slice(0, 2)
@@ -1966,6 +2123,11 @@ WEB_DEMO_JS = """\
     els.workspaceMemory.querySelectorAll("[data-memory-suggestion-action]").forEach((button) => {
       button.addEventListener("click", async () => {
         await handleMemorySuggestionAction(button);
+      });
+    });
+    els.workspaceMemory.querySelectorAll("[data-memory-record-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await handleMemoryRecordAction(button);
       });
     });
   }
@@ -2953,6 +3115,60 @@ WEB_DEMO_JS = """\
     } catch (error) {
       showToast(error.message || "记忆建议处理失败", true);
       actionButtons?.forEach((item) => setLoading(item, false));
+    }
+  }
+
+  async function handleMemoryRecordAction(button) {
+    const action = button.getAttribute("data-memory-record-action") || "";
+    const target = button.getAttribute("data-memory-record-target") || "";
+    const key = button.getAttribute("data-memory-record-key") || "";
+    const currentValue = button.getAttribute("data-memory-record-value") || "";
+    let value = currentValue;
+    if (action === "update") {
+      const nextValue = window.prompt("改成什么？多项内容可以用顿号或逗号隔开。", currentValue);
+      if (nextValue === null) {
+        return;
+      }
+      value = nextValue.trim();
+      if (!value) {
+        showToast("没有填写新内容。", true);
+        return;
+      }
+    }
+    setLoading(button, true);
+    try {
+      const listKeys = new Set(["target_user_roles", "constraints", "stable_constraints", "success_metrics", "notes", "frequent_product_domains", "common_constraints"]);
+      const payload = {
+        action,
+        target,
+        key,
+        value: action === "update" && listKeys.has(key) ? splitMemoryInput(value) : value,
+      };
+      const response = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/memory-records`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      if (response.workspace) {
+        renderWorkspaceMeta(response.workspace);
+      }
+      if (response.cases) {
+        state.currentWorkspaceCases = response.cases;
+        state.recentCases = response.cases.recent_cases || [];
+        state.activeCaseId = response.cases.active_case_id || state.activeCaseId;
+        renderWorkspaceMemory(state.currentWorkspaceCases);
+        renderRecentCases();
+      }
+      await Promise.all([loadHistory(), loadRuntimeSession(), loadApprovals()]);
+      if (action === "detach-project-profile") {
+        showToast("后续先不沿用这个项目背景。");
+      } else if (action === "update") {
+        showToast("已更新这条记忆。");
+      } else {
+        showToast("已删除这条记忆。");
+      }
+    } catch (error) {
+      showToast(error.message || "记忆更新失败", true);
+      setLoading(button, false);
     }
   }
 

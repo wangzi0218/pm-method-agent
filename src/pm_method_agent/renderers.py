@@ -2264,10 +2264,11 @@ def _build_project_profile_summary(project_profile: ProjectProfile | None) -> di
     return {
         "project_profile_id": project_profile.project_profile_id,
         "project_name": project_profile.project_name,
+        "context_profile": dict(project_profile.context_profile or {}),
         "summary": " / ".join(summary_parts),
         "stable_constraints": list(project_profile.stable_constraints),
         "success_metrics": list(project_profile.success_metrics),
-        "notes": list(project_profile.notes[-3:]),
+        "notes": list(project_profile.notes),
     }
 
 
