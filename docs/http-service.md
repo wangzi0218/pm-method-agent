@@ -607,6 +607,14 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 外壳可以优先展示 `label` 和 `description`，不要直接把底层 `llm_enhancements` 原样暴露给普通用户。
 
+`case_runtime.memory_references` 会说明本轮沿用了哪些长期记忆。当前包含：
+
+- `project_profile`：是否沿用了项目背景、项目 ID、项目名称、带入字段和字段摘要。
+- `user_profile`：是否沿用了个人偏好，以及给用户看的偏好摘要。
+- `has_references`：本轮是否存在长期记忆引用。
+
+网页、IDE 或 agent 外壳可以用这一字段展示“这轮沿用了哪些前提”，不要再自行猜测 `case.metadata`。
+
 对于运行时策略校验接口，还会返回：
 
 - `decision`

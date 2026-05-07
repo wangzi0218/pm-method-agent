@@ -136,6 +136,10 @@ def create_case(
         case_state.metadata["project_profile_id"] = project_profile_id
         case_state.metadata["project_profile_name"] = project_name
         case_state.metadata["project_profile_context_applied"] = True
+        case_state.metadata["project_profile_applied_fields"] = _applied_project_profile_fields(
+            project_profile,
+            merged_context_profile,
+        )
         case_state.metadata["project_profile_confirmation"] = _build_project_profile_confirmation(
             project_profile,
             initial_reply_analysis.context_updates,
@@ -144,6 +148,20 @@ def create_case(
     case_state = attach_follow_up_plan(case_state)
     active_store.save(case_state)
     return case_state
+
+
+def _applied_project_profile_fields(
+    project_profile: ProjectProfile,
+    merged_context_profile: Dict[str, object],
+) -> Dict[str, object]:
+    applied: Dict[str, object] = {}
+    profile_context = dict(getattr(project_profile, "context_profile", {}) or {})
+    for key, value in profile_context.items():
+        if value in (None, "", []):
+            continue
+        if merged_context_profile.get(key) == value:
+            applied[key] = value
+    return applied
 
 
 def _build_project_profile_confirmation(

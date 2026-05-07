@@ -215,6 +215,35 @@ def build_case_runtime_payload(case_state: CaseState) -> dict:
         "fallback_components": fallback_components,
         "fallback_count": len(fallback_components),
         "fallback_active": bool(fallback_components),
+        "memory_references": _build_memory_references_payload(case_state),
+    }
+
+
+def _build_memory_references_payload(case_state: CaseState) -> dict:
+    metadata = case_state.metadata or {}
+    project_reference: dict = {}
+    if metadata.get("project_profile_context_applied"):
+        applied_fields = metadata.get("project_profile_applied_fields")
+        if not isinstance(applied_fields, dict):
+            applied_fields = {}
+        project_reference = {
+            "applied": True,
+            "project_profile_id": str(metadata.get("project_profile_id", "") or ""),
+            "project_profile_name": str(metadata.get("project_profile_name", "") or ""),
+            "confirmation": str(metadata.get("project_profile_confirmation", "") or ""),
+            "applied_fields": dict(applied_fields),
+            "field_labels": {
+                key: _render_context_key_label(key) for key in applied_fields if str(key).strip()
+            },
+            "field_summaries": [
+                f"{_render_context_key_label(key)}：{_render_context_value(key, value)}"
+                for key, value in applied_fields.items()
+                if _render_context_value(key, value)
+            ],
+        }
+    return {
+        "project_profile": project_reference,
+        "has_references": bool(project_reference),
     }
 
 
@@ -2498,3 +2527,7 @@ def _render_context_value(key: str, value: object) -> str:
         key_mapping = CONTEXT_VALUE_LABELS.get(key, {})
         return key_mapping.get(value, value)
     return str(value)
+
+
+def _render_context_key_label(key: str) -> str:
+    return CONTEXT_KEY_LABELS.get(key, key)

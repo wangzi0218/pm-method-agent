@@ -2255,6 +2255,35 @@ WEB_DEMO_JS = """\
     };
   }
 
+  function memoryReferenceSummary(caseRuntime) {
+    const references = caseRuntime?.memory_references || {};
+    const projectReference = references.project_profile || {};
+    const userReference = references.user_profile || {};
+    const items = [];
+    if (projectReference.applied) {
+      const name = projectReference.project_profile_name || "当前项目";
+      const fields = Array.isArray(projectReference.field_summaries)
+        ? projectReference.field_summaries.slice(0, 3)
+        : [];
+      items.push({
+        kind: "project-profile",
+        label: "项目背景",
+        text: fields.length ? `沿用「${name}」：${fields.join("；")}` : `沿用「${name}」的项目背景`,
+      });
+    }
+    if (userReference.applied) {
+      const summaries = Array.isArray(userReference.summaries) ? userReference.summaries.slice(0, 2) : [];
+      if (summaries.length) {
+        items.push({
+          kind: "user-profile",
+          label: "个人偏好",
+          text: summaries.join("；"),
+        });
+      }
+    }
+    return items;
+  }
+
   function renderCardDigest(casePayload, caseRuntime) {
     if (!casePayload) {
       els.cardDigest.className = "card-digest empty-list";
@@ -2271,6 +2300,7 @@ WEB_DEMO_JS = """\
     const { primaryReason, carryoverNote } = splitCarryoverFollowUpReason(followUpReason);
     const direction = describeCaseDirection(casePayload);
     const projectConfirmation = String(casePayload.metadata?.project_profile_confirmation || "").trim();
+    const memoryReferences = memoryReferenceSummary(caseRuntime);
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -2293,7 +2323,17 @@ WEB_DEMO_JS = """\
       `);
     }
 
-    if (projectConfirmation) {
+    if (memoryReferences.length) {
+      cards.push(`
+        <article class="digest-card is-calm">
+          <span class="digest-label">这轮沿用了</span>
+          <ul class="digest-list">
+            ${memoryReferences.map((item) => `<li>${inlineFormat(shortText(item.text, 86))}</li>`).join("")}
+          </ul>
+          ${memoryReferences.some((item) => item.kind === "project-profile") ? '<button class="ghost-button runtime-resume-button" type="button" data-memory-reference-action="detach-project-profile">不是这个项目</button>' : ""}
+        </article>
+      `);
+    } else if (projectConfirmation) {
       cards.push(`
         <article class="digest-card is-calm">
           <span class="digest-label">项目背景</span>
@@ -2375,6 +2415,11 @@ WEB_DEMO_JS = """\
 
     els.cardDigest.className = "card-digest";
     els.cardDigest.innerHTML = cards.join("");
+    els.cardDigest.querySelectorAll("[data-memory-reference-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await handleMemoryReferenceAction(button);
+      });
+    });
   }
 
   function fallbackComponentMessages(caseRuntime) {
@@ -3135,15 +3180,32 @@ WEB_DEMO_JS = """\
         return;
       }
     }
+    const listKeys = new Set(["target_user_roles", "constraints", "stable_constraints", "success_metrics", "notes", "frequent_product_domains", "common_constraints"]);
+    const payload = {
+      action,
+      target,
+      key,
+      value: action === "update" && listKeys.has(key) ? splitMemoryInput(value) : value,
+    };
+    const successMessage = action === "update" ? "已更新这条记忆。" : "已删除这条记忆。";
+    await submitMemoryRecordAction(payload, button, successMessage);
+  }
+
+  async function handleMemoryReferenceAction(button) {
+    const action = button.getAttribute("data-memory-reference-action") || "";
+    if (action === "detach-project-profile") {
+      await submitMemoryRecordAction({
+        action: "detach-project-profile",
+        target: "project-profile",
+        key: "active_project_profile_id",
+        value: "",
+      }, button, "后续先不沿用这个项目背景。");
+    }
+  }
+
+  async function submitMemoryRecordAction(payload, button, successMessage) {
     setLoading(button, true);
     try {
-      const listKeys = new Set(["target_user_roles", "constraints", "stable_constraints", "success_metrics", "notes", "frequent_product_domains", "common_constraints"]);
-      const payload = {
-        action,
-        target,
-        key,
-        value: action === "update" && listKeys.has(key) ? splitMemoryInput(value) : value,
-      };
       const response = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/memory-records`, {
         method: "POST",
         body: JSON.stringify(payload),
@@ -3159,13 +3221,7 @@ WEB_DEMO_JS = """\
         renderRecentCases();
       }
       await Promise.all([loadHistory(), loadRuntimeSession(), loadApprovals()]);
-      if (action === "detach-project-profile") {
-        showToast("后续先不沿用这个项目背景。");
-      } else if (action === "update") {
-        showToast("已更新这条记忆。");
-      } else {
-        showToast("已删除这条记忆。");
-      }
+      showToast(successMessage);
     } catch (error) {
       showToast(error.message || "记忆更新失败", true);
       setLoading(button, false);

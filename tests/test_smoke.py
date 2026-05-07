@@ -997,6 +997,12 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(case_state.context_profile["primary_platform"], "mobile-web")
         self.assertEqual(case_state.context_profile["product_domain"], "医疗服务平台")
         self.assertEqual(case_state.metadata["project_profile_name"], "医疗服务平台")
+        self.assertEqual(case_state.metadata["project_profile_applied_fields"]["business_model"], "tob")
+        runtime_payload = build_case_runtime_payload(case_state)
+        memory_reference = runtime_payload["memory_references"]["project_profile"]
+        self.assertTrue(memory_reference["applied"])
+        self.assertEqual(memory_reference["project_profile_name"], "医疗服务平台")
+        self.assertIn("产品类型：企业产品", memory_reference["field_summaries"])
 
     def test_session_service_can_reply_and_continue(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4989,6 +4995,29 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(user_profile["decision_style"], "先结论后展开")
         self.assertEqual(accept_response.payload["cases"]["memory_write_suggestions"], [])
 
+    def test_agent_response_can_expose_user_profile_memory_reference(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            workspace = get_or_create_workspace("demo", store=default_workspace_store(tmpdir))
+            update_workspace_user_profile(
+                workspace,
+                preferred_output_style="简洁",
+                preferred_language="中文",
+                decision_style="先结论后展开",
+            )
+            save_workspace(workspace, store=default_workspace_store(tmpdir))
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"前台最近老是漏提醒患者，我在想是不是要处理一下。"}'.encode("utf-8"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        memory_references = response.payload["case_runtime"]["memory_references"]
+        self.assertTrue(memory_references["user_profile"]["applied"])
+        self.assertIn("输出风格：简洁", memory_references["user_profile"]["summaries"])
+        self.assertIn("语言偏好：中文", memory_references["user_profile"]["summaries"])
+
     def test_http_service_can_mark_memory_suggestion_as_use_once_without_long_term_write(self) -> None:
         with TemporaryDirectory() as tmpdir:
             service = PMMethodHTTPService(store_dir=tmpdir)
@@ -5267,6 +5296,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("function renderWorkspaceMemory", script)
         self.assertIn("function handleMemorySuggestionAction", script)
         self.assertIn("function handleMemoryRecordAction", script)
+        self.assertIn("memoryReferenceSummary", script)
+        self.assertIn("data-memory-reference-action", script)
+        self.assertIn("这轮沿用了", script)
+        self.assertIn("不是这个项目", script)
         self.assertIn("data-memory-suggestion-action", script)
         self.assertIn("data-memory-record-action", script)
         self.assertIn("已记住这条信息", script)

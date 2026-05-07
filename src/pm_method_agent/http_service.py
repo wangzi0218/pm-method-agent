@@ -849,17 +849,59 @@ def _build_case_response_payload(case_state) -> JsonDict:
 
 
 def _build_agent_response_payload(response) -> JsonDict:
+    user_profile = get_workspace_user_profile(response.workspace)
+    case_runtime = build_case_runtime_payload(response.case_state) if response.case_state else None
+    if case_runtime is not None:
+        _attach_workspace_memory_references(case_runtime, user_profile)
     return {
         "action": response.action,
         "message": response.message,
         "workspace": response.workspace.to_dict(),
         "runtime_session": build_runtime_session_payload(response.runtime_session),
         "case": response.case_state.to_dict() if response.case_state else None,
-        "case_runtime": build_case_runtime_payload(response.case_state) if response.case_state else None,
+        "case_runtime": case_runtime,
         "project_profile": response.project_profile.to_dict() if response.project_profile else None,
         "rendered_card": response.rendered_card,
         "rendered_history": response.rendered_history,
     }
+
+
+def _attach_workspace_memory_references(case_runtime: JsonDict, user_profile: JsonDict) -> None:
+    memory_references = case_runtime.setdefault("memory_references", {})
+    if not isinstance(memory_references, dict):
+        memory_references = {}
+        case_runtime["memory_references"] = memory_references
+    if user_profile:
+        memory_references["user_profile"] = {
+            "applied": True,
+            "preferences": dict(user_profile),
+            "summaries": _user_profile_reference_summaries(user_profile),
+        }
+    else:
+        memory_references["user_profile"] = {}
+    memory_references["has_references"] = bool(
+        memory_references.get("project_profile") or memory_references.get("user_profile")
+    )
+
+
+def _user_profile_reference_summaries(user_profile: JsonDict) -> list[str]:
+    summaries: list[str] = []
+    label_map = {
+        "preferred_output_style": "输出风格",
+        "preferred_language": "语言偏好",
+        "decision_style": "判断习惯",
+        "frequent_product_domains": "常见领域",
+        "common_constraints": "常见约束",
+    }
+    for key, label in label_map.items():
+        value = user_profile.get(key)
+        if isinstance(value, list):
+            rendered = "、".join(str(item).strip() for item in value if str(item).strip())
+        else:
+            rendered = str(value or "").strip()
+        if rendered:
+            summaries.append(f"{label}：{rendered}")
+    return summaries
 
 
 def _parse_json_body(body: Optional[bytes]) -> JsonDict:
