@@ -1276,6 +1276,10 @@ WEB_DEMO_JS = """\
   }
 
   function runtimeTerminalStateLabel(value) {
+    const contractLabel = runtimeContractLabel("terminal_states", value);
+    if (contractLabel) {
+      return contractLabel;
+    }
     const labels = {
       continued: "已继续承接",
       completed: "这一轮已完成",
@@ -1299,6 +1303,10 @@ WEB_DEMO_JS = """\
   }
 
   function runtimeLoopLabel(value) {
+    const contractLabel = runtimeContractLabel("loop_states", value);
+    if (contractLabel) {
+      return contractLabel;
+    }
     const labels = {
       idle: "空闲",
       "classifying-turn": "判断这轮输入",
@@ -1309,6 +1317,19 @@ WEB_DEMO_JS = """\
       "rendering-response": "整理这一轮输出",
     };
     return labels[value] || value || "处理中";
+  }
+
+  function runtimeContractLabel(sectionName, value) {
+    const normalizedValue = String(value || "");
+    if (!normalizedValue) {
+      return "";
+    }
+    const contract = state.currentRuntimeSession?.runtime_contract || {};
+    const items = contract[sectionName] || [];
+    const matched = Array.isArray(items)
+      ? items.find((item) => String(item.value || "") === normalizedValue)
+      : null;
+    return matched?.label || "";
   }
 
   function runtimeIntentLabel(value) {

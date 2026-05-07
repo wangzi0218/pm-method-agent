@@ -18,6 +18,7 @@ from pm_method_agent.project_profile_service import (
 )
 from pm_method_agent.renderers import (
     build_case_runtime_payload,
+    build_runtime_contract_payload,
     build_runtime_session_payload,
     build_case_history_payload,
     build_workspace_cases_payload,
@@ -103,6 +104,9 @@ class PMMethodHTTPService:
 
             if method == "GET" and normalized_path == "/runtime/tools":
                 return HTTPResponse.json(200, {"tools": self._local_tools.list_tools()})
+
+            if method == "GET" and normalized_path == "/runtime/contract":
+                return HTTPResponse.json(200, {"runtime_contract": build_runtime_contract_payload()})
 
             tool_name = _extract_runtime_tool_name(normalized_path)
             if method == "GET" and tool_name:

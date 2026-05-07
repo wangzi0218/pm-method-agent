@@ -259,6 +259,18 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 `query_loop` 是 runtime 推导出的观察口，不替代底层事件日志。需要审计完整过程时仍应查看 `event_log` 和 `execution_ledger`。
 
+同一份响应还会返回 `runtime_contract`，用于解释运行时枚举。也可以单独调用：
+
+### `GET /runtime/contract`
+
+用途：
+
+- 获取运行时状态契约版本
+- 获取 `runtime_status`、`loop_state`、`terminal_state`、`event_type` 和 `resume action` 的稳定枚举
+- 让网页、IDE agent 和 CLI 外壳复用同一套标签和说明
+
+当前契约版本为 `runtime-contract-v1`。
+
 同一份响应还会返回 `resume_point`，用于把底层恢复点翻译成用户能看懂的说法：
 
 - `raw`：底层恢复点，例如 `problem-definition` 或 `project-profile-service.update-or-create`。

@@ -39,6 +39,61 @@ MODE_LABELS = {
     "validation-design": "验证设计",
 }
 
+RUNTIME_STATUS_CONTRACT = {
+    "idle": {"label": "空闲", "description": "当前没有正在执行的查询轮次。"},
+    "running": {"label": "运行中", "description": "当前查询轮次还在推进。"},
+    "failed": {"label": "执行失败", "description": "当前轮遇到错误，后续需要查看运行提醒或重试。"},
+    "interrupted": {"label": "已中断", "description": "当前轮被新的输入或外部动作打断。"},
+    "cancelled": {"label": "已取消", "description": "当前轮已经取消，不会继续执行。"},
+}
+
+LOOP_STATE_CONTRACT = {
+    "idle": {"label": "空闲", "description": "没有正在处理的循环步骤。"},
+    "classifying-turn": {"label": "判断输入", "description": "正在判断这一轮输入应该进入哪条路径。"},
+    "executing": {"label": "处理中", "description": "已经识别输入，正在进入具体处理。"},
+    "checking-policy": {"label": "检查规则", "description": "正在检查运行时规则、权限和审批要求。"},
+    "routing-intent": {"label": "路由意图", "description": "正在决定交给哪个处理路径。"},
+    "executing-intent": {"label": "执行路径", "description": "正在执行当前意图对应的处理逻辑。"},
+    "rendering-response": {"label": "整理输出", "description": "正在整理本轮返回内容和运行时状态。"},
+}
+
+TERMINAL_STATE_CONTRACT = {
+    "completed": {"label": "已完成", "description": "这一轮已经正常完成。"},
+    "continued": {"label": "已承接", "description": "这一轮已经承接输入，并保留后续恢复点。"},
+    "blocked": {"label": "已阻塞", "description": "这一轮需要补充信息、处理审批或做选择后才能继续。"},
+    "deferred": {"label": "已暂缓", "description": "这一轮主动暂缓，后续可从恢复点接回。"},
+    "failed": {"label": "执行失败", "description": "这一轮遇到错误，未能正常收尾。"},
+    "interrupted": {"label": "已中断", "description": "这一轮被打断，后续应先看恢复点和待闭环事项。"},
+    "cancelled": {"label": "已取消", "description": "这一轮已经取消。"},
+}
+
+RUNTIME_EVENT_CONTRACT = {
+    "turn-received": {"label": "收到输入", "description": "runtime 已接收到用户这一轮输入。"},
+    "loop-started": {"label": "开始循环", "description": "query loop 开始处理。"},
+    "runtime-recovery-applied": {"label": "恢复检查", "description": "新一轮开始前完成未闭环事项检查。"},
+    "turn-classified": {"label": "识别意图", "description": "已经判断本轮输入意图。"},
+    "loop-state-changed": {"label": "状态推进", "description": "query loop 进入新的处理步骤。"},
+    "approval-created": {"label": "需要确认", "description": "运行时创建了待人工确认事项。"},
+    "terminal-state-emitted": {"label": "轮次收尾", "description": "当前查询轮次已经进入终止语义。"},
+    "tool-call-requested": {"label": "调用工具", "description": "已经发起工具调用。"},
+    "tool-call-completed": {"label": "工具完成", "description": "工具调用已返回结果。"},
+    "tool-call-failed": {"label": "工具失败", "description": "工具调用失败或被恢复逻辑收口。"},
+    "hook-call-requested": {"label": "执行检查", "description": "已发起运行时 hook 检查。"},
+    "hook-call-completed": {"label": "检查通过", "description": "运行时 hook 已完成。"},
+    "hook-call-failed": {"label": "检查收口", "description": "运行时 hook 失败或被恢复逻辑收口。"},
+    "llm-fallback": {"label": "模型回退", "description": "某个 LLM 增强组件回退到本地规则。"},
+    "context-compressed": {"label": "历史收拢", "description": "较早上下文已被压缩进摘要记忆。"},
+}
+
+RESUME_ACTION_CONTRACT = {
+    "resolve-approval": {"label": "处理审批", "description": "处理待确认事项，需要批准、拒绝或标记过期。"},
+    "reply-current-case": {"label": "继续案例", "description": "把用户补充内容接到当前案例。"},
+    "resume-current-case": {"label": "恢复案例", "description": "从暂缓点重新接上当前案例。"},
+    "create-case": {"label": "创建案例", "description": "用用户输入创建新的分析案例。"},
+    "inspect-runtime": {"label": "查看运行时", "description": "读取当前运行时状态，不改变案例。"},
+    "wait-current-query": {"label": "等待当前轮", "description": "当前轮仍在处理中，暂不追加动作。"},
+}
+
 DIMENSION_LABELS = {
     "problem-framing": "先把问题定义说清",
     "root-cause-and-alternatives": "再看根因和替代路径",
@@ -270,6 +325,7 @@ def render_workspace_overview(
 
 def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
     payload = runtime_session.to_dict()
+    payload["runtime_contract"] = build_runtime_contract_payload()
     payload["event_summaries"] = _build_runtime_event_summaries(payload.get("event_log", []))
     open_items = _build_runtime_open_items(payload)
     payload["open_items"] = open_items
@@ -293,6 +349,28 @@ def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
         resume_point=resume_point,
     )
     return payload
+
+
+def build_runtime_contract_payload() -> dict:
+    return {
+        "contract_version": "runtime-contract-v1",
+        "runtime_statuses": _runtime_contract_items(RUNTIME_STATUS_CONTRACT),
+        "loop_states": _runtime_contract_items(LOOP_STATE_CONTRACT),
+        "terminal_states": _runtime_contract_items(TERMINAL_STATE_CONTRACT),
+        "event_types": _runtime_contract_items(RUNTIME_EVENT_CONTRACT),
+        "resume_actions": _runtime_contract_items(RESUME_ACTION_CONTRACT),
+    }
+
+
+def _runtime_contract_items(source: dict) -> List[dict]:
+    return [
+        {
+            "value": key,
+            "label": str(value.get("label", "") or key),
+            "description": str(value.get("description", "") or ""),
+        }
+        for key, value in source.items()
+    ]
 
 
 def _build_runtime_query_loop(payload: dict, *, open_items: List[dict], recovery_summary: dict) -> dict:
@@ -897,6 +975,9 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
     lines.append("")
     lines.append(f"- 会话编号：`{payload.get('session_id', '')}`")
     lines.append(f"- 工作区：`{payload.get('workspace_id', '')}`")
+    runtime_contract = payload.get("runtime_contract") or {}
+    if isinstance(runtime_contract, dict) and runtime_contract.get("contract_version"):
+        lines.append(f"- 状态契约：`{runtime_contract.get('contract_version')}`")
     lines.append(f"- 当前案例：`{payload.get('active_case_id', '') or '未设置'}`")
     lines.append(f"- 运行状态：`{payload.get('runtime_status', '') or 'idle'}`")
     lines.append(f"- 当前循环：`{payload.get('current_loop_state', '') or 'idle'}`")

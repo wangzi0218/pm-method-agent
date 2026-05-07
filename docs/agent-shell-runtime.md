@@ -44,6 +44,8 @@
 
 对外展示时，外壳应优先消费 runtime payload 中的 `event_summaries`。它已经把底层事件收成 `kind`、`stage`、`text`、`severity` 和 `actionable`，适合直接放进网页运行时面板或 IDE 侧边栏。
 
+如果外壳需要解释状态枚举，优先读取 `runtime_contract` 或 `GET /runtime/contract`。它会列出稳定的运行状态、循环状态、终止语义、事件类型和继续动作，避免每个外壳自己维护一套硬编码翻译。
+
 如果要展示“还有什么没闭环”，优先读取 `open_items`。它会统一表达待审批、未完成 hook 和未完成工具调用，避免外壳自己分别拆 `pending_approvals`、`pending_hooks` 和 `pending_tool_calls`。
 
 每一轮新输入开始时，runtime 会先做一次恢复检查：未完成的 hook 和工具调用会被自动收口并写回账本，待人工确认的审批不会自动关闭。检查结果会写入 `recovery_summary`，如果上一轮确实有未闭环事项，还会产生 `runtime-recovery-applied` 事件，外壳可以直接通过 `event_summaries` 展示“系统刚刚处理了什么、还有什么需要人确认”。

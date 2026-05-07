@@ -3071,6 +3071,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("open_items", js_body)
         self.assertIn("query_loop", js_body)
         self.assertIn("resume_suggestions", js_body)
+        self.assertIn("runtime_contract", js_body)
+        self.assertIn("runtimeContractLabel", js_body)
         self.assertIn("runtime/resume-actions", js_body)
         self.assertIn("data-resume-action", js_body)
         self.assertIn("resumePoint", js_body)
@@ -3949,6 +3951,20 @@ class OrchestratorSmokeTest(unittest.TestCase):
         approval_result = result["output_payload"]["approval_result"]
         self.assertEqual(approval_result["action"], "platform-project-profile-created")
         self.assertEqual(result["runtime_session"]["pending_approvals"], [])
+
+    def test_http_service_can_expose_runtime_contract(self) -> None:
+        service = PMMethodHTTPService(store_dir=None)
+        response = service.handle(method="GET", path="/runtime/contract")
+
+        self.assertEqual(response.status_code, 200)
+        contract = response.payload["runtime_contract"]
+        self.assertEqual(contract["contract_version"], "runtime-contract-v1")
+        terminal_values = [item["value"] for item in contract["terminal_states"]]
+        event_values = [item["value"] for item in contract["event_types"]]
+        resume_actions = [item["value"] for item in contract["resume_actions"]]
+        self.assertIn("blocked", terminal_values)
+        self.assertIn("runtime-recovery-applied", event_values)
+        self.assertIn("reply-current-case", resume_actions)
 
     def test_cli_can_execute_runtime_resume_inspect_action(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -5789,6 +5805,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(query_loop["open_item_count"], 0)
         self.assertEqual(query_loop["terminal_state"], response.runtime_session.last_terminal_event["terminal_state"])
         self.assertIn("resume_point", payload)
+        self.assertIn("runtime_contract", payload)
+        self.assertEqual(payload["runtime_contract"]["contract_version"], "runtime-contract-v1")
         self.assertEqual(payload["resume_point"]["kind"], "method-stage")
         self.assertEqual(payload["query_loop"]["resume_point"]["label"], payload["resume_point"]["label"])
         step_kinds = [item["kind"] for item in query_loop["steps"]]
@@ -5801,6 +5819,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("查询循环", rendered)
         self.assertIn("建议继续方式", rendered)
         self.assertIn("恢复说明", rendered)
+        self.assertIn("状态契约", rendered)
         self.assertGreaterEqual(len(payload["resume_suggestions"]), 1)
         self.assertEqual(payload["resume_suggestions"][0]["action"], "reply-current-case")
 
