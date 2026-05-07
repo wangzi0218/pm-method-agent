@@ -374,6 +374,24 @@ textarea {
   background: linear-gradient(180deg, rgba(255, 244, 238, 0.76), rgba(255, 255, 255, 0.44));
 }
 
+.memory-suggestion-card {
+  border-color: rgba(79, 124, 115, 0.18);
+  background:
+    linear-gradient(180deg, rgba(245, 252, 248, 0.82), rgba(255, 255, 255, 0.5));
+}
+
+.memory-suggestion-target {
+  display: inline-flex;
+  width: fit-content;
+  margin: 0 0 7px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(79, 124, 115, 0.1);
+  color: #3f6e65;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .workspace-memory-label {
   display: block;
   margin-bottom: 4px;
@@ -388,6 +406,33 @@ textarea {
   color: rgba(36, 31, 26, 0.82);
   font-size: 13px;
   line-height: 1.64;
+}
+
+.memory-suggestion-source {
+  display: block;
+  margin-top: 7px;
+  color: rgba(36, 31, 26, 0.56);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.memory-suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.memory-suggestion-actions button {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+
+.memory-suggestion-actions .memory-suggestion-primary {
+  border: 1px solid rgba(79, 124, 115, 0.2);
+  background: #4f7c73;
+  color: #fffaf4;
 }
 
 .pill,
@@ -1793,6 +1838,29 @@ WEB_DEMO_JS = """\
     els.workspaceMeta.innerHTML = pills.join("");
   }
 
+  function memorySuggestionTargetLabel(suggestion) {
+    const explicitLabel = String(suggestion?.label || "").trim();
+    if (explicitLabel) {
+      return explicitLabel;
+    }
+    const labels = {
+      "project-profile": "项目背景",
+      "user-profile": "个人偏好",
+      "case-memory": "当前案例",
+    };
+    return labels[String(suggestion?.target || "")] || "记忆建议";
+  }
+
+  function memorySuggestionToast(action) {
+    if (action === "accept") {
+      return "已记住这条信息。";
+    }
+    if (action === "use-once") {
+      return "这条先只用于当前上下文。";
+    }
+    return "已忽略这条记忆建议。";
+  }
+
   function renderWorkspaceMemory(casesPayload = state.currentWorkspaceCases) {
     if (!els.workspaceMemory) {
       return;
@@ -1845,13 +1913,17 @@ WEB_DEMO_JS = """\
       items.push({ label: "个人偏好", text: userProfileTexts.join("；") });
     }
 
-    if (!items.length) {
+    const suggestions = Array.isArray(casesPayload?.memory_write_suggestions)
+      ? casesPayload.memory_write_suggestions.filter((item) => item && item.suggestion_id)
+      : [];
+
+    if (!items.length && !suggestions.length) {
       els.workspaceMemory.className = "workspace-memory empty-list";
       els.workspaceMemory.innerHTML = "<p>还没有稳定背景。先聊一轮，系统会把项目背景、当前焦点和偏好收在这里。</p>";
       return;
     }
     els.workspaceMemory.className = "workspace-memory";
-    els.workspaceMemory.innerHTML = items
+    const memoryCards = items
       .slice(0, 4)
       .map(
         (item) => `
@@ -1862,6 +1934,40 @@ WEB_DEMO_JS = """\
         `
       )
       .join("");
+
+    const suggestionCards = suggestions
+      .slice(0, 2)
+      .map((item) => {
+        const summary = item.summary || item.action_hint || "这条信息可能以后还会用到。";
+        const source = item.source_excerpt ? `来源：${shortText(item.source_excerpt, 76)}` : "";
+        return `
+          <article class="workspace-memory-card memory-suggestion-card">
+            <span class="workspace-memory-label">这句可能值得记住</span>
+            <span class="memory-suggestion-target">${inlineFormat(memorySuggestionTargetLabel(item))}</span>
+            <span class="workspace-memory-text">${inlineFormat(shortText(summary, 104))}</span>
+            ${source ? `<span class="memory-suggestion-source">${inlineFormat(source)}</span>` : ""}
+            <div class="memory-suggestion-actions">
+              <button class="memory-suggestion-primary" type="button" data-memory-suggestion-action="accept" data-memory-suggestion-id="${escapeHtml(
+                item.suggestion_id
+              )}">记住</button>
+              <button class="ghost-button" type="button" data-memory-suggestion-action="use-once" data-memory-suggestion-id="${escapeHtml(
+                item.suggestion_id
+              )}">只用于这次</button>
+              <button class="ghost-button" type="button" data-memory-suggestion-action="dismiss" data-memory-suggestion-id="${escapeHtml(
+                item.suggestion_id
+              )}">不记</button>
+            </div>
+          </article>
+        `;
+      })
+      .join("");
+
+    els.workspaceMemory.innerHTML = `${suggestionCards}${memoryCards}`;
+    els.workspaceMemory.querySelectorAll("[data-memory-suggestion-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await handleMemorySuggestionAction(button);
+      });
+    });
   }
 
   function displayFollowUpFocus(casePayload = state.currentCase, historyPayload = state.currentHistory) {
@@ -2813,6 +2919,40 @@ WEB_DEMO_JS = """\
       showToast(error.message || "审批处理失败", true);
     } finally {
       setLoading(button, false);
+    }
+  }
+
+  async function handleMemorySuggestionAction(button) {
+    const action = button.getAttribute("data-memory-suggestion-action") || "";
+    const suggestionId = button.getAttribute("data-memory-suggestion-id") || "";
+    if (!action || !suggestionId) {
+      showToast("这条记忆建议缺少必要信息。", true);
+      return;
+    }
+    const actionButtons = button
+      .closest(".memory-suggestion-card")
+      ?.querySelectorAll("[data-memory-suggestion-action]");
+    actionButtons?.forEach((item) => setLoading(item, true));
+    try {
+      const payload = await request(`/workspaces/${encodeURIComponent(state.workspaceId)}/memory-suggestions`, {
+        method: "POST",
+        body: JSON.stringify({ suggestion_id: suggestionId, action }),
+      });
+      if (payload.workspace) {
+        renderWorkspaceMeta(payload.workspace);
+      }
+      if (payload.cases) {
+        state.currentWorkspaceCases = payload.cases;
+        state.recentCases = payload.cases.recent_cases || [];
+        state.activeCaseId = payload.cases.active_case_id || state.activeCaseId;
+        renderWorkspaceMemory(state.currentWorkspaceCases);
+        renderRecentCases();
+      }
+      await Promise.all([loadHistory(), loadRuntimeSession(), loadApprovals()]);
+      showToast(memorySuggestionToast(action));
+    } catch (error) {
+      showToast(error.message || "记忆建议处理失败", true);
+      actionButtons?.forEach((item) => setLoading(item, false));
     }
   }
 
