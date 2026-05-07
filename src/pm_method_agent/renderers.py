@@ -282,11 +282,15 @@ def build_runtime_session_payload(runtime_session: RuntimeSession) -> dict:
         recovery_summary = {}
     payload["recovery_summary"] = recovery_summary
     query_loop = _build_runtime_query_loop(payload, open_items=open_items, recovery_summary=recovery_summary)
+    resume_point = _build_runtime_resume_point(payload, open_items=open_items, query_loop=query_loop)
+    query_loop["resume_point"] = resume_point
     payload["query_loop"] = query_loop
+    payload["resume_point"] = resume_point
     payload["resume_suggestions"] = _build_runtime_resume_suggestions(
         payload,
         open_items=open_items,
         query_loop=query_loop,
+        resume_point=resume_point,
     )
     return payload
 
@@ -421,9 +425,96 @@ def _runtime_intent_label(value: str) -> str:
     return labels.get(value, value or "当前输入")
 
 
-def _build_runtime_resume_suggestions(payload: dict, *, open_items: List[dict], query_loop: dict) -> List[dict]:
-    suggestions: List[dict] = []
+def _build_runtime_resume_point(payload: dict, *, open_items: List[dict], query_loop: dict) -> dict:
+    last_terminal = payload.get("last_terminal_event") or {}
+    if not isinstance(last_terminal, dict):
+        last_terminal = {}
+    terminal_state = str(query_loop.get("terminal_state", "") or last_terminal.get("terminal_state", "") or "")
     resume_from = str(query_loop.get("resume_from", "") or payload.get("resume_from", "") or "")
+    actionable_items = [item for item in open_items if item.get("actionable")]
+    if actionable_items:
+        first_item = actionable_items[0]
+        return {
+            "raw": str(first_item.get("resume_from", "") or resume_from),
+            "kind": "approval",
+            "label": "待确认事项",
+            "title": "先处理待确认事项",
+            "text": str(first_item.get("text", "") or "当前卡在人工确认，处理后才能继续对应动作。"),
+            "actionable": True,
+            "source": "open-item",
+            "terminal_state": terminal_state,
+            "suggested_action": "resolve-approval",
+        }
+
+    if not resume_from:
+        return {
+            "raw": "",
+            "kind": "none",
+            "label": "当前阶段",
+            "title": "暂无明确恢复点",
+            "text": "当前没有特别需要恢复的步骤，可以直接继续输入新的问题或补充信息。",
+            "actionable": False,
+            "source": "runtime-session",
+            "terminal_state": terminal_state,
+            "suggested_action": "create-case" if not payload.get("active_case_id") else "reply-current-case",
+        }
+
+    if resume_from in STAGE_LABELS:
+        label = _label_for(STAGE_LABELS, resume_from)
+        title_prefix = "回到"
+        if terminal_state == "blocked":
+            title_prefix = "当前卡在"
+        elif terminal_state == "deferred":
+            title_prefix = "暂缓在"
+        return {
+            "raw": resume_from,
+            "kind": "method-stage",
+            "label": label,
+            "title": f"{title_prefix}{label}",
+            "text": f"后续会优先从{label}接着看，不需要从头重来。",
+            "actionable": terminal_state in {"blocked", "deferred", ""},
+            "source": "case-stage",
+            "terminal_state": terminal_state,
+            "suggested_action": "reply-current-case",
+        }
+
+    if resume_from == "active-case":
+        return {
+            "raw": resume_from,
+            "kind": "active-case",
+            "label": "当前案例",
+            "title": "继续当前案例",
+            "text": "系统会把下一句默认接到当前案例里。",
+            "actionable": True,
+            "source": "workspace",
+            "terminal_state": terminal_state,
+            "suggested_action": "reply-current-case",
+        }
+
+    action_label = _runtime_action_label(resume_from)
+    action_kind = "tool-action" if "." in resume_from else "runtime-action"
+    return {
+        "raw": resume_from,
+        "kind": action_kind,
+        "label": action_label,
+        "title": f"回到{action_label}",
+        "text": "这个恢复点来自运行时动作，通常需要先看待闭环事项或运行提醒，再决定是否继续。",
+        "actionable": terminal_state in {"blocked", "failed", "interrupted", "cancelled"},
+        "source": "runtime-action",
+        "terminal_state": terminal_state,
+        "suggested_action": "inspect-runtime",
+    }
+
+
+def _build_runtime_resume_suggestions(
+    payload: dict,
+    *,
+    open_items: List[dict],
+    query_loop: dict,
+    resume_point: dict,
+) -> List[dict]:
+    suggestions: List[dict] = []
+    resume_from = str(resume_point.get("raw", "") or query_loop.get("resume_from", "") or payload.get("resume_from", "") or "")
     active_case_id = str(payload.get("active_case_id", "") or "")
     actionable_items = [item for item in open_items if item.get("actionable")]
     terminal_state = str(query_loop.get("terminal_state", "") or "")
@@ -451,8 +542,8 @@ def _build_runtime_resume_suggestions(payload: dict, *, open_items: List[dict], 
             _runtime_resume_suggestion(
                 suggestion_id="supplement-blocked-case",
                 kind="supplement",
-                title="补上当前卡点",
-                text="直接补充缺的背景、证据或选择，系统会从当前案例继续接住。",
+                title=f"补上{resume_point.get('label', '当前卡点')}",
+                text=str(resume_point.get("text", "") or "直接补充缺的背景、证据或选择，系统会从当前案例继续接住。"),
                 priority="high" if not actionable_items else "medium",
                 action="reply-current-case",
                 resume_from=resume_from,
@@ -799,6 +890,7 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
     summary_memory = payload.get("summary_memory") or []
     raw_history = payload.get("raw_history") or []
     last_terminal = payload.get("last_terminal_event") or {}
+    resume_point = payload.get("resume_point") or {}
 
     lines: List[str] = []
     lines.append("# PM Method Agent Runtime Session")
@@ -809,7 +901,11 @@ def render_runtime_session(runtime_session: RuntimeSession, output_format: str =
     lines.append(f"- 运行状态：`{payload.get('runtime_status', '') or 'idle'}`")
     lines.append(f"- 当前循环：`{payload.get('current_loop_state', '') or 'idle'}`")
     lines.append(f"- 轮次计数：`{payload.get('turn_count', 0)}`")
-    lines.append(f"- 最近恢复点：`{payload.get('resume_from', '') or '无'}`")
+    if isinstance(resume_point, dict) and resume_point:
+        lines.append(f"- 最近恢复点：`{resume_point.get('label', '') or '无'}`")
+        lines.append(f"- 恢复说明：{resume_point.get('text', '') or '暂无'}")
+    else:
+        lines.append(f"- 最近恢复点：`{payload.get('resume_from', '') or '无'}`")
     lines.append("")
     lines.append("## 上下文预算")
     lines.append(f"- 原始历史预算：`{context_budget.get('raw_history_budget', 0)}`")

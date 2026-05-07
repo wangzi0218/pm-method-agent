@@ -54,6 +54,8 @@
 
 如果外壳要真正执行建议，优先走 `POST /workspaces/{workspace_id}/runtime/resume-actions` 或 CLI 的 `resume` 子命令。这个入口会把建议动作分发到消息入口、审批入口或运行时查看入口，但不会替用户补写内容，也不会绕过审批。
 
+如果要展示“恢复点在哪里”，优先读取 `resume_point`，不要直接把底层 `resume_from` 展示给用户。`resume_point` 会把方法阶段、当前案例、待审批、工具动作等恢复来源收成 `label`、`title` 和 `text`。
+
 ## 当前状态模型
 
 ### `workspace`

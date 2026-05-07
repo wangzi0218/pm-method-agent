@@ -259,6 +259,17 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 `query_loop` 是 runtime 推导出的观察口，不替代底层事件日志。需要审计完整过程时仍应查看 `event_log` 和 `execution_ledger`。
 
+同一份响应还会返回 `resume_point`，用于把底层恢复点翻译成用户能看懂的说法：
+
+- `raw`：底层恢复点，例如 `problem-definition` 或 `project-profile-service.update-or-create`。
+- `kind`：恢复点类型，例如 `method-stage`、`approval`、`active-case`、`tool-action`。
+- `label`：短标签，例如问题定义、待确认事项、当前案例。
+- `title`：可直接展示的标题。
+- `text`：解释为什么从这里继续。
+- `suggested_action`：更适合接上的建议动作。
+
+外壳展示恢复点时应优先使用 `resume_point.label/title/text`，只有调试模式才需要展示 `resume_from`。
+
 同一份响应还会返回 `resume_suggestions`，用于展示“现在可以怎么继续”：
 
 - `title`：建议标题，例如先处理待确认事项、补上当前卡点、继续补当前案例。

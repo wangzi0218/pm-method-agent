@@ -2036,12 +2036,14 @@ WEB_DEMO_JS = """\
     const pendingApprovals = runtimeSession.pending_approvals || [];
     const openItems = runtimeSession.open_items || [];
     const queryLoop = runtimeSession.query_loop || {};
+    const resumePoint = runtimeSession.resume_point || queryLoop.resume_point || {};
     const resumeSuggestions = runtimeSession.resume_suggestions || [];
     const workingMemory = runtimeSession.working_memory || [];
     const summaryMemory = runtimeSession.summary_memory || [];
     const highlightedEvents = pickRuntimeHighlights(runtimeSession);
     const terminalState = String(lastTerminal.terminal_state || "");
-    const resumeLabel = runtimeResumeLabel(runtimeSession.resume_from || lastTerminal.resume_from || "");
+    const resumeLabel = resumePoint.label || runtimeResumeLabel(runtimeSession.resume_from || lastTerminal.resume_from || "");
+    const resumePointText = resumePoint.text || `下一次大概率会从 ${resumeLabel} 接着看。`;
     let focusText = "眼下没有额外卡点，可以继续补下一轮。";
     if (pendingApprovals.length) {
       focusText = `当前有 ${pendingApprovals.length} 项待确认，这一轮会先停在人来拍板这一步。`;
@@ -2111,7 +2113,7 @@ WEB_DEMO_JS = """\
       <article class="digest-card">
         <span class="digest-label">接下来会从哪继续</span>
         <span class="digest-value">
-          下一次大概率会从 ${inlineFormat(resumeLabel)} 接着看；当前工作区已经累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
+          ${inlineFormat(resumePointText)}当前工作区已经累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
         </span>
       </article>
       ${resumeSuggestionCard}
