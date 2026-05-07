@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha1
 import re
 from typing import TYPE_CHECKING, List
 
@@ -43,13 +44,35 @@ def suggest_memory_write_hints(
 
     return [
         {
+            "suggestion_id": _build_suggestion_id(target, text),
             "target": target,
             "label": MEMORY_TARGET_LABELS[target],
             "summary": _render_target_summary(target),
             "action_hint": _render_action_hint(target),
             "source_excerpt": _short_text(text, limit=30),
+            "source_text": text,
+            "status": "pending",
+            "write_risk_level": _resolve_write_risk_level(target, text),
+            "context_updates": dict(getattr(reply_analysis, "context_updates", {}) or {}),
         }
     ]
+
+
+def _build_suggestion_id(target: str, text: str) -> str:
+    digest = sha1(f"{target}\n{text}".encode("utf-8")).hexdigest()[:8]
+    return f"mem-{digest}"
+
+
+def _resolve_write_risk_level(target: str, text: str) -> str:
+    if any(marker in text for marker in ["必须", "不允许", "所有", "默认先不做", "合规", "老板点名"]):
+        return "L4"
+    if target == "user-profile":
+        return "L3"
+    if target == "project-profile":
+        return "L2"
+    if target == "case-memory":
+        return "L1"
+    return "L0"
 
 
 def _score_user_preference(text: str) -> int:

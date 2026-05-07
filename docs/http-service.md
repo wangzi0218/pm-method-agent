@@ -472,6 +472,31 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
   - `frequent_product_domains`
   - `common_constraints`
 
+### `POST /workspaces/{workspace_id}/memory-suggestions`
+
+用途：
+
+- 处理系统识别出来的记忆写入建议
+- 用户确认后再写入项目背景或使用偏好
+- 用户选择只用于这次或忽略时，不写入长期记忆
+
+示例请求体：
+
+```json
+{
+  "suggestion_id": "mem-xxxxxxxx",
+  "action": "accept"
+}
+```
+
+`action` 当前支持：
+
+- `accept`：确认写入。项目背景会写入 `project_profile`，使用偏好会写入 `user_profile`。
+- `use-once`：只用于当前上下文，清掉待确认建议，不写长期记忆。
+- `dismiss`：忽略这条建议，不写长期记忆。
+
+这一接口有意保持轻量，不替用户静默写长期记忆。记忆识别可以由本地规则或 LLM 辅助完成，但最终写入由 runtime 和用户确认共同决定。
+
 ### `GET /workspaces/{workspace_id}/cases`
 
 用途：

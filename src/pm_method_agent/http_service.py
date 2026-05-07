@@ -275,6 +275,36 @@ class PMMethodHTTPService:
                         },
                     )
 
+                if method == "POST" and normalized_path == f"/workspaces/{workspace_id}/memory-suggestions":
+                    payload = _parse_json_body(body)
+                    workspace = get_or_create_workspace(workspace_id, store=self._workspace_store)
+                    result = self._handle_memory_suggestion_action(
+                        workspace=workspace,
+                        suggestion_id=str(payload.get("suggestion_id", "") or "").strip(),
+                        action=str(payload.get("action", "") or "").strip(),
+                    )
+                    save_workspace(workspace, store=self._workspace_store)
+                    self._remove_memory_suggestion_from_active_case(
+                        workspace,
+                        str(result.get("suggestion", {}).get("suggestion_id", "") or ""),
+                    )
+                    recent_cases = self._load_recent_cases(workspace)
+                    active_case = self._load_active_case(workspace)
+                    active_project_profile = self._load_active_project_profile(workspace)
+                    return HTTPResponse.json(
+                        200,
+                        {
+                            "workspace": workspace.to_dict(),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                recent_cases,
+                                active_project_profile,
+                                active_case,
+                            ),
+                            "result": result,
+                        },
+                    )
+
                 if method == "GET" and normalized_path == f"/workspaces/{workspace_id}/runtime/approvals":
                     return HTTPResponse.json(
                         200,
@@ -520,6 +550,102 @@ class PMMethodHTTPService:
                 continue
         return cases
 
+    def _remove_memory_suggestion_from_active_case(self, workspace, suggestion_id: str) -> None:
+        if not suggestion_id or not workspace.active_case_id:
+            return
+        try:
+            case_state = self._load_case(workspace.active_case_id)
+        except HTTPServiceError:
+            return
+        suggestions = _ensure_memory_suggestion_list(case_state.metadata.get("memory_write_suggestions"))
+        remaining = [item for item in suggestions if item.get("suggestion_id") != suggestion_id]
+        if len(remaining) == len(suggestions):
+            return
+        if remaining:
+            case_state.metadata["memory_write_suggestions"] = remaining
+        else:
+            case_state.metadata.pop("memory_write_suggestions", None)
+        self._store.save(case_state)
+
+    def _handle_memory_suggestion_action(self, *, workspace, suggestion_id: str, action: str) -> JsonDict:
+        if action not in {"accept", "use-once", "dismiss"}:
+            raise HTTPServiceError(400, "Unsupported memory suggestion action.")
+        suggestions = _ensure_memory_suggestion_list(workspace.metadata.get("memory_write_suggestions"))
+        suggestion = _find_memory_suggestion(suggestions, suggestion_id)
+        if suggestion is None:
+            raise HTTPServiceError(404, "Memory suggestion not found.")
+
+        if action in {"use-once", "dismiss"}:
+            suggestion["status"] = "used-once" if action == "use-once" else "dismissed"
+            workspace.metadata["memory_write_suggestions"] = [
+                item for item in suggestions if item.get("suggestion_id") != suggestion.get("suggestion_id")
+            ]
+            return {
+                "action": action,
+                "status": suggestion["status"],
+                "suggestion": suggestion,
+                "message": "已处理这条记忆建议。",
+            }
+
+        target = str(suggestion.get("target", "") or "").strip()
+        if target == "project-profile":
+            write_result = self._accept_project_profile_memory_suggestion(workspace, suggestion)
+        elif target == "user-profile":
+            write_result = self._accept_user_profile_memory_suggestion(workspace, suggestion)
+        elif target == "case-memory":
+            write_result = {"target": "case-memory", "status": "already-in-case"}
+        else:
+            raise HTTPServiceError(400, "Unsupported memory suggestion target.")
+
+        suggestion["status"] = "accepted"
+        workspace.metadata["memory_write_suggestions"] = [
+            item for item in suggestions if item.get("suggestion_id") != suggestion.get("suggestion_id")
+        ]
+        return {
+            "action": "accept",
+            "status": "accepted",
+            "suggestion": suggestion,
+            "write_result": write_result,
+            "message": "已按确认写入记忆。",
+        }
+
+    def _accept_project_profile_memory_suggestion(self, workspace, suggestion: JsonDict) -> JsonDict:
+        source_text = str(suggestion.get("source_text", "") or suggestion.get("source_excerpt", "") or "").strip()
+        context_updates = _ensure_dict(suggestion.get("context_updates")) or {}
+        stable_constraints = _memory_constraint_notes(source_text)
+        success_metrics = _memory_metric_notes(source_text)
+        if workspace.active_project_profile_id:
+            project_profile = update_project_profile(
+                project_profile_id=workspace.active_project_profile_id,
+                context_profile_updates=context_updates,
+                stable_constraints=stable_constraints,
+                success_metrics=success_metrics,
+                notes=[source_text] if source_text else [],
+                store=self._project_profile_store,
+            )
+        else:
+            project_profile = create_project_profile(
+                project_name="当前项目",
+                context_profile=context_updates,
+                stable_constraints=stable_constraints,
+                success_metrics=success_metrics,
+                notes=[source_text] if source_text else [],
+                store=self._project_profile_store,
+            )
+            workspace.active_project_profile_id = project_profile.project_profile_id
+        return {"target": "project-profile", "project_profile": project_profile.to_dict()}
+
+    def _accept_user_profile_memory_suggestion(self, workspace, suggestion: JsonDict) -> JsonDict:
+        source_text = str(suggestion.get("source_text", "") or suggestion.get("source_excerpt", "") or "").strip()
+        update_workspace_user_profile(
+            workspace,
+            preferred_output_style=_infer_preferred_output_style(source_text),
+            preferred_language=_infer_preferred_language(source_text),
+            decision_style=_infer_decision_style(source_text),
+            common_constraints=_memory_constraint_notes(source_text),
+        )
+        return {"target": "user-profile", "user_profile": get_workspace_user_profile(workspace)}
+
 
 class HTTPServiceError(Exception):
     def __init__(self, status_code: int, message: str) -> None:
@@ -652,6 +778,59 @@ def _extract_runtime_tool_name(path: str) -> Optional[str]:
     if len(parts) != 3 or parts[0] != "runtime" or parts[1] != "tools":
         return None
     return parts[2]
+
+
+def _ensure_memory_suggestion_list(value: object) -> list[JsonDict]:
+    if not isinstance(value, list):
+        return []
+    suggestions: list[JsonDict] = []
+    for item in value:
+        if isinstance(item, dict):
+            suggestions.append(dict(item))
+    return suggestions
+
+
+def _find_memory_suggestion(suggestions: list[JsonDict], suggestion_id: str) -> Optional[JsonDict]:
+    if suggestion_id:
+        for item in suggestions:
+            if str(item.get("suggestion_id", "") or "") == suggestion_id:
+                return item
+        return None
+    if len(suggestions) == 1:
+        return suggestions[0]
+    return None
+
+
+def _memory_constraint_notes(text: str) -> list[str]:
+    if any(keyword in text for keyword in ["合规", "预算", "周期", "资源", "权限", "上线", "设备"]):
+        return [text] if text else []
+    return []
+
+
+def _memory_metric_notes(text: str) -> list[str]:
+    if any(keyword in text for keyword in ["指标", "率", "留存", "转化", "GMV", "DAU", "到诊率", "履约率"]):
+        return [text] if text else []
+    return []
+
+
+def _infer_preferred_output_style(text: str) -> Optional[str]:
+    if any(keyword in text for keyword in ["简洁", "短一点", "别太长"]):
+        return "简洁"
+    if any(keyword in text for keyword in ["卡片", "结构化", "分点"]):
+        return "结构化卡片"
+    return None
+
+
+def _infer_preferred_language(text: str) -> Optional[str]:
+    if "中文" in text:
+        return "中文"
+    return None
+
+
+def _infer_decision_style(text: str) -> Optional[str]:
+    if any(keyword in text for keyword in ["先给结论", "先说结论", "先结论后展开", "先说重点"]):
+        return "先结论后展开"
+    return None
 
 
 def _ensure_dict(payload: object) -> Optional[JsonDict]:

@@ -4497,6 +4497,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         hints = suggest_memory_write_hints("我们团队默认先看诊率和履约率，资源紧的时候也会优先保履约。")
 
         self.assertEqual(hints[0]["target"], "project-profile")
+        self.assertEqual(hints[0]["status"], "pending")
+        self.assertEqual(hints[0]["write_risk_level"], "L2")
+        self.assertTrue(hints[0]["suggestion_id"].startswith("mem-"))
 
     def test_memory_write_hint_can_prefer_project_background_for_mixed_context_sentence(self) -> None:
         hints = suggest_memory_write_hints("这是一个 ToB 的 HIS 产品，主要通过网页端使用，前台最近总会漏提醒。")
@@ -4507,11 +4510,13 @@ class OrchestratorSmokeTest(unittest.TestCase):
         hints = suggest_memory_write_hints("我更喜欢你先给结论再展开，文字短一点，中文就行。")
 
         self.assertEqual(hints[0]["target"], "user-profile")
+        self.assertEqual(hints[0]["write_risk_level"], "L3")
 
     def test_memory_write_hint_can_identify_case_only_signal(self) -> None:
         hints = suggest_memory_write_hints("这次前台昨天一共漏了 6 次提醒，店长已经来问了。")
 
         self.assertEqual(hints[0]["target"], "case-memory")
+        self.assertEqual(hints[0]["write_risk_level"], "L1")
 
     def test_agent_shell_can_attach_memory_write_hint_to_case_reply(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4904,6 +4909,100 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(get_response.status_code, 200)
         self.assertIn("上线周期紧", get_response.payload["project_profile"]["stable_constraints"])
         self.assertIn("到诊率", get_response.payload["project_profile"]["success_metrics"])
+
+    def test_http_service_can_accept_project_memory_suggestion(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。"}'.encode(
+                    "utf-8"
+                ),
+            )
+            message_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"我们团队默认先看到诊率和履约率，资源紧的时候也会优先保履约。"}'.encode(
+                    "utf-8"
+                ),
+            )
+            suggestion = message_response.payload["workspace"]["metadata"]["memory_write_suggestions"][0]
+            active_case_id = str(message_response.payload["workspace"].get("active_case_id", ""))
+            accept_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-suggestions",
+                body=json.dumps(
+                    {"suggestion_id": suggestion["suggestion_id"], "action": "accept"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+            active_case_payload = service.handle(
+                method="GET",
+                path=f"/cases/{active_case_id}",
+            ).payload
+
+        self.assertEqual(accept_response.status_code, 200)
+        self.assertEqual(accept_response.payload["result"]["status"], "accepted")
+        self.assertEqual(accept_response.payload["result"]["write_result"]["target"], "project-profile")
+        self.assertTrue(accept_response.payload["workspace"]["active_project_profile_id"])
+        self.assertEqual(accept_response.payload["cases"]["memory_write_suggestions"], [])
+        self.assertNotIn(
+            "memory_write_suggestions",
+            active_case_payload["case"]["metadata"],
+        )
+        project_profile = accept_response.payload["result"]["write_result"]["project_profile"]
+        self.assertIn("到诊率", project_profile["success_metrics"][0])
+
+    def test_http_service_can_accept_user_preference_memory_suggestion(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            message_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"我更喜欢你先给结论再展开，文字短一点，中文就行。"}'.encode("utf-8"),
+            )
+            suggestion = message_response.payload["case"]["metadata"]["memory_write_suggestions"][0]
+            accept_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-suggestions",
+                body=json.dumps(
+                    {"suggestion_id": suggestion["suggestion_id"], "action": "accept"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(accept_response.status_code, 200)
+        user_profile = accept_response.payload["result"]["write_result"]["user_profile"]
+        self.assertEqual(user_profile["preferred_output_style"], "简洁")
+        self.assertEqual(user_profile["preferred_language"], "中文")
+        self.assertEqual(user_profile["decision_style"], "先结论后展开")
+        self.assertEqual(accept_response.payload["cases"]["memory_write_suggestions"], [])
+
+    def test_http_service_can_mark_memory_suggestion_as_use_once_without_long_term_write(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            service = PMMethodHTTPService(store_dir=tmpdir)
+            message_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/messages",
+                body='{"message":"我们团队默认先看到诊率和履约率，资源紧的时候也会优先保履约。"}'.encode(
+                    "utf-8"
+                ),
+            )
+            suggestion = message_response.payload["case"]["metadata"]["memory_write_suggestions"][0]
+            use_once_response = service.handle(
+                method="POST",
+                path="/workspaces/demo/memory-suggestions",
+                body=json.dumps(
+                    {"suggestion_id": suggestion["suggestion_id"], "action": "use-once"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        self.assertEqual(use_once_response.status_code, 200)
+        self.assertEqual(use_once_response.payload["result"]["status"], "used-once")
+        self.assertFalse(use_once_response.payload["workspace"].get("active_project_profile_id"))
+        self.assertEqual(use_once_response.payload["cases"]["memory_write_suggestions"], [])
 
     def test_http_service_can_handle_agent_messages_with_workspace(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -2206,15 +2206,21 @@ def _build_memory_write_suggestions_payload(raw_payload: object) -> List[dict]:
         summary = str(item.get("summary", "")).strip()
         action_hint = str(item.get("action_hint", "")).strip()
         source_excerpt = str(item.get("source_excerpt", "")).strip()
+        suggestion_id = str(item.get("suggestion_id", "")).strip()
+        status = str(item.get("status", "pending") or "pending").strip()
+        write_risk_level = str(item.get("write_risk_level", "") or "").strip()
         if not label and not summary:
             continue
         items.append(
             {
+                "suggestion_id": suggestion_id,
                 "target": target,
                 "label": label,
                 "summary": summary,
                 "action_hint": action_hint,
                 "source_excerpt": source_excerpt,
+                "status": status,
+                "write_risk_level": write_risk_level,
             }
         )
     return items[:2]
