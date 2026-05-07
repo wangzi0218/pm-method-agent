@@ -38,6 +38,9 @@ WEB_DEMO_HTML = """<!doctype html>
             <p class="hint">不想手工造数据时，可以先装一组演示案例。</p>
           </div>
           <div id="workspaceMeta" class="workspace-meta"></div>
+          <div id="workspaceMemory" class="workspace-memory empty-list">
+            <p>项目背景、当前焦点和你的偏好会收在这里。</p>
+          </div>
         </section>
 
         <section class="panel recent-panel">
@@ -350,6 +353,41 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.workspace-memory {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.workspace-memory-card {
+  border: 1px solid rgba(61, 52, 41, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+  padding: 12px 13px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.44);
+}
+
+.workspace-memory-card.is-warm {
+  border-color: rgba(179, 77, 47, 0.17);
+  background: linear-gradient(180deg, rgba(255, 244, 238, 0.76), rgba(255, 255, 255, 0.44));
+}
+
+.workspace-memory-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.workspace-memory-text {
+  display: block;
+  color: rgba(36, 31, 26, 0.82);
+  font-size: 13px;
+  line-height: 1.64;
 }
 
 .pill,
@@ -1147,6 +1185,7 @@ WEB_DEMO_JS = """\
     currentHistory: null,
     currentCaseRuntime: null,
     currentRuntimeSession: null,
+    currentWorkspaceCases: null,
     recentCases: [],
     approvals: [],
   };
@@ -1157,6 +1196,7 @@ WEB_DEMO_JS = """\
     seedWorkspaceButton: document.getElementById("seedWorkspaceButton"),
     refreshWorkspaceButton: document.getElementById("refreshWorkspaceButton"),
     workspaceMeta: document.getElementById("workspaceMeta"),
+    workspaceMemory: document.getElementById("workspaceMemory"),
     recentCountBadge: document.getElementById("recentCountBadge"),
     recentCases: document.getElementById("recentCases"),
     heroTitle: document.getElementById("heroTitle"),
@@ -1281,6 +1321,7 @@ WEB_DEMO_JS = """\
         pc: "桌面端",
         "mobile-web": "移动网页",
         "native-app": "原生应用",
+        "mini-program": "小程序",
         miniapp: "小程序",
         "multi-platform": "多端",
       },
@@ -1750,6 +1791,77 @@ WEB_DEMO_JS = """\
       pills.push('<span class="pill">已带项目背景</span>');
     }
     els.workspaceMeta.innerHTML = pills.join("");
+  }
+
+  function renderWorkspaceMemory(casesPayload = state.currentWorkspaceCases) {
+    if (!els.workspaceMemory) {
+      return;
+    }
+    const items = [];
+    const projectProfile = casesPayload?.project_profile || {};
+    const projectSummary = String(projectProfile.summary || "").trim();
+    if (projectSummary) {
+      items.push({
+        label: "项目背景",
+        text: projectSummary,
+        tone: "warm",
+      });
+    } else if (casesPayload?.active_project_profile_id) {
+      items.push({
+        label: "项目背景",
+        text: `已带项目背景：${casesPayload.active_project_profile_id}`,
+        tone: "warm",
+      });
+    }
+
+    const workspaceMemory = casesPayload?.workspace_memory || {};
+    const activeFocus = String(workspaceMemory.active_focus || "").trim();
+    if (activeFocus) {
+      items.push({ label: "当前焦点", text: activeFocus, tone: "warm" });
+    }
+    const latestMemoryNote = String(workspaceMemory.latest_memory_note || "").trim();
+    if (latestMemoryNote) {
+      items.push({ label: "最近补充", text: latestMemoryNote });
+    }
+    const openQuestions = Array.isArray(workspaceMemory.open_questions)
+      ? workspaceMemory.open_questions.filter(Boolean)
+      : [];
+    if (openQuestions.length) {
+      items.push({ label: "还开着的问题", text: shortText(openQuestions[0], 96) });
+    }
+
+    const userProfile = casesPayload?.user_profile || {};
+    const userProfileTexts = [];
+    if (userProfile.preferred_output_style) {
+      userProfileTexts.push(`输出：${userProfile.preferred_output_style}`);
+    }
+    if (userProfile.decision_style) {
+      userProfileTexts.push(`判断：${userProfile.decision_style}`);
+    }
+    if (Array.isArray(userProfile.common_constraints) && userProfile.common_constraints.length) {
+      userProfileTexts.push(`常见约束：${userProfile.common_constraints.slice(0, 2).join("、")}`);
+    }
+    if (userProfileTexts.length) {
+      items.push({ label: "个人偏好", text: userProfileTexts.join("；") });
+    }
+
+    if (!items.length) {
+      els.workspaceMemory.className = "workspace-memory empty-list";
+      els.workspaceMemory.innerHTML = "<p>还没有稳定背景。先聊一轮，系统会把项目背景、当前焦点和偏好收在这里。</p>";
+      return;
+    }
+    els.workspaceMemory.className = "workspace-memory";
+    els.workspaceMemory.innerHTML = items
+      .slice(0, 4)
+      .map(
+        (item) => `
+          <article class="workspace-memory-card${item.tone === "warm" ? " is-warm" : ""}">
+            <span class="workspace-memory-label">${inlineFormat(item.label)}</span>
+            <span class="workspace-memory-text">${inlineFormat(shortText(item.text, 116))}</span>
+          </article>
+        `
+      )
+      .join("");
   }
 
   function displayFollowUpFocus(casePayload = state.currentCase, historyPayload = state.currentHistory) {
@@ -2483,6 +2595,8 @@ WEB_DEMO_JS = """\
 
     const payload = await request(`/workspaces/${encodeURIComponent(workspaceId)}/cases`);
     renderWorkspaceMeta(payload.workspace);
+    state.currentWorkspaceCases = payload.cases || null;
+    renderWorkspaceMemory(state.currentWorkspaceCases);
     state.recentCases = payload.cases.recent_cases || [];
     state.activeCaseId = payload.cases.active_case_id || "";
     renderRecentCases();
@@ -2496,6 +2610,7 @@ WEB_DEMO_JS = """\
       state.currentHistory = null;
       state.currentCaseRuntime = null;
       state.currentRuntimeSession = null;
+      state.currentWorkspaceCases = payload.cases || null;
       els.activeCaseBadge.textContent = "未加载";
       els.heroTitle.textContent = "先给一句真实草稿。";
       els.statusPills.innerHTML = "";
@@ -2510,6 +2625,7 @@ WEB_DEMO_JS = """\
       els.historyContent.className = "render-surface empty-surface";
       els.historyContent.innerHTML = "<p>选中案例后，这里会显示历史记录。</p>";
       renderRuntimePanel(null);
+      renderWorkspaceMemory(state.currentWorkspaceCases);
       await Promise.all([loadRuntimeSession(), loadApprovals()]);
       return;
     }
@@ -2612,6 +2728,8 @@ WEB_DEMO_JS = """\
       renderWorkspaceMeta(payload.workspace);
     }
     if (payload.cases) {
+      state.currentWorkspaceCases = payload.cases;
+      renderWorkspaceMemory(state.currentWorkspaceCases);
       state.recentCases = payload.cases.recent_cases || [];
       state.activeCaseId = payload.cases.active_case_id || "";
       renderRecentCases();
@@ -2646,6 +2764,13 @@ WEB_DEMO_JS = """\
     state.activeCaseId = payload.workspace?.active_case_id || caseId;
     if (payload.workspace) {
       renderWorkspaceMeta(payload.workspace);
+    }
+    if (payload.cases) {
+      state.currentWorkspaceCases = payload.cases;
+      renderWorkspaceMemory(state.currentWorkspaceCases);
+    } else if (state.currentWorkspaceCases) {
+      state.currentWorkspaceCases.active_case_id = state.activeCaseId;
+      renderWorkspaceMemory(state.currentWorkspaceCases);
     }
     renderRecentCases();
     renderMainResponse({

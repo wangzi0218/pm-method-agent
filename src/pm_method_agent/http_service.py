@@ -353,10 +353,18 @@ class PMMethodHTTPService:
                     case_state = self._load_case(target_case_id)
                     activate_workspace_case(workspace, target_case_id)
                     save_workspace(workspace, store=self._workspace_store)
+                    recent_cases = self._load_recent_cases(workspace)
+                    active_project_profile = self._load_active_project_profile(workspace)
                     return HTTPResponse.json(
                         200,
                         {
                             "workspace": workspace.to_dict(),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                recent_cases,
+                                active_project_profile,
+                                case_state,
+                            ),
                             "case": case_state.to_dict(),
                             "case_runtime": build_case_runtime_payload(case_state),
                             "rendered_card": render_case_state(case_state),
@@ -392,7 +400,12 @@ class PMMethodHTTPService:
                         {
                             "message": f"已装载 {len(replay_result.seeded_case_ids)} 个示例案例。",
                             "workspace": workspace.to_dict(),
-                            "cases": build_workspace_cases_payload(workspace, recent_cases),
+                            "cases": build_workspace_cases_payload(
+                                workspace,
+                                recent_cases,
+                                self._load_active_project_profile(workspace),
+                                active_case,
+                            ),
                             "seed_result": replay_result.to_dict(),
                             "runtime_session": build_runtime_session_payload(runtime_session),
                             "case": active_case.to_dict() if active_case else None,
