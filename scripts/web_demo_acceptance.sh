@@ -135,7 +135,7 @@ recent_count="$(printf '%s\n' "${third_snapshot}" | grep -o 'generic \[ref=.*\]:
 second_case_id="$(printf '%s\n' "${third_snapshot}" | grep -oE 'case-[0-9a-f]{8}' | head -n 1)"
 assert_contains "${third_snapshot}" "\"2\"" "新增第二个案例后，最近案例数量应为 2"
 
-playwright-cli click "getByRole('button', { name: /点开后从这里继续/ })" >/dev/null
+playwright-cli click "button[data-case-id='${first_case_id}']" >/dev/null
 switch_snapshot="$(wait_for_snapshot_contains "已切换到所选案例")"
 switch_case_occurrences="$(printf '%s\n' "${switch_snapshot}" | grep -o "${first_case_id}" | wc -l | tr -d ' ')"
 

@@ -5067,6 +5067,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("当前焦点", script)
         self.assertIn("function renderWorkspaceMemory", script)
         self.assertIn("还开着的问题", script)
+        self.assertIn("project_profile_confirmation", script)
         self.assertIn("renderCardDigest(state.currentCase, state.currentCaseRuntime);", script)
         self.assertIn("function describeCaseDirection(casePayload)", script)
         self.assertIn("接下来怎么走", script)
@@ -5358,6 +5359,43 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("店长更需要对结果负责。", second_response.rendered_card)
         self.assertNotIn("当前产品属于企业产品、消费者产品还是内部产品？", second_response.case_state.pending_questions)
         self.assertNotIn("当前主要使用平台是桌面端、移动端、小程序还是多端？", second_response.case_state.pending_questions)
+
+    def test_agent_shell_can_reuse_project_background_for_new_case_with_visible_confirmation(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            profile_response = shell.handle_message(
+                "这个项目是 ToB 的 HIS 产品，主要在网页端使用，前台和店长都很关键。",
+                workspace_id="demo",
+            )
+            case_response = shell.handle_message(
+                "还有一个问题，前台最近老是漏提醒复诊患者，我在想是不是该处理。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(profile_response.action, "project-profile-updated")
+        self.assertEqual(case_response.action, "create-case")
+        self.assertEqual(case_response.case_state.context_profile["business_model"], "tob")
+        self.assertEqual(case_response.case_state.context_profile["primary_platform"], "pc")
+        self.assertTrue(case_response.case_state.metadata["project_profile_context_applied"])
+        self.assertIn("我先沿用", case_response.case_state.metadata["project_profile_confirmation"])
+        self.assertIn("如果不是同一个项目", case_response.rendered_card)
+
+    def test_new_case_can_override_reused_project_background_when_input_has_new_context(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            shell.handle_message(
+                "这个项目是 ToB 的 HIS 产品，主要在网页端使用，前台和店长都很关键。",
+                workspace_id="demo",
+            )
+            case_response = shell.handle_message(
+                "还有一个问题，这是一个 ToC 内容社区 App，新用户发帖率偏低，我也想看看。",
+                workspace_id="demo",
+            )
+
+        self.assertEqual(case_response.action, "create-case")
+        self.assertEqual(case_response.case_state.context_profile["business_model"], "toc")
+        self.assertEqual(case_response.case_state.context_profile["primary_platform"], "native-app")
+        self.assertIn("新说到的背景会优先采用", case_response.rendered_card)
 
     def test_agent_shell_can_show_guidance_for_active_case(self) -> None:
         with TemporaryDirectory() as tmpdir:

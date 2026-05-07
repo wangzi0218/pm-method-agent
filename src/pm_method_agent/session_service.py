@@ -135,10 +135,31 @@ def create_case(
         project_name = getattr(project_profile, "project_name", None)
         case_state.metadata["project_profile_id"] = project_profile_id
         case_state.metadata["project_profile_name"] = project_name
+        case_state.metadata["project_profile_context_applied"] = True
+        case_state.metadata["project_profile_confirmation"] = _build_project_profile_confirmation(
+            project_profile,
+            initial_reply_analysis.context_updates,
+        )
     case_state.metadata["show_case_id"] = True
     case_state = attach_follow_up_plan(case_state)
     active_store.save(case_state)
     return case_state
+
+
+def _build_project_profile_confirmation(
+    project_profile: ProjectProfile,
+    explicit_context_updates: Dict[str, object],
+) -> str:
+    project_name = str(getattr(project_profile, "project_name", "") or "当前项目").strip() or "当前项目"
+    core_context_keys = {
+        "business_model",
+        "primary_platform",
+        "product_domain",
+        "distribution_channel",
+    }
+    if any(key in explicit_context_updates for key in core_context_keys):
+        return f"我先沿用「{project_name}」的项目背景；这轮输入里新说到的背景会优先采用。"
+    return f"我先沿用「{project_name}」的项目背景。如果不是同一个项目，直接说一声，我会改按新背景看。"
 
 
 def reply_to_case(

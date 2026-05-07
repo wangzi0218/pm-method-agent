@@ -2002,6 +2002,7 @@ WEB_DEMO_JS = """\
     const followUpReason = displayFollowUpReason(casePayload);
     const { primaryReason, carryoverNote } = splitCarryoverFollowUpReason(followUpReason);
     const direction = describeCaseDirection(casePayload);
+    const projectConfirmation = String(casePayload.metadata?.project_profile_confirmation || "").trim();
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -2020,6 +2021,15 @@ WEB_DEMO_JS = """\
         <article class="digest-card">
           <span class="digest-label">最需要判断的一点</span>
           <span class="digest-value">${inlineFormat(shortText(topFinding.claim || "", 88))}</span>
+        </article>
+      `);
+    }
+
+    if (projectConfirmation) {
+      cards.push(`
+        <article class="digest-card is-calm">
+          <span class="digest-label">项目背景</span>
+          <span class="digest-value">${inlineFormat(shortText(projectConfirmation, 96))}</span>
         </article>
       `);
     }

@@ -1255,6 +1255,7 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
+    _append_project_profile_confirmation(lines, case_state)
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先按这个场景看")
@@ -1592,6 +1593,7 @@ def _render_context_question_card(case_state: CaseState) -> str:
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
+    _append_project_profile_confirmation(lines, case_state)
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先这么看")
@@ -1622,6 +1624,7 @@ def _render_block_card(case_state: CaseState) -> str:
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
+    _append_project_profile_confirmation(lines, case_state)
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先这么看")
@@ -1667,6 +1670,7 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
     lines.append("# PM Method Agent 继续往下看")
     lines.append("")
     _append_case_id(lines, case_state)
+    _append_project_profile_confirmation(lines, case_state)
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 现在先看到这")
@@ -1701,6 +1705,7 @@ def _render_pre_framing_card(case_state: CaseState) -> str:
     lines.append("")
     _append_case_id(lines, case_state)
     lines.append(f"- 当前阶段：`{_label_for(STAGE_LABELS, case_state.stage)}`")
+    _append_project_profile_confirmation(lines, case_state)
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先这么看")
@@ -2431,6 +2436,13 @@ def _join_limited(items: List[str], limit: int) -> str:
 def _append_case_id(lines: List[str], case_state: CaseState) -> None:
     if case_state.metadata.get("show_case_id"):
         lines.append(f"- 案例编号：`{case_state.case_id}`")
+
+
+def _append_project_profile_confirmation(lines: List[str], case_state: CaseState) -> None:
+    confirmation = str(case_state.metadata.get("project_profile_confirmation", "") or "").strip()
+    if not confirmation:
+        return
+    lines.append(f"- 项目背景：{confirmation}")
 
 
 def _render_context_snapshot(case_state: CaseState) -> List[str]:
