@@ -338,6 +338,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)：不同外壳和脚本的最小接法
 - [docs/README.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/README.md)：按主题整理过的完整文档索引
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：当前做到哪一步，以及后续计划
+- [docs/memory-write-guardrails.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/memory-write-guardrails.md)：自然记忆写入、用户确认和可撤回防线
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：首次公开发布前的检查项
 
 ## 当前状态

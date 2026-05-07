@@ -42,6 +42,7 @@
 - [agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)：统一 agent 入口与工作区承接
 - [session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)：多轮会话与服务层
 - [interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)：互动与记忆设计
+- [memory-write-guardrails.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/memory-write-guardrails.md)：记忆写入风险等级、确认方式和可撤回防线
 
 ## 规则与执行
 
