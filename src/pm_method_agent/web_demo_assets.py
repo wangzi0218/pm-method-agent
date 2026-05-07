@@ -2284,6 +2284,11 @@ WEB_DEMO_JS = """\
     return items;
   }
 
+  function followUpResolutionText(caseRuntime) {
+    const resolution = caseRuntime?.follow_up_resolution || {};
+    return String(resolution.summary || "").trim();
+  }
+
   function renderCardDigest(casePayload, caseRuntime) {
     if (!casePayload) {
       els.cardDigest.className = "card-digest empty-list";
@@ -2301,6 +2306,7 @@ WEB_DEMO_JS = """\
     const direction = describeCaseDirection(casePayload);
     const projectConfirmation = String(casePayload.metadata?.project_profile_confirmation || "").trim();
     const memoryReferences = memoryReferenceSummary(caseRuntime);
+    const followUpResolution = followUpResolutionText(caseRuntime);
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -2347,6 +2353,15 @@ WEB_DEMO_JS = """\
         <article class="digest-card">
           <span class="digest-label">接下来怎么走</span>
           <span class="digest-value">${inlineFormat(direction.summary)}</span>
+        </article>
+      `);
+    }
+
+    if (followUpResolution) {
+      cards.push(`
+        <article class="digest-card is-muted">
+          <span class="digest-label">这轮怎么承接</span>
+          <span class="digest-value">${inlineFormat(shortText(followUpResolution, 108))}</span>
         </article>
       `);
     }

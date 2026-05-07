@@ -301,6 +301,13 @@ def reply_to_case(
     next_case.metadata[SESSION_LAST_REPLY_PARSER_KEY] = reply_analysis.parser_name
     next_case.metadata[SESSION_ROLE_RELATIONSHIPS_KEY] = role_relationships
     next_case.metadata[SESSION_LAST_PARTIAL_PENDING_QUESTIONS_KEY] = list(reply_analysis.partial_pending_questions)
+    next_case.metadata["follow_up_resolution"] = _build_follow_up_resolution(
+        previous_case=previous_case,
+        next_case=next_case,
+        reply_analysis=reply_analysis,
+        answered_in_this_turn=answered_in_this_turn,
+        resume_stage=actual_resume_stage,
+    )
     next_case.metadata.pop(SESSION_EXPLICIT_RESUME_STAGE_KEY, None)
     _record_reply_interpreter_enhancement(next_case, reply_analysis)
     next_case.metadata["llm_runtime"] = get_llm_runtime_status()
@@ -309,6 +316,96 @@ def reply_to_case(
     next_case = apply_follow_up_copywriting(next_case)
     active_store.save(next_case)
     return next_case
+
+
+def _build_follow_up_resolution(
+    *,
+    previous_case: CaseState,
+    next_case: CaseState,
+    reply_analysis: ReplyAnalysis,
+    answered_in_this_turn: list[str],
+    resume_stage: str,
+) -> Dict[str, object]:
+    next_loop_state = str(next_case.metadata.get("follow_up_loop_state", "") or "")
+    transition = _resolve_follow_up_transition(previous_case, next_case, next_loop_state)
+    return {
+        "reply_kind": _resolve_reply_kind(reply_analysis),
+        "hit_areas": _resolve_follow_up_hit_areas(reply_analysis, answered_in_this_turn),
+        "answered_questions": list(answered_in_this_turn),
+        "partial_questions": list(reply_analysis.partial_pending_questions),
+        "resume_stage": resume_stage,
+        "transition": transition,
+        "next_loop_state": next_loop_state,
+        "stop_reason": str(next_case.metadata.get("follow_up_stop_reason", "") or ""),
+    }
+
+
+def _resolve_reply_kind(reply_analysis: ReplyAnalysis) -> str:
+    if reply_analysis.inferred_gate_choice:
+        return "decision-choice"
+    if reply_analysis.answered_pending_questions:
+        return "direct-answer"
+    if reply_analysis.partial_pending_questions:
+        return "partial-answer"
+    if reply_analysis.context_updates or any(reply_analysis.role_relationships.values()):
+        return "context-update"
+    categories = set(reply_analysis.categories)
+    if "decision" in categories:
+        return "decision-signal"
+    if "evidence" in categories:
+        return "evidence-update"
+    if "constraint" in categories:
+        return "constraint-update"
+    return "other"
+
+
+def _resolve_follow_up_hit_areas(reply_analysis: ReplyAnalysis, answered_in_this_turn: list[str]) -> list[str]:
+    areas: list[str] = []
+    if reply_analysis.context_updates or any(reply_analysis.role_relationships.values()) or "context" in reply_analysis.categories:
+        areas.append("context")
+    if "evidence" in reply_analysis.categories:
+        areas.append("evidence")
+    if reply_analysis.inferred_gate_choice or "decision" in reply_analysis.categories:
+        areas.append("decision")
+    if "constraint" in reply_analysis.categories:
+        areas.append("constraint")
+    if any(_question_text_hits_validation(question) for question in answered_in_this_turn):
+        areas.append("validation")
+    deduped: list[str] = []
+    for item in areas:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _question_text_hits_validation(question: str) -> bool:
+    normalized = question.strip()
+    return any(
+        marker in normalized
+        for marker in [
+            "成功指标",
+            "护栏指标",
+            "停止条件",
+            "最小验证动作",
+            "验证周期",
+            "基线指标",
+            "基线数据",
+        ]
+    )
+
+
+def _resolve_follow_up_transition(previous_case: CaseState, next_case: CaseState, next_loop_state: str) -> str:
+    if next_case.workflow_state == "deferred":
+        return "deferred"
+    if next_case.output_kind == "decision-gate-card" or next_loop_state == "awaiting-decision":
+        return "awaiting-decision"
+    if next_case.stage != previous_case.stage:
+        return "advanced-stage"
+    if next_loop_state in {"needs-answer", "open"} and next_case.pending_questions:
+        return "continue-follow-up"
+    if next_loop_state == "settled" or next_case.workflow_state == "done":
+        return "settled"
+    return "continued"
 
 
 def get_case(case_id: str, store: Optional[LocalCaseStore] = None) -> CaseState:

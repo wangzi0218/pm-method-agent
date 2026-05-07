@@ -1517,6 +1517,14 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
         self.assertEqual(replied_case.metadata["last_resume_stage"], "validation-design")
         self.assertNotIn("当前的基线数据是多少", replied_case.pending_questions)
+        resolution = replied_case.metadata["follow_up_resolution"]
+        self.assertEqual(resolution["reply_kind"], "direct-answer")
+        self.assertIn("evidence", resolution["hit_areas"])
+        self.assertIn("validation", resolution["hit_areas"])
+        self.assertEqual(resolution["resume_stage"], "validation-design")
+        runtime_payload = build_case_runtime_payload(replied_case)
+        self.assertIn("follow_up_resolution", runtime_payload)
+        self.assertIn("命中", runtime_payload["follow_up_resolution"]["summary"])
 
     def test_review_card_metric_reply_resumes_from_validation_design(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -5297,6 +5305,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("function handleMemorySuggestionAction", script)
         self.assertIn("function handleMemoryRecordAction", script)
         self.assertIn("memoryReferenceSummary", script)
+        self.assertIn("followUpResolutionText", script)
+        self.assertIn("这轮怎么承接", script)
         self.assertIn("data-memory-reference-action", script)
         self.assertIn("这轮沿用了", script)
         self.assertIn("不是这个项目", script)

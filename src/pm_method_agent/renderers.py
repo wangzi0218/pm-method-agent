@@ -216,6 +216,7 @@ def build_case_runtime_payload(case_state: CaseState) -> dict:
         "fallback_count": len(fallback_components),
         "fallback_active": bool(fallback_components),
         "memory_references": _build_memory_references_payload(case_state),
+        "follow_up_resolution": _build_follow_up_resolution_payload(case_state),
     }
 
 
@@ -245,6 +246,55 @@ def _build_memory_references_payload(case_state: CaseState) -> dict:
         "project_profile": project_reference,
         "has_references": bool(project_reference),
     }
+
+
+def _build_follow_up_resolution_payload(case_state: CaseState) -> dict:
+    raw_resolution = case_state.metadata.get("follow_up_resolution")
+    if not isinstance(raw_resolution, dict):
+        return {}
+    payload: dict = {}
+    for key in [
+        "reply_kind",
+        "resume_stage",
+        "transition",
+        "next_loop_state",
+        "stop_reason",
+    ]:
+        value = str(raw_resolution.get(key, "") or "").strip()
+        if value:
+            payload[key] = value
+    for key in ["hit_areas", "answered_questions", "partial_questions"]:
+        value = raw_resolution.get(key, [])
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                payload[key] = cleaned
+    if payload:
+        payload["summary"] = _render_follow_up_resolution_summary(payload)
+    return payload
+
+
+def _render_follow_up_resolution_summary(payload: dict) -> str:
+    transition_label = {
+        "advanced-stage": "这轮补充后，系统已经往下一段推进。",
+        "continue-follow-up": "这轮已经接住，但还需要顺着当前卡点再补一句。",
+        "awaiting-decision": "这轮先停在决策点，需要你定方向。",
+        "deferred": "这轮已经按暂缓处理。",
+        "settled": "这轮已经形成阶段结论。",
+        "continued": "这轮已经接住，会继续沿着当前判断看。",
+    }.get(str(payload.get("transition", "")), "这轮已经接住，会继续沿着当前判断看。")
+    hit_areas = payload.get("hit_areas", [])
+    area_label = {
+        "context": "场景信息",
+        "evidence": "现状证据",
+        "decision": "决策倾向",
+        "constraint": "约束条件",
+        "validation": "验证信息",
+    }
+    if isinstance(hit_areas, list) and hit_areas:
+        rendered_areas = "、".join(area_label.get(str(item), str(item)) for item in hit_areas[:3])
+        return f"{transition_label} 命中：{rendered_areas}。"
+    return transition_label
 
 
 def build_case_history_payload(case_state: CaseState) -> dict:

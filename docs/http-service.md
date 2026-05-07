@@ -615,6 +615,17 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 网页、IDE 或 agent 外壳可以用这一字段展示“这轮沿用了哪些前提”，不要再自行猜测 `case.metadata`。
 
+`case_runtime.follow_up_resolution` 会说明用户上一轮补充是怎么被承接的。当前包含：
+
+- `reply_kind`：本轮更像直接回答、部分回答、背景补充、证据补充还是决策选择。
+- `hit_areas`：本轮命中了哪些信息区域，例如场景、证据、决策、约束、验证。
+- `answered_questions` / `partial_questions`：已回答或只答到一半的问题。
+- `resume_stage`：系统接下来从哪个阶段继续。
+- `transition`：本轮之后是继续追问、推进阶段、等待决策、暂缓还是收住。
+- `summary`：给网页、IDE 或 agent 外壳展示的一句话说明。
+
+外壳可以用 `summary` 展示“这轮怎么承接”，避免用户觉得系统每轮都在重新开始。
+
 对于运行时策略校验接口，还会返回：
 
 - `decision`
