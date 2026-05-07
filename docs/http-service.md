@@ -622,6 +622,9 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 - `answered_questions` / `partial_questions`：已回答或只答到一半的问题。
 - `resume_stage`：系统接下来从哪个阶段继续。
 - `transition`：本轮之后是继续追问、推进阶段、等待决策、暂缓还是收住。
+- `transition_reason`：为什么做这个推进判断。
+- `next_action_hint`：下一句最适合怎么接。
+- `needs_user_decision`：当前是否需要用户先拍板，而不是继续补信息。
 - `summary`：给网页、IDE 或 agent 外壳展示的一句话说明。
 
 外壳可以用 `summary` 展示“这轮怎么承接”，避免用户觉得系统每轮都在重新开始。

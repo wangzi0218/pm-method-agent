@@ -328,6 +328,11 @@ def _build_follow_up_resolution(
 ) -> Dict[str, object]:
     next_loop_state = str(next_case.metadata.get("follow_up_loop_state", "") or "")
     transition = _resolve_follow_up_transition(previous_case, next_case, next_loop_state)
+    transition_reason = _resolve_follow_up_transition_reason(
+        transition=transition,
+        next_case=next_case,
+        answered_in_this_turn=answered_in_this_turn,
+    )
     return {
         "reply_kind": _resolve_reply_kind(reply_analysis),
         "hit_areas": _resolve_follow_up_hit_areas(reply_analysis, answered_in_this_turn),
@@ -335,6 +340,9 @@ def _build_follow_up_resolution(
         "partial_questions": list(reply_analysis.partial_pending_questions),
         "resume_stage": resume_stage,
         "transition": transition,
+        "transition_reason": transition_reason,
+        "next_action_hint": _resolve_follow_up_next_action_hint(transition, next_case),
+        "needs_user_decision": transition == "awaiting-decision",
         "next_loop_state": next_loop_state,
         "stop_reason": str(next_case.metadata.get("follow_up_stop_reason", "") or ""),
     }
@@ -406,6 +414,52 @@ def _resolve_follow_up_transition(previous_case: CaseState, next_case: CaseState
     if next_loop_state == "settled" or next_case.workflow_state == "done":
         return "settled"
     return "continued"
+
+
+def _resolve_follow_up_transition_reason(
+    *,
+    transition: str,
+    next_case: CaseState,
+    answered_in_this_turn: list[str],
+) -> str:
+    if transition == "deferred":
+        return "用户已经表达暂缓或当前不适合继续推进。"
+    if transition == "awaiting-decision":
+        return "当前缺的不是更多背景，而是需要先做方向选择。"
+    if transition == "advanced-stage":
+        return "这轮补充已经覆盖当前卡点，系统可以从新的阶段继续看。"
+    if transition == "continue-follow-up":
+        if answered_in_this_turn:
+            return "这轮回答了一部分问题，但当前阶段仍有关键缺口。"
+        return "这轮补充已记录，但还没有命中最关键的卡点。"
+    if transition == "settled":
+        return str(next_case.metadata.get("follow_up_stop_reason", "") or "当前信息已经足够形成阶段结论。")
+    return "这轮补充已记录，系统会继续沿着当前判断承接。"
+
+
+def _resolve_follow_up_next_action_hint(transition: str, next_case: CaseState) -> str:
+    if transition == "deferred":
+        return "先记录暂缓原因和重新开启条件。"
+    if transition == "awaiting-decision":
+        return "直接选择继续产品化、优先看非产品路径，或暂缓。"
+    if transition == "advanced-stage":
+        return f"继续看{_stage_display_name(next_case.stage)}。"
+    if transition == "continue-follow-up" and next_case.pending_questions:
+        return f"下一句先补：{next_case.pending_questions[0]}"
+    if transition == "settled":
+        return "可以先按当前阶段结论继续推进。"
+    if next_case.next_actions:
+        return next_case.next_actions[0]
+    return "继续补一句现状、证据或选择倾向。"
+
+
+def _stage_display_name(stage: str) -> str:
+    return {
+        "context-alignment": "场景对齐",
+        "problem-definition": "问题定义",
+        "decision-challenge": "决策挑战",
+        "validation-design": "验证设计",
+    }.get(stage, stage or "当前阶段")
 
 
 def get_case(case_id: str, store: Optional[LocalCaseStore] = None) -> CaseState:

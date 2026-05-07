@@ -1522,9 +1522,38 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("evidence", resolution["hit_areas"])
         self.assertIn("validation", resolution["hit_areas"])
         self.assertEqual(resolution["resume_stage"], "validation-design")
+        self.assertIn("当前阶段仍有关键缺口", resolution["transition_reason"])
+        self.assertTrue(resolution["next_action_hint"])
+        self.assertFalse(resolution["needs_user_decision"])
         runtime_payload = build_case_runtime_payload(replied_case)
         self.assertIn("follow_up_resolution", runtime_payload)
         self.assertIn("命中", runtime_payload["follow_up_resolution"]["summary"])
+        self.assertIn("transition_reason", runtime_payload["follow_up_resolution"])
+        self.assertIn("next_action_hint", runtime_payload["follow_up_resolution"])
+
+    def test_follow_up_resolution_marks_decision_gate_as_user_decision(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            store = default_store(tmpdir)
+            case_state = create_case(
+                raw_input="我们需要优化权限配置流程，避免前台误操作。",
+                context_profile={
+                    "business_model": "tob",
+                    "primary_platform": "pc",
+                    "target_user_roles": ["前台", "管理员"],
+                },
+                store=store,
+            )
+            replied_case = reply_to_case(
+                case_id=case_state.case_id,
+                reply_text="这个问题确实存在，而且影响挺大。",
+                store=store,
+            )
+
+        resolution = replied_case.metadata["follow_up_resolution"]
+        self.assertEqual(resolution["transition"], "awaiting-decision")
+        self.assertTrue(resolution["needs_user_decision"])
+        self.assertIn("方向选择", resolution["transition_reason"])
+        self.assertIn("直接选择", resolution["next_action_hint"])
 
     def test_review_card_metric_reply_resumes_from_validation_design(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -5305,8 +5334,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("function handleMemorySuggestionAction", script)
         self.assertIn("function handleMemoryRecordAction", script)
         self.assertIn("memoryReferenceSummary", script)
-        self.assertIn("followUpResolutionText", script)
+        self.assertIn("followUpResolutionView", script)
         self.assertIn("这轮怎么承接", script)
+        self.assertIn("next_action_hint", script)
         self.assertIn("data-memory-reference-action", script)
         self.assertIn("这轮沿用了", script)
         self.assertIn("不是这个项目", script)

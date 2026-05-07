@@ -2284,9 +2284,14 @@ WEB_DEMO_JS = """\
     return items;
   }
 
-  function followUpResolutionText(caseRuntime) {
+  function followUpResolutionView(caseRuntime) {
     const resolution = caseRuntime?.follow_up_resolution || {};
-    return String(resolution.summary || "").trim();
+    return {
+      summary: String(resolution.summary || "").trim(),
+      reason: String(resolution.transition_reason || "").trim(),
+      nextAction: String(resolution.next_action_hint || "").trim(),
+      needsDecision: Boolean(resolution.needs_user_decision),
+    };
   }
 
   function renderCardDigest(casePayload, caseRuntime) {
@@ -2306,7 +2311,7 @@ WEB_DEMO_JS = """\
     const direction = describeCaseDirection(casePayload);
     const projectConfirmation = String(casePayload.metadata?.project_profile_confirmation || "").trim();
     const memoryReferences = memoryReferenceSummary(caseRuntime);
-    const followUpResolution = followUpResolutionText(caseRuntime);
+    const followUpResolution = followUpResolutionView(caseRuntime);
     const summary = shortText(
       casePayload.normalized_summary || casePayload.blocking_reason || casePayload.raw_input,
       96
@@ -2357,11 +2362,13 @@ WEB_DEMO_JS = """\
       `);
     }
 
-    if (followUpResolution) {
+    if (followUpResolution.summary) {
       cards.push(`
         <article class="digest-card is-muted">
           <span class="digest-label">这轮怎么承接</span>
-          <span class="digest-value">${inlineFormat(shortText(followUpResolution, 108))}</span>
+          <span class="digest-value">${inlineFormat(shortText(followUpResolution.summary, 108))}</span>
+          ${followUpResolution.reason ? `<span class="digest-value">${inlineFormat(shortText(followUpResolution.reason, 92))}</span>` : ""}
+          ${followUpResolution.nextAction ? `<span class="digest-value">下一步：${inlineFormat(shortText(followUpResolution.nextAction, 80))}</span>` : ""}
         </article>
       `);
     }

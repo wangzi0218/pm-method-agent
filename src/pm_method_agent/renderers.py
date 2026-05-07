@@ -257,6 +257,8 @@ def _build_follow_up_resolution_payload(case_state: CaseState) -> dict:
         "reply_kind",
         "resume_stage",
         "transition",
+        "transition_reason",
+        "next_action_hint",
         "next_loop_state",
         "stop_reason",
     ]:
@@ -269,6 +271,7 @@ def _build_follow_up_resolution_payload(case_state: CaseState) -> dict:
             cleaned = [str(item).strip() for item in value if str(item).strip()]
             if cleaned:
                 payload[key] = cleaned
+    payload["needs_user_decision"] = bool(raw_resolution.get("needs_user_decision", False))
     if payload:
         payload["summary"] = _render_follow_up_resolution_summary(payload)
     return payload

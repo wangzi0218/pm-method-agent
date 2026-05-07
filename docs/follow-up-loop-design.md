@@ -307,6 +307,9 @@
 - `answered_questions` / `partial_questions`：被回答和只答到一半的问题。
 - `resume_stage`：系统下一步从哪个阶段继续。
 - `transition`：本轮之后继续追问、推进阶段、等待决策、暂缓或收住。
+- `transition_reason`：解释为什么这么推进。
+- `next_action_hint`：给下一轮输入的最小提示。
+- `needs_user_decision`：标记当前是不是需要用户先拍板。
 
 这不是给用户看的完整解释，而是给网页、CLI 和未来 agent 外壳消费的统一状态。用户侧可以只展示一句“这轮怎么承接”。
 
