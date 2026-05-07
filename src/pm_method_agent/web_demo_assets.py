@@ -668,6 +668,11 @@ button:disabled {
   margin: 16px 0 18px;
 }
 
+.runtime-digest {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  align-items: stretch;
+}
+
 .runtime-memory-list,
 .runtime-event-list {
   margin: 0;
@@ -724,6 +729,19 @@ button:disabled {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
 }
 
+.digest-card.is-primary {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 18px;
+  align-items: center;
+  border-color: rgba(179, 77, 47, 0.2);
+  background:
+    radial-gradient(circle at 12% 18%, rgba(221, 142, 96, 0.18), transparent 32%),
+    linear-gradient(135deg, rgba(255, 247, 238, 0.98), rgba(244, 232, 214, 0.92));
+  padding: clamp(16px, 2.4vw, 22px);
+}
+
 .digest-card.is-warm {
   border-color: rgba(179, 77, 47, 0.22);
   background: linear-gradient(180deg, rgba(255, 244, 238, 0.94), rgba(249, 235, 225, 0.88));
@@ -740,6 +758,12 @@ button:disabled {
   background: linear-gradient(180deg, rgba(252, 249, 243, 0.84), rgba(247, 241, 231, 0.72));
 }
 
+.digest-card.is-debug {
+  border-color: rgba(61, 52, 41, 0.09);
+  background: rgba(252, 249, 244, 0.62);
+  color: var(--muted);
+}
+
 .digest-label {
   display: block;
   margin-bottom: 8px;
@@ -753,6 +777,20 @@ button:disabled {
   display: block;
   font-size: 15px;
   line-height: 1.65;
+}
+
+.digest-card.is-primary .digest-value {
+  max-width: 68ch;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.62;
+}
+
+.runtime-resume-button {
+  align-self: center;
+  min-height: 38px;
+  padding: 0 15px;
+  white-space: nowrap;
 }
 
 .digest-list {
@@ -2065,15 +2103,15 @@ WEB_DEMO_JS = """\
     const terminalState = String(lastTerminal.terminal_state || "");
     const resumeLabel = resumePoint.label || runtimeResumeLabel(runtimeSession.resume_from || lastTerminal.resume_from || "");
     const resumePointText = resumePoint.text || `下一次大概率会从 ${resumeLabel} 接着看。`;
-    let focusText = "眼下没有额外卡点，可以继续补下一轮。";
+    let focusText = "没有额外卡点，可以继续补充新信息。";
     if (pendingApprovals.length) {
-      focusText = `当前有 ${pendingApprovals.length} 项待确认，这一轮会先停在人来拍板这一步。`;
+      focusText = `有 ${pendingApprovals.length} 项待确认，先处理它，再继续后面的动作。`;
     } else if (terminalState === "blocked") {
-      focusText = `当前先停在${resumeLabel}，把缺的材料补上，再继续会更稳。`;
+      focusText = `先补${resumeLabel}需要的信息，再继续会更稳。`;
     } else if (terminalState === "deferred") {
-      focusText = `这一轮先往后放一放，之后可以从${resumeLabel}重新接上。`;
+      focusText = `这件事已经暂缓，之后可以从${resumeLabel}重新接上。`;
     } else if (runtimeSession.runtime_status === "running") {
-      focusText = `系统正在${runtimeLoopLabel(runtimeSession.current_loop_state || "executing")}，这会儿还不用额外打断它。`;
+      focusText = `这一轮还在${runtimeLoopLabel(runtimeSession.current_loop_state || "executing")}，先等它收尾。`;
     }
 
     const openItemCard = openItems.length
@@ -2098,48 +2136,55 @@ WEB_DEMO_JS = """\
       : "";
     const queryLoopLastStep = queryLoop.last_step || {};
     const queryLoopText = queryLoop.query_id
-      ? `这轮是 ${queryLoop.query_id}，最后停在 ${queryLoopLastStep.kind || runtimeLoopLabel(queryLoop.loop_state || "idle")}；还有 ${Number(queryLoop.open_item_count || 0)} 项未闭环。`
-      : "还没有可展示的查询循环。";
+      ? `后台记录：${queryLoop.query_id} 最后一步是 ${queryLoopLastStep.kind || runtimeLoopLabel(queryLoop.loop_state || "idle")}，未闭环 ${Number(queryLoop.open_item_count || 0)} 项。`
+      : "暂无后台路径记录。";
     const firstResumeSuggestion = resumeSuggestions[0] || null;
     const resumeSuggestionCard = firstResumeSuggestion
       ? `
-      <article class="digest-card is-calm">
-        <span class="digest-label">现在可以这样继续</span>
-        <span class="digest-value">
-          ${inlineFormat(`${firstResumeSuggestion.title || "继续处理"}：${shortText(firstResumeSuggestion.text || firstResumeSuggestion.command_hint || "直接补充下一句即可。", 96)}`)}
+      <article class="digest-card is-primary">
+        <span>
+          <span class="digest-label">先做这一步</span>
+          <span class="digest-value">
+            ${inlineFormat(`${firstResumeSuggestion.title || "继续处理"}：${shortText(firstResumeSuggestion.text || firstResumeSuggestion.command_hint || "直接补充下一句即可。", 120)}`)}
+          </span>
         </span>
         <button class="ghost-button runtime-resume-button" type="button" data-resume-suggestion-id="${escapeHtml(
           firstResumeSuggestion.suggestion_id || ""
-        )}" data-resume-action="${escapeHtml(firstResumeSuggestion.action || "")}">处理</button>
+        )}" data-resume-action="${escapeHtml(firstResumeSuggestion.action || "")}">去处理</button>
       </article>
     `
-      : "";
-
-    els.runtimeDigest.className = "history-digest";
-    els.runtimeDigest.innerHTML = `
-      <article class="digest-card is-calm">
-        <span class="digest-label">现在是什么状态</span>
+      : `
+      <article class="digest-card is-primary">
+        <span class="digest-label">现在可以继续</span>
         <span class="digest-value">
-          现在是 ${inlineFormat(stageLabel(runtimeSession.runtime_status || "idle"))}，系统正停在 ${inlineFormat(
-            runtimeLoopLabel(runtimeSession.current_loop_state || "idle")
-          )}。
+          ${inlineFormat(focusText)}
         </span>
       </article>
-      <article class="digest-card">
-        <span class="digest-label">此刻最该知道的事</span>
+    `;
+
+    els.runtimeDigest.className = "history-digest runtime-digest";
+    els.runtimeDigest.innerHTML = `
+      ${resumeSuggestionCard}
+      <article class="digest-card is-calm">
+        <span class="digest-label">为什么先做它</span>
         <span class="digest-value">
           ${inlineFormat(focusText)}
         </span>
       </article>
       <article class="digest-card">
-        <span class="digest-label">接下来会从哪继续</span>
+        <span class="digest-label">从哪里接上</span>
         <span class="digest-value">
-          ${inlineFormat(resumePointText)}当前工作区已经累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
+          ${inlineFormat(resumePointText)}
         </span>
       </article>
-      ${resumeSuggestionCard}
       <article class="digest-card is-muted">
-        <span class="digest-label">这轮怎么走的</span>
+        <span class="digest-label">当前轮次</span>
+        <span class="digest-value">
+          ${inlineFormat(stageLabel(runtimeSession.runtime_status || "idle"))}，累计 ${inlineFormat(String(runtimeSession.turn_count || 0))} 轮。
+        </span>
+      </article>
+      <article class="digest-card is-debug">
+        <span class="digest-label">后台路径</span>
         <span class="digest-value">
           ${inlineFormat(queryLoopText)}
         </span>
