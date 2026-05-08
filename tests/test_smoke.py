@@ -3128,6 +3128,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("这句可能值得记住", js_body)
         self.assertIn("记住", js_body)
         self.assertIn("只用于这次", js_body)
+        self.assertIn(".split(/[、,，;；\\n]/)", js_body)
+        self.assertNotIn(".split(/[、,，;；\n]/)", js_body)
         self.assertIn("不记", js_body)
         self.assertIn("还没有稳定背景", js_body)
         self.assertIn("个人偏好", js_body)
@@ -5351,6 +5353,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("当前继续产品化", script)
         self.assertIn("当前先看非产品路径", script)
         self.assertIn("这轮等你拍板", script)
+        self.assertIn(".split(/[、,，;；\\n]/)", script)
         self.assertEqual(content_type, "application/javascript; charset=utf-8")
 
     def test_session_service_can_infer_defer_from_soft_gate_expression(self) -> None:

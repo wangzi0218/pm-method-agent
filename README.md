@@ -331,6 +331,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：首次公开发布的最小标准与检查清单
 - [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：首次公开前的提交、推送和版本建议
+- [docs/v0-2-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-readiness.md)：`v0.2` 多轮协作与记忆闭环预览版的发布准备清单
 
 ## 文档导航
 
@@ -339,6 +340,7 @@ export PMMA_LLM_MODEL=deepseek-chat
 - [docs/README.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/README.md)：按主题整理过的完整文档索引
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)：当前做到哪一步，以及后续计划
 - [docs/memory-write-guardrails.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/memory-write-guardrails.md)：自然记忆写入、用户确认和可撤回防线
+- [docs/v0-2-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-readiness.md)：`v0.2` 发布前需要确认的能力、边界和验收命令
 - [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：首次公开发布前的检查项
 
 ## 当前状态
@@ -346,7 +348,10 @@ export PMMA_LLM_MODEL=deepseek-chat
 当前仓库已经具备一套可运行的最小主线：
 
 - 可运行的 CLI 与统一 agent 入口
+- 本地 HTTP 服务和最小网页 demo
 - 可恢复的多轮案例与工作区状态
+- 连续追问承接、阶段转场提示和当前卡点说明
+- 记忆建议、用户确认、记忆管理和记忆引用展示
 - OpenAI-compatible 的 LLM 适配骨架
 - 可检查的规则层、prompt layering 和 runtime policy
 - 受控的本地工具运行时、hook 和执行账本
@@ -356,8 +361,11 @@ export PMMA_LLM_MODEL=deepseek-chat
 
 更细的实现进展和后续计划，建议看：
 
+- [docs/v0-2-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-readiness.md)
 - [docs/implementation-roadmap.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/implementation-roadmap.md)
 - [docs/advanced-agent-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/advanced-agent-runtime.md)
+
+当前更适合把它理解为 `v0.2` 预览版准备状态：已经可以本地体验多轮协作和记忆闭环，但还不是完整的云端产品、MCP 外壳或复合多代理系统。
 
 ## 后续形态
 

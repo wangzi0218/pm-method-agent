@@ -70,8 +70,10 @@
 
 ## 发布与版本
 
+- [v0-2-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-readiness.md)：`v0.2` 多轮协作与记忆闭环预览版的发布准备清单
 - [release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)：首次公开发布检查项
 - [release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)：提交、推送和版本建议
+- [releases/v0.2.0.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/releases/v0.2.0.md)：`v0.2.0` 发布说明草稿
 - [releases/v0.1.0.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/releases/v0.1.0.md)：版本说明
 
 ## 补充设计

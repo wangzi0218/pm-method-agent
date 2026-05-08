@@ -1920,7 +1920,7 @@ WEB_DEMO_JS = """\
 
   function splitMemoryInput(value) {
     return String(value || "")
-      .split(/[、,，;；\n]/)
+      .split(/[、,，;；\\n]/)
       .map((item) => item.trim())
       .filter(Boolean);
   }
