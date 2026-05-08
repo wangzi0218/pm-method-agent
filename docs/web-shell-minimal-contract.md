@@ -1,5 +1,7 @@
 # 网页壳最小页面契约
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 这份文档只回答一个问题：
 
 `如果要给 PM Method Agent 做一个网页壳，第一版页面应该怎么拆，分别吃哪些字段。`
@@ -303,11 +305,11 @@
 
 ## 和其他文档的关系
 
-- 如果你还没决定从哪个入口开始，先看 [getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
-- 如果你还没决定是做 skill、网页还是脚本，先看 [integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
-- 如果你想看阻塞和审批提示怎么拆，继续看 [approval-blocking-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/approval-blocking-contract.md)
-- 如果你想看网页 demo 第一版页面和路由怎么排，继续看 [web-demo-information-architecture.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-demo-information-architecture.md)
-- 如果你想看具体接口，再看 [http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)
+- 如果你还没决定从哪个入口开始，先看 [getting-started.md](getting-started.md)
+- 如果你还没决定是做 skill、网页还是脚本，先看 [integration-examples.md](integration-examples.md)
+- 如果你想看阻塞和审批提示怎么拆，继续看 [approval-blocking-contract.md](approval-blocking-contract.md)
+- 如果你想看网页 demo 第一版页面和路由怎么排，继续看 [web-demo-information-architecture.md](web-demo-information-architecture.md)
+- 如果你想看具体接口，再看 [http-service.md](http-service.md)
 
 ## 当前最稳的网页壳起点
 

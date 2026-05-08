@@ -1,5 +1,7 @@
 # IDE / Skill 最小交互契约
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 这份文档只回答一个问题：
 
 `如果把 PM Method Agent 接进 IDE 或 skill，第一版交互到底该怎么表现。`
@@ -271,8 +273,8 @@ IDE / skill 外壳不需要像网页壳那样拆很多区块。
 
 ## 和其他文档的关系
 
-- 如果你还没决定从哪个入口开始，先看 [getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
-- 如果你想看不同外壳的整体接法，先看 [integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
-- 如果你想看网页壳怎么拆，继续看 [web-shell-minimal-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-shell-minimal-contract.md)
-- 如果你想看阻塞和审批该怎么提示，继续看 [approval-blocking-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/approval-blocking-contract.md)
-- 如果你想看统一入口运行时本身，继续看 [agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)
+- 如果你还没决定从哪个入口开始，先看 [getting-started.md](getting-started.md)
+- 如果你想看不同外壳的整体接法，先看 [integration-examples.md](integration-examples.md)
+- 如果你想看网页壳怎么拆，继续看 [web-shell-minimal-contract.md](web-shell-minimal-contract.md)
+- 如果你想看阻塞和审批该怎么提示，继续看 [approval-blocking-contract.md](approval-blocking-contract.md)
+- 如果你想看统一入口运行时本身，继续看 [agent-shell-runtime.md](agent-shell-runtime.md)

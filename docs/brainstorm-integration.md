@@ -1,5 +1,7 @@
 # Brainstorm 融合设计
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 ## 文档目标
 
 这份文档回答一个具体问题：
@@ -14,7 +16,7 @@
 
 如果要继续往实现收敛，可继续看：
 
-- [docs/brainstorm-minimal-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/brainstorm-minimal-design.md)
+- [docs/brainstorm-minimal-design.md](brainstorm-minimal-design.md)
 
 ## 结论先行
 

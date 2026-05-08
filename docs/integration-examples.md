@@ -1,5 +1,7 @@
 # 对外接入示例
 
+> 文档状态：开发文档。用于理解当前实现、接入方式和稳定契约；如果和 README 的产品边界不同，以 README 和 v0.2 发布准备清单为准。
+
 这份文档面向两类人：
 
 - 想把 `PM Method Agent` 接进 IDE、skill、网页或内部服务的人
@@ -11,7 +13,7 @@
 
 如果你准备做网页 demo，建议先看：
 
-- [web-demo-boundaries.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-demo-boundaries.md)
+- [web-demo-boundaries.md](web-demo-boundaries.md)
 
 先把边界定住，再看接口和页面拆分，会更稳。
 
@@ -330,11 +332,11 @@ curl http://127.0.0.1:8000/cases/case-xxxxxx
 
 ## 相关文档
 
-- [getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
-- [http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)
-- [deployment-modes.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/deployment-modes.md)
-- [agent-interaction.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-interaction.md)
-- [approval-blocking-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/approval-blocking-contract.md)
-- [ide-skill-minimal-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/ide-skill-minimal-contract.md)
-- [web-shell-minimal-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-shell-minimal-contract.md)
-- [web-demo-information-architecture.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-demo-information-architecture.md)
+- [getting-started.md](getting-started.md)
+- [http-service.md](http-service.md)
+- [deployment-modes.md](deployment-modes.md)
+- [agent-interaction.md](agent-interaction.md)
+- [approval-blocking-contract.md](approval-blocking-contract.md)
+- [ide-skill-minimal-contract.md](ide-skill-minimal-contract.md)
+- [web-shell-minimal-contract.md](web-shell-minimal-contract.md)
+- [web-demo-information-architecture.md](web-demo-information-architecture.md)

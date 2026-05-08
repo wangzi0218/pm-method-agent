@@ -1,5 +1,7 @@
 # 最小前端 Demo 信息架构
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 这份文档只回答一个问题：
 
 `如果现在要做一个最小网页 demo，页面结构和交互优先级应该怎么排。`
@@ -15,7 +17,7 @@
 
 如果你还没先明确这版网页 demo 到底该承接什么、暂时不该承接什么，建议先看：
 
-- [web-demo-boundaries.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-demo-boundaries.md)
+- [web-demo-boundaries.md](web-demo-boundaries.md)
 
 ## 一句话建议
 
@@ -341,10 +343,10 @@
 
 ## 和其他文档的关系
 
-- 如果你还没决定从哪个入口开始，先看 [getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
-- 如果你想看整体接法，先看 [integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
-- 如果你想看网页壳字段契约，先看 [web-shell-minimal-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-shell-minimal-contract.md)
-- 如果你想看阻塞和审批提示，继续看 [approval-blocking-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/approval-blocking-contract.md)
+- 如果你还没决定从哪个入口开始，先看 [getting-started.md](getting-started.md)
+- 如果你想看整体接法，先看 [integration-examples.md](integration-examples.md)
+- 如果你想看网页壳字段契约，先看 [web-shell-minimal-contract.md](web-shell-minimal-contract.md)
+- 如果你想看阻塞和审批提示，继续看 [approval-blocking-contract.md](approval-blocking-contract.md)
 
 ## 当前最稳的 demo 目标
 

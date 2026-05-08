@@ -1,12 +1,14 @@
 # LLM 适配层设计
 
+> 文档状态：治理与运行时文档。主要写给开发者和维护者，说明模型、规则、工具和安全边界；不是普通用户的起步文档。
+
 ## 目标
 
 `PM Method Agent` 的长期形态一定会接入 LLM，但不应把方法核心直接绑死在某一个模型或某一个供应商上。
 
 如果要进一步看“哪些能力该留在本地层，哪些能力该交给 LLM”，可继续参考：
 
-- [docs/llm-boundary-scenarios.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-boundary-scenarios.md)
+- [docs/llm-boundary-scenarios.md](llm-boundary-scenarios.md)
 
 这一层的目标不是“让模型接管所有逻辑”，而是把模型调用放进稳定边界里，让项目同时支持：
 
@@ -166,7 +168,7 @@
 
 如果你想在本地安全地配置，而不把密钥带进仓库，建议：
 
-1. 复制一份 [.env.example](/Users/wannz/Documents/sourcetree/pm-method-agent/.env.example)
+1. 复制一份 [.env.example](../.env.example)
 2. 本地保存为 `.env.local`
 3. 再把真实 key 只写进 `.env.local`
 

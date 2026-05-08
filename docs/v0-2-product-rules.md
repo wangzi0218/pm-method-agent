@@ -1,5 +1,7 @@
 # v0.2 产品规则清单
 
+> 文档状态：产品规则文档。用于约束 `v0.2` 主线行为；其中“暂定规则”和“未定边界”不代表已经长期冻结。
+
 ## 这份文档是干什么的
 
 这份文档不讨论：
@@ -364,8 +366,8 @@
 
 配套文档可直接看：
 
-- [stage-conclusion-checklist.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-checklist.md)
-- [stage-conclusion-samples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-samples.md)
+- [stage-conclusion-checklist.md](stage-conclusion-checklist.md)
+- [stage-conclusion-samples.md](stage-conclusion-samples.md)
 
 ### 3. 最后再回到网页和外壳
 

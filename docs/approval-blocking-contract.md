@@ -1,5 +1,7 @@
 # 阻塞与审批提示契约
 
+> 文档状态：治理与运行时文档。主要写给开发者和维护者，说明模型、规则、工具和安全边界；不是普通用户的起步文档。
+
 这份文档只回答一个问题：
 
 `当 PM Method Agent 不能直接继续时，外壳应该怎么把这种状态正确展示给用户。`
@@ -310,7 +312,7 @@
 
 ## 和其他文档的关系
 
-- 如果你想看整体接法，先看 [integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
-- 如果你想看 IDE / skill 交互，再看 [ide-skill-minimal-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/ide-skill-minimal-contract.md)
-- 如果你想看网页壳页面拆分，再看 [web-shell-minimal-contract.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/web-shell-minimal-contract.md)
-- 如果你想看运行时策略本身，再看 [runtime-policy.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/runtime-policy.md)
+- 如果你想看整体接法，先看 [integration-examples.md](integration-examples.md)
+- 如果你想看 IDE / skill 交互，再看 [ide-skill-minimal-contract.md](ide-skill-minimal-contract.md)
+- 如果你想看网页壳页面拆分，再看 [web-shell-minimal-contract.md](web-shell-minimal-contract.md)
+- 如果你想看运行时策略本身，再看 [runtime-policy.md](runtime-policy.md)

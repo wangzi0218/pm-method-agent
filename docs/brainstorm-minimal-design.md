@@ -1,5 +1,7 @@
 # Brainstorm 最小实现方案
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 ## 文档目标
 
 这份文档不再讨论“要不要做 brainstorm”，而是明确一件事：
@@ -289,9 +291,9 @@ LLM 接入仍应走现有 `LLMAdapter`，并保持 OpenAI-compatible 配置方�
 
 如果按当前仓库结构推进，第一版建议只碰这些位置：
 
-- [orchestrator.py](/Users/wannz/Documents/sourcetree/pm-method-agent/src/pm_method_agent/orchestrator.py)
-- [agent_shell.py](/Users/wannz/Documents/sourcetree/pm-method-agent/src/pm_method_agent/agent_shell.py)
-- [renderers.py](/Users/wannz/Documents/sourcetree/pm-method-agent/src/pm_method_agent/renderers.py)
+- [orchestrator.py](../src/pm_method_agent/orchestrator.py)
+- [agent_shell.py](../src/pm_method_agent/agent_shell.py)
+- [renderers.py](../src/pm_method_agent/renderers.py)
 - 新增一个前置收敛模块，例如 `src/pm_method_agent/pre_framing.py`
 
 ### 最小实现建议

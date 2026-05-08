@@ -1,5 +1,7 @@
 # GitHub 发布标准
 
+> 文档状态：发布文档。用于提交、验收、tag 和版本说明；发布前需要结合当前测试结果再次校准。
+
 ## 目标
 
 这份清单用于判断：当前项目是否已经具备第一次公开发布到 GitHub 的条件。
@@ -101,13 +103,13 @@ README 必须让第一次看到仓库的人在 3 分钟内理解项目价值。
 `v0.2` 建议定义为：
 
 - 定位：多轮协作与记忆闭环预览版
-- 入口：CLI、统一 agent、本地 HTTP 服务和最小网页 demo
+- 入口：CLI、统一 agent、本地 HTTP 服务和最小网页演示
 - 重点：模糊草稿进入后，系统能连续追问、承接补充、展示记忆引用，并在必要时让用户确认是否写入长期记忆
 - 非目标：完整云端服务、MCP 外壳、IDE 插件正式包、复合多代理编排
 
 `v0.2` 发布前，建议至少满足：
 
-- 用户能通过 README 找到 CLI 和网页 demo 的体验方式
+- 用户能通过 README 找到 CLI 和网页演示 的体验方式
 - 连续追问、阶段转场和记忆引用在网页里可见
 - 长期记忆不会静默写入，用户可以确认、忽略、编辑和删除
 - runtime 能说明本轮承接、事件摘要和恢复建议
@@ -115,7 +117,7 @@ README 必须让第一次看到仓库的人在 3 分钟内理解项目价值。
 
 更细的 `v0.2` 检查项见：
 
-- [docs/v0-2-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-readiness.md)
+- [docs/v0-2-readiness.md](v0-2-readiness.md)
 
 ## 推上 GitHub 前的最后检查
 
@@ -130,4 +132,4 @@ README 必须让第一次看到仓库的人在 3 分钟内理解项目价值。
 
 如果准备进入首次公开提交，可继续参考：
 
-- [docs/release-process.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-process.md)
+- [docs/release-process.md](release-process.md)

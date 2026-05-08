@@ -1,8 +1,10 @@
 # 阶段结论样本
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 ## 这份文档是干什么的
 
-这份文档是 [stage-conclusion-checklist.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-checklist.md) 的配套样本集。
+这份文档是 [stage-conclusion-checklist.md](stage-conclusion-checklist.md) 的配套样本集。
 
 它不负责定义规则，只负责回答一个更实操的问题：
 

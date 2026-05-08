@@ -1,5 +1,7 @@
 # 实现路线图
 
+> 文档状态：路线图文档。用于说明当前做到哪一步、后续怎么推进；不等同于版本承诺，具体发布边界以 `v0.2` 发布准备清单为准。
+
 ## 目标
 
 把当前的概念设计，推进成一个可复用、GitHub 友好、并且实现路径清晰的开源项目。
@@ -66,8 +68,8 @@
 
 当前可直接参考：
 
-- [docs/evaluation-cases.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/evaluation-cases.md)
-- [docs/real-case-testing.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/real-case-testing.md)
+- [docs/evaluation-cases.md](evaluation-cases.md)
+- [docs/real-case-testing.md](real-case-testing.md)
 
 ## 第四阶段：封装交付
 
@@ -102,13 +104,13 @@
 当前状态：
 
 - 已完成服务层和会话承接能力
-- 已完成 OpenAI-compatible 的 LLM 适配骨架
+- 已完成 兼容 OpenAI 接口格式的模型适配骨架
 - 已完成本地 HTTP 服务
 - 已完成工作区、项目背景和统一 agent 入口
 - 已完成第一轮对外入口文档、接入示例与外壳契约收口
-- 已完成网页 demo 的边界收口文档，开始把“网页是什么、不是什么、默认怎么部署”说清楚
-- 已完成真实网页 demo 的最小实现，并已接入现有 HTTP 服务
-- 已完成网页 demo 多轮阅读流、历史区、运行时区和信息层级的第一轮产品化打磨
+- 已完成网页演示 的边界收口文档，开始把“网页是什么、不是什么、默认怎么部署”说清楚
+- 已完成真实网页演示 的最小实现，并已接入现有 HTTP 服务
+- 已完成网页演示 多轮阅读流、历史区、运行时区和信息层级的第一轮产品化打磨
 - 当前处于第四阶段后段：入口形态、连续追问和记忆闭环已经具备最小版本，正在按 `v0.2` 做发布封装
 - 已补 `v0.2` 产品规则清单，用来冻结当前主线规则、暂定规则和未定边界
 - 已补“阶段结论判定清单”，开始把“什么时候继续问、什么时候先给结论”单独收口
@@ -119,25 +121,25 @@
 
 发布前检查可参考：
 
-- [docs/release-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/release-readiness.md)
-- [docs/v0-2-readiness.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/v0-2-readiness.md)
+- [docs/release-readiness.md](release-readiness.md)
+- [docs/v0-2-readiness.md](v0-2-readiness.md)
 
 下一阶段设计可参考：
 
-- [docs/agent-shell-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/agent-shell-runtime.md)
-- [docs/http-service.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/http-service.md)
-- [docs/interaction-memory-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/interaction-memory-design.md)
-- [docs/session-service-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/session-service-design.md)
-- [docs/llm-adapter.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-adapter.md)
-- [docs/llm-boundary-scenarios.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-boundary-scenarios.md)
-- [docs/llm-runtime-boundary.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-runtime-boundary.md)
-- [docs/advanced-agent-runtime.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/advanced-agent-runtime.md)
+- [docs/agent-shell-runtime.md](agent-shell-runtime.md)
+- [docs/http-service.md](http-service.md)
+- [docs/interaction-memory-design.md](interaction-memory-design.md)
+- [docs/session-service-design.md](session-service-design.md)
+- [docs/llm-adapter.md](llm-adapter.md)
+- [docs/llm-boundary-scenarios.md](llm-boundary-scenarios.md)
+- [docs/llm-runtime-boundary.md](llm-runtime-boundary.md)
+- [docs/advanced-agent-runtime.md](advanced-agent-runtime.md)
 
 本阶段下一步更适合继续：
 
-1. 先完成 `v0.2` 发布封装，修正 README、路线图、发布流程和 readiness 文档。
+1. 已完成 `v0.2` 发布封装的第一轮文档整理，后续继续根据真实阅读反馈调整。
 2. 再补一轮真实问题回归样本，重点覆盖跨行业、跨角色、半步回答和用户否定记忆的场景。
-3. 继续收窄网页 demo 的轻量体验，让用户能看懂承接、记忆和下一步，而不是进入复杂后台。
+3. 继续收窄网页演示 的轻量体验，让用户能看懂承接、记忆和下一步，而不是进入复杂后台。
 4. 再评估 MCP、IDE skill 和 sub-agent 编排是否进入下一个版本。
 
 ## 第五阶段：复合升级
@@ -157,8 +159,8 @@
 
 进一步设计可参考：
 
-- [docs/brainstorm-integration.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/brainstorm-integration.md)
-- [docs/brainstorm-minimal-design.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/brainstorm-minimal-design.md)
+- [docs/brainstorm-integration.md](brainstorm-integration.md)
+- [docs/brainstorm-minimal-design.md](brainstorm-minimal-design.md)
 
 当前状态：
 

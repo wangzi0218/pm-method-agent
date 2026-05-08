@@ -1,5 +1,7 @@
 # 契约定义
 
+> 文档状态：开发文档。用于理解当前实现、接入方式和稳定契约；如果和 README 的产品边界不同，以 README 和 v0.2 发布准备清单为准。
+
 ## 文档目的
 
 本文档定义 `PM Method Agent` 的稳定契约层，用于保证它既能产品化，也能在后续平滑升级。
@@ -33,7 +35,7 @@
 - 决策关口
 - 推荐的下一步动作
 
-具体见 [schemas/case-state.schema.json](/Users/wannz/Documents/sourcetree/pm-method-agent/schemas/case-state.schema.json)。
+具体见 [schemas/case-state.schema.json](../schemas/case-state.schema.json)。
 
 推荐补充字段：
 
@@ -82,7 +84,7 @@
 - `risk_if_wrong`：如果这个判断错了，风险有多大
 - `suggested_next_action`：当前最小但有价值的下一步动作
 
-具体见 [schemas/analyzer-finding.schema.json](/Users/wannz/Documents/sourcetree/pm-method-agent/schemas/analyzer-finding.schema.json)。
+具体见 [schemas/analyzer-finding.schema.json](../schemas/analyzer-finding.schema.json)。
 
 ## 面向用户的输出形态
 
@@ -104,7 +106,7 @@
 - 决策关口卡
 - 完整审查卡
 
-具体风格见 [docs/output-style.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/output-style.md)。
+具体风格见 [docs/output-style.md](output-style.md)。
 
 ## 决策关口契约
 
@@ -126,7 +128,7 @@
 - `reason`
 - `blocking`
 
-具体见 [schemas/decision-gate.schema.json](/Users/wannz/Documents/sourcetree/pm-method-agent/schemas/decision-gate.schema.json)。
+具体见 [schemas/decision-gate.schema.json](../schemas/decision-gate.schema.json)。
 
 ## 证据充分度分级
 

@@ -1,5 +1,7 @@
 # 架构设计
 
+> 文档状态：开发文档。用于理解当前实现、接入方式和稳定契约；如果和 README 的产品边界不同，以 README 和 v0.2 发布准备清单为准。
+
 ## 目标
 
 `PM Method Agent` 的架构设计需要同时满足三件事：
@@ -74,7 +76,7 @@ V1 采用“单一编排器 + 结构化分析模块”。
 
 更合适的边界可继续参考：
 
-- [docs/llm-boundary-scenarios.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/llm-boundary-scenarios.md)
+- [docs/llm-boundary-scenarios.md](llm-boundary-scenarios.md)
 
 ## 为什么必须引入场景信息输入层
 

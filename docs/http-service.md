@@ -1,5 +1,7 @@
 # HTTP 服务层设计
 
+> 文档状态：开发文档。用于理解当前实现、接入方式和稳定契约；如果和 README 的产品边界不同，以 README 和 v0.2 发布准备清单为准。
+
 ## 目标
 
 当前项目的长期形态应当优先表现为 `skill / agent`，而不是要求用户直接操作命令行或直接调用内部模块。
@@ -111,11 +113,11 @@ curl -X POST http://127.0.0.1:8000/workspaces/demo/messages \
 
 如果你只想先知道“我该从哪个入口开始”，建议先看：
 
-- [getting-started.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/getting-started.md)
+- [getting-started.md](getting-started.md)
 
 如果你已经确定要做 IDE、skill、网页或脚本接入，建议继续看：
 
-- [integration-examples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/integration-examples.md)
+- [integration-examples.md](integration-examples.md)
 
 ## 当前接口
 

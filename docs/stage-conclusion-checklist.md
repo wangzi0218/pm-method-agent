@@ -1,5 +1,7 @@
 # 阶段结论判定清单
 
+> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+
 ## 这份清单解决什么问题
 
 这份清单专门解决一个最容易反复改的产品边界：
@@ -23,7 +25,7 @@
 
 配套样本可参考：
 
-- [stage-conclusion-samples.md](/Users/wannz/Documents/sourcetree/pm-method-agent/docs/stage-conclusion-samples.md)
+- [stage-conclusion-samples.md](stage-conclusion-samples.md)
 
 ## 一句话原则
 
