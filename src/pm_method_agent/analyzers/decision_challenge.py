@@ -51,15 +51,15 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
 
     why_now_level = "weak"
     why_now_claim = "为什么是现在做，这一点还不够清楚。"
-    why_now_evidence = ["当前没有明确时间窗口或机会成本说明。"]
+    why_now_evidence = ["还没有看到明确的时间窗口或机会成本。"]
     if has_low_priority_hint:
         why_now_level = "medium"
-        why_now_claim = "当前更像可以延后处理的事项，紧迫性还不够强。"
-        why_now_evidence = ["输入里已经出现了资源受限、优先级不高或可以暂缓的信号。"]
+        why_now_claim = "这件事更像可以延后处理，紧迫性还不够强。"
+        why_now_evidence = ["你已经提到了资源受限、优先级不高或可以暂缓的信号。"]
     elif any(keyword in text for keyword in URGENT_HINTS):
         why_now_level = "medium"
-        why_now_claim = "输入里已经有时机信号，但还要判断这是真窗口，还是临时性的紧急感。"
-        why_now_evidence = ["输入中出现了和时效或优先级相关的表达。"]
+        why_now_claim = "这件事已经有时机信号了，但还要判断是真窗口，还是临时性的紧急感。"
+        why_now_evidence = ["你提到了和时效或优先级相关的表达。"]
 
     case_state.add_finding(
         AnalyzerFinding(
@@ -80,7 +80,7 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
 
     non_product_level = "weak"
     non_product_claim = "现在还不能直接判断一定要做产品，流程、培训、管理等路径最好一起比较。"
-    non_product_evidence = ["当前还没有排除流程、培训或管理等路径。"]
+    non_product_evidence = ["还没有排除流程、培训或管理等路径。"]
     non_product_unknowns = [
         "不改产品能否先解决 60%",
         "不同解法的实施成本和响应速度差异",
@@ -89,7 +89,7 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
     if non_product_already_tried:
         non_product_level = "medium"
         non_product_claim = "已经有信号表明非产品路径试过了，但还要确认失败原因和覆盖范围。"
-        non_product_evidence = ["输入中已经出现“已试过流程、培训或提醒，但效果不稳定”的线索。"]
+        non_product_evidence = ["你已经提到“已试过流程、培训或提醒，但效果不稳定”的线索。"]
         non_product_unknowns = [
             "已经试过哪些非产品路径",
             "为什么这些路径没有稳定解决问题",
@@ -97,7 +97,7 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
         non_product_action = "补看已尝试路径的覆盖范围、持续性和失败原因。"
     elif has_org_hint:
         non_product_level = "medium"
-        non_product_evidence = ["输入中已经出现流程、规范或权限相关线索。"]
+        non_product_evidence = ["你已经提到流程、规范或权限相关线索。"]
 
     case_state.add_finding(
         AnalyzerFinding(
@@ -131,11 +131,11 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
         case_state.add_finding(
             AnalyzerFinding(
                 dimension="decision-challenge",
-                claim="当前主要是非桌面端场景，后面评估时还要把展示空间和操作打断成本一起算进去。",
+                claim="这主要发生在非桌面端，后面评估时还要把展示空间和操作打断成本一起算进去。",
                 claim_type="fact",
                 evidence_level="medium",
-                evidence=["场景基础信息中已标记当前主要平台为非桌面端。"],
-                unknowns=["当前关键操作是否适合在受限屏幕中完成"],
+                evidence=["场景基础信息里已经看到主要平台是非桌面端。"],
+                unknowns=["关键操作是否适合在受限屏幕中完成"],
                 risk_if_wrong="medium",
                 suggested_next_action="后面评估时，把信息密度、流程长度和中断成本一起看。",
                 owner="decision-challenge",
@@ -165,7 +165,7 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
         gate_blocking = True
     elif has_low_priority_hint:
         recommended_option = "defer"
-        gate_reason = "当前紧迫性不足，而且资源也偏紧，先暂缓会更稳妥。"
+        gate_reason = "紧迫性还不够，资源也偏紧，先暂缓会更稳妥。"
         gate_blocking = True
     elif non_product_already_tried:
         recommended_option = "productize-now"
@@ -173,11 +173,11 @@ def analyze_decision_challenge(case_state: CaseState) -> None:
         gate_blocking = False
     elif has_org_hint:
         recommended_option = "try-non-product-first"
-        gate_reason = "当前更像组织流程类问题，先看非产品路径会更稳一些。"
+        gate_reason = "这件事更像组织流程类问题，先看非产品路径会更稳一些。"
         gate_blocking = True
     else:
         recommended_option = "productize-now"
-        gate_reason = "基础场景信息已经具备，当前也没有更优的非产品路径信号，可以继续做验证。"
+        gate_reason = "基础场景信息已经够用了，也没看到更优的非产品路径信号，可以继续做验证。"
         gate_blocking = False
 
     case_state.add_gate(

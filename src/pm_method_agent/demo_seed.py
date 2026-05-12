@@ -379,7 +379,7 @@ def _normalize_demo_title(
     if any(keyword in combined_text for keyword in ("消息", "提醒", "通知")):
         return "提醒这块有点打扰"
     if any(keyword in combined_text for keyword in ("售后", "退货", "退款", "投诉率")):
-        return "售后这块目标没先收住"
+        return "售后这块目标还没说清"
     if any(keyword in combined_text for keyword in ("履约", "物流", "送达")):
         return "承诺时间和实际感受有点对不上"
     return normalized
@@ -406,7 +406,7 @@ def _normalize_demo_initial_message(
     if text and not _looks_like_solution_framed(text):
         if any(marker in text for marker in UNCERTAINTY_MARKERS):
             return text
-        return f"{text.rstrip('。')}，但我还没想清楚这次最该先收住哪一个问题。"
+        return f"{text.rstrip('。')}，但我还没想清楚这次最该先处理哪一个问题。"
     return _build_problemish_initial_message(
         title=title,
         product_domain=product_domain,
@@ -501,7 +501,7 @@ def _build_problemish_initial_message(
         return "我们这边排班现在还是靠表在传，经常来回改，也容易撞车，但我还没想清楚这次到底是协作方式有问题，还是排班规则本来就没先说清。"
     if "提醒这块有点打扰" in title:
         return "最近关于提醒太多、打扰感太强的反馈又多起来了，但我还没想清楚这次更像是通知策略问题，还是消息分层本身没做好。"
-    if "售后这块目标没先收住" in title:
+    if "售后这块目标还没说清" in title:
         return "最近售后这块讨论有点散，大家都觉得该动一动，但我还没想清楚这次到底是要先看退货发起率，还是先盯投诉和体验。"
     if "承诺时间和实际感受有点对不上" in title:
         return "最近不少人都在吐槽预计送达和实际感受对不上，这件事看起来该处理，但我还没想清楚这次是展示承诺有问题，还是履约本身就不稳定。"
@@ -512,7 +512,7 @@ def _build_problemish_initial_message(
     business_hint = _business_model_label(business_model)
     return (
         f"最近{topic}这块讨论慢慢变多了，{role_hint}在{platform_hint}里已经有感知，"
-        f"但我还没想清楚这次更像是{business_hint}里的理解问题、流程问题，还是优先级没先收住。"
+        f"但我还没想清楚这次更像是{business_hint}里的理解问题、流程问题，还是优先级还没说清。"
     )
 
 
@@ -560,7 +560,7 @@ def _build_evidence_follow_up(*, title: str, roles: List[str]) -> str:
         return "现在已经有人反复提这件事了，但还没拆清到底是入口太绕、说明不够，还是门店本来就容易走错。"
     if "提醒这块有点打扰" in title:
         return "现在已经能听到一些关于打扰感的抱怨，但还没拆清到底是哪一类提醒最烦，还是频率本身就过高。"
-    if "售后这块目标没先收住" in title:
+    if "售后这块目标还没说清" in title:
         return "现在数据和反馈都在涨，但还没拆清到底是效率问题更急，还是体验问题更急。"
     if "承诺时间和实际感受有点对不上" in title:
         return "现在投诉和客服反馈都能看到，但还没拆清到底是承诺展示太满，还是履约本身就跟不上。"
@@ -665,7 +665,7 @@ def _default_demo_scenarios() -> List[DemoScenarioSpec]:
             ],
         ),
         DemoScenarioSpec(
-            title="淘宝售后目标没收住",
+            title="淘宝售后目标还没说清",
             business_model="toc",
             primary_platform="native-app",
             product_domain="电商平台",
@@ -694,7 +694,7 @@ def _default_demo_scenarios() -> List[DemoScenarioSpec]:
             primary_platform="native-app",
             product_domain="零售电商",
             target_user_roles=["消费者", "履约运营"],
-            initial_message="最近京东履约相关的抱怨变多了，很多用户说承诺送达时间和实际体验不一致，但我还没收住这次要先处理哪一层问题。",
+            initial_message="最近京东履约相关的抱怨变多了，很多用户说承诺送达时间和实际体验不一致，但我还没想清楚这次要先处理哪一层问题。",
             follow_up_messages=[
                 "这个场景主要在 App 的商品详情和下单链路里发生，消费者和履约运营都在关注。",
                 "我们现在有投诉和客服记录，但还没拆清是展示文案的问题，还是履约能力本身就不稳定。",

@@ -912,7 +912,7 @@ def _render_project_background_follow_up(case_state: CaseState) -> str:
     preview_case = CaseState.from_dict(case_state.to_dict())
     preview_case.output_kind = "continue-guidance-card"
     preview_case.metadata["continue_card_kind"] = "background-follow-up"
-    preview_case.normalized_summary = "基础背景已经补上了，接下来可以开始把问题本身说得更具体一些。"
+    preview_case.normalized_summary = "基础背景已经补上了，接下来可以把真实问题说得更具体一点。"
     return render_case_state(preview_case)
 
 

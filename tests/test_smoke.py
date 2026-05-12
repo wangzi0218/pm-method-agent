@@ -498,7 +498,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         )
         rendered = render_case_state(case_state)
         self.assertIn("## 我主要卡在", rendered)
-        self.assertIn("## 建议先补", rendered)
+        self.assertIn("## 接下来先补", rendered)
         self.assertIn("### 现状与证据", rendered)
         self.assertIn("### 决策与验证", rendered)
 
@@ -517,10 +517,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         original_claims = [finding.claim for finding in case_state.findings]
         rendered = render_case_state(case_state)
 
-        self.assertIn("输入里已经带出方案，先把要解决的问题单独说清。", rendered)
+        self.assertIn("你已经在讲做法了，我想先确认：它到底要解决哪个问题？", rendered)
         self.assertIn("补上现状流程、失败案例和现有替代做法。", rendered)
-        self.assertIn("把当前输入拆成现象、解释、方案假设三层", rendered)
-        self.assertIn("输入里已经带出方案，建议先把要解决的问题单独说清。", original_claims)
+        self.assertIn("把这句话拆成现象、解释、方案假设三层", rendered)
+        self.assertIn("你已经在讲做法了，我想先确认：它到底要解决哪个问题？", original_claims)
 
     def test_rendered_review_card_can_polish_gate_copy(self) -> None:
         from pm_method_agent.orchestrator import run_analysis_with_context
@@ -537,7 +537,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertIn("按现在的信息，能不能直接进入方案讨论？", rendered)
-        self.assertIn("输入里已经混进方案了，现状证据也还不够。", rendered)
+        self.assertIn("现在还没看到足够的现状证据，直接聊方案容易走偏。", rendered)
         self.assertNotIn("按现在的信息，这件事要不要继续往产品方案走？", rendered)
 
     def test_rendered_review_card_can_dedupe_overlap_between_actions_and_unknowns(self) -> None:
@@ -573,9 +573,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         rendered = render_case_state(case_state)
 
-        self.assertIn("还有几个场景前提会直接影响后面的判断", rendered)
+        self.assertIn("会影响后面判断", rendered)
         self.assertIn("这是企业产品场景", rendered)
-        self.assertIn("现在主要是非桌面端场景", rendered)
+        self.assertIn("这主要发生在非桌面端", rendered)
         self.assertEqual(rendered.count("（会影响后面判断）"), 1)
 
     def test_rendered_review_card_does_not_show_summary_count_markers(self) -> None:
@@ -632,9 +632,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
-        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("核心问题还没说清", rendered)
         self.assertIn("这次最先要收敛的到底是哪一个问题", rendered)
-        self.assertIn("现在最大的卡点其实是「核心问题还没收住」", rendered)
+        self.assertIn("现在最大的卡点其实是「核心问题还没说清」", rendered)
 
     def test_pre_framing_can_identify_colloquial_core_problem_uncertainty(self) -> None:
         case_state = run_analysis_with_context(
@@ -648,7 +648,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
-        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("核心问题还没说清", rendered)
         self.assertNotIn("关键行为门槛或动机不足", rendered)
 
     def test_pre_framing_can_identify_colloquial_competing_problem_frames(self) -> None:
@@ -663,7 +663,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
-        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("核心问题还没说清", rendered)
         self.assertNotIn("关键行为门槛或动机不足", rendered)
 
     def test_pre_framing_can_handle_alipay_like_competing_problem_frames(self) -> None:
@@ -678,7 +678,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
-        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("核心问题还没说清", rendered)
         self.assertIn("这次最先要收敛的到底是哪一个问题", rendered)
 
     def test_pre_framing_can_handle_jd_merchant_like_competing_problem_frames(self) -> None:
@@ -693,7 +693,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
-        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("核心问题还没说清", rendered)
         self.assertNotIn("流程执行或责任链不稳定", rendered)
 
     def test_pre_framing_can_handle_taobao_after_sales_like_competing_problem_frames(self) -> None:
@@ -708,7 +708,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         rendered = render_case_state(case_state)
 
         self.assertEqual(case_state.output_kind, "continue-guidance-card")
-        self.assertIn("核心问题还没收住", rendered)
+        self.assertIn("核心问题还没说清", rendered)
         self.assertIn("如果这轮只解决一件事", rendered)
 
     def test_pre_framing_can_handle_alipay_like_user_scene_uncertainty(self) -> None:
@@ -1598,7 +1598,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             ["problem-framing", "decision-challenge", "validation-design"],
         )
         self.assertIn("问题定义", render_case_state(case_state))
-        self.assertIn("## 建议先补", render_case_state(case_state))
+        self.assertIn("## 接下来先补", render_case_state(case_state))
 
     def test_review_card_why_now_reply_resumes_from_decision_challenge(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1969,7 +1969,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
             raw_input="最近门店提醒流程总出错，我想看看是不是该处理。",
             pending_questions=["这件事平时是谁在具体操作，和提出需求的人是不是同一类人？"],
             metadata={
-                "follow_up_focus": "先把问题收稳",
+                "follow_up_focus": "先把问题说清楚",
                 "follow_up_reason": "这轮已经有基础判断了，再补最关键的几项会更顺。",
             },
         )
@@ -2026,7 +2026,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
                                 "primary_platform": "native-app",
                                 "product_domain": "支付服务",
                                 "target_user_roles": ["普通用户", "消息运营"],
-                                "initial_message": "最近很多人说支付宝消息太多，但我们还没收住要先解决通知打扰还是消息分层。",
+                                "initial_message": "最近很多人说支付宝消息太多，但我们还没想清楚要先解决通知打扰还是消息分层。",
                                 "follow_up_messages": [
                                     "这个场景主要在 App 里发生，普通用户和消息运营都在盯。",
                                     "现在只知道有人会手动关提醒，还没拆清到底是哪几类消息最烦。",
@@ -2049,7 +2049,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(result.scenarios[0].primary_platform, "native-app")
         self.assertEqual(result.scenarios[0].target_user_roles, ["普通用户", "消息运营"])
         self.assertIn("提醒", result.scenarios[0].title)
-        self.assertIn("还没收住", result.scenarios[0].initial_message)
+        self.assertIn("还没想清楚", result.scenarios[0].initial_message)
 
     def test_llm_demo_scenario_generator_can_fall_back_when_adapter_fails(self) -> None:
         generator = LLMDemoScenarioGenerator(
@@ -2952,9 +2952,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
 
         rendered = render_case_state(case_state)
 
-        self.assertIn("理解方式", rendered)
-        self.assertIn("模型辅助", rendered)
-        self.assertIn("阶段推进和关口仍由方法运行时控制", rendered)
+        self.assertIn("辅助方式", rendered)
+        self.assertIn("已用模型辅助理解", rendered)
+        self.assertIn("阶段推进仍由方法流程控制", rendered)
 
     def test_build_case_runtime_payload_can_expose_fallback_components(self) -> None:
         case_state = run_analysis("前台希望增加一个预约前提醒弹窗，避免漏提醒患者。")
@@ -2979,8 +2979,8 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(payload["fallback_count"], 1)
         self.assertEqual(payload["fallback_components"], ["reply-interpreter"])
         self.assertEqual(payload["understanding_mode"], "partial-fallback")
-        self.assertEqual(payload["understanding_label"], "模型部分辅助，部分回退")
-        self.assertIn("本地规则", payload["understanding_description"])
+        self.assertEqual(payload["understanding_label"], "部分内容用了模型辅助")
+        self.assertIn("内置方法", payload["understanding_description"])
         component_states = payload["understanding"]["component_states"]
         reply_state = next(item for item in component_states if item["component"] == "reply-interpreter")
         copywriter_state = next(item for item in component_states if item["component"] == "copywriter")
@@ -3010,7 +3010,7 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertEqual(local_payload["understanding_mode"], "local-only")
         self.assertEqual(local_payload["understanding_label"], "本地规则")
         self.assertEqual(contract_payload["understanding_mode"], "contract-fallback")
-        self.assertIn("未通过校验", contract_payload["understanding_label"])
+        self.assertIn("没有采用", contract_payload["understanding_label"])
         contract_state = contract_payload["understanding"]["component_states"][0]
         self.assertEqual(contract_state["failure_kind"], "empty-result")
         self.assertIn("模型没有返回可用结果", contract_state["user_message"])
@@ -3111,6 +3111,10 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("pickRuntimeHighlights", js_response.encoded_body().decode("utf-8"))
         js_body = js_response.encoded_body().decode("utf-8")
         self.assertIn("seedWorkspaceDemo", js_body)
+        self.assertIn("renderCollapsibleMarkdownSections", js_body)
+        self.assertIn("section-details", js_body)
+        self.assertIn("markdown-chip", js_body)
+        self.assertIn("formatCardLine", js_body)
         self.assertIn("renderWorkingMemoryItem", js_body)
         self.assertIn("event_summaries", js_body)
         self.assertIn("open_items", js_body)
@@ -3142,15 +3146,16 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("为什么先做它", js_body)
         self.assertIn("后台路径", js_body)
         self.assertIn("understandingPayload", js_body)
-        self.assertIn("理解方式", js_body)
-        self.assertIn("模型不可用，已回到本地判断", js_body)
+        self.assertIn("辅助方式", js_body)
+        self.assertIn("模型暂时没接上", js_body)
+        self.assertIn("shouldShowUnderstanding", js_body)
         self.assertIn("fallbackComponentMessages", js_body)
         self.assertIn("user_message", js_body)
         self.assertIn("component_label", js_body)
         self.assertIn("需要人工确认", js_body)
-        self.assertIn("历史已收拢", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("历史已整理", js_response.encoded_body().decode("utf-8"))
         self.assertIn("眼下正带着哪些线索", js_response.encoded_body().decode("utf-8"))
-        self.assertIn("更早的内容怎么被收住", js_response.encoded_body().decode("utf-8"))
+        self.assertIn("更早的内容怎么被整理", js_response.encoded_body().decode("utf-8"))
         self.assertNotIn("发起工具调用", js_response.encoded_body().decode("utf-8"))
         self.assertNotIn("发起 hook", js_response.encoded_body().decode("utf-8"))
         self.assertNotIn("发出终止事件", js_response.encoded_body().decode("utf-8"))
@@ -5348,6 +5353,9 @@ class OrchestratorSmokeTest(unittest.TestCase):
         self.assertIn("还开着的问题", script)
         self.assertIn("project_profile_confirmation", script)
         self.assertIn("renderCardDigest(state.currentCase, state.currentCaseRuntime);", script)
+        self.assertIn("target.closest(\"details\")?.setAttribute(\"open\", \"\");", script)
+        self.assertIn("markdownSectionClass", script)
+        self.assertIn("markdownListItemClass", script)
         self.assertIn("function describeCaseDirection(casePayload)", script)
         self.assertIn("接下来怎么走", script)
         self.assertIn("当前继续产品化", script)

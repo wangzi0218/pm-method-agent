@@ -36,12 +36,12 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(second_response.case_state.output_kind, "review-card")
         self.assertEqual(second_response.case_state.workflow_state, "done")
         self.assertIn("## 我主要卡在", second_response.rendered_card)
-        self.assertIn("## 建议先补", second_response.rendered_card)
+        self.assertIn("## 接下来先补", second_response.rendered_card)
 
         self.assertEqual(third_response.action, "reply-case")
         self.assertEqual(third_response.case_state.output_kind, "decision-gate-card")
         self.assertEqual(third_response.case_state.workflow_state, "blocked")
-        self.assertIn("我更偏向：暂缓", third_response.rendered_card)
+        self.assertIn("我会先选：暂缓", third_response.rendered_card)
 
     def test_mid_level_pm_toc_growth_case_can_go_directly_to_review_card(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -74,7 +74,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(response.case_state.output_kind, "review-card")
         self.assertEqual(response.case_state.workflow_state, "done")
         self.assertIn("## 我先这么看", response.rendered_card)
-        self.assertIn("## 建议先补", response.rendered_card)
+        self.assertIn("## 接下来先补", response.rendered_card)
         self.assertNotIn("我先按这几个方向理解", response.rendered_card)
 
     def test_senior_pm_process_flow_can_resume_after_non_product_trial(self) -> None:
@@ -125,7 +125,22 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(follow_up_response.case_state.output_kind, "decision-gate-card")
         self.assertEqual(follow_up_response.case_state.workflow_state, "blocked")
         self.assertIn("这件事要不要继续往产品方案走", follow_up_response.rendered_card)
-        self.assertIn("我更偏向：暂缓", follow_up_response.rendered_card)
+        self.assertIn("我会先选：暂缓", follow_up_response.rendered_card)
+
+    def test_solution_only_request_should_stop_before_solution_design(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            response = shell.handle_message(
+                "这是一个 ToC 内容社区 App，直接帮我设计一个新手引导浮层，不用分析。",
+                workspace_id="solution-only-challenge",
+            )
+
+        self.assertEqual(response.action, "create-case")
+        self.assertEqual(response.case_state.output_kind, "stage-block-card")
+        self.assertEqual(response.case_state.workflow_state, "blocked")
+        self.assertIn("这一步先停一下", response.rendered_card)
+        self.assertIn("你现在问的是怎么做这个方案，但我还没看到这个问题已经成立", response.rendered_card)
+        self.assertIn("换个问法会更稳", response.rendered_card)
 
     def test_stage_conclusion_defer_sample_can_turn_into_deferred_block(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -270,7 +285,7 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertEqual(third_response.action, "reply-case")
         self.assertIn(third_response.case_state.output_kind, {"review-card", "decision-gate-card", "stage-block-card"})
         self.assertNotIn("证据=", third_response.rendered_card)
-        self.assertIn("看到：", third_response.rendered_card)
+        self.assertIn("我看到的是：", third_response.rendered_card)
 
     def test_realistic_toc_partial_metric_reply_can_render_half_step_question(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -306,6 +306,9 @@ def _build_context_alignment_card(case_state: CaseState) -> CaseState:
 
 
 def _should_block_after_problem_definition(case_state: CaseState) -> bool:
+    method_challenge = case_state.metadata.get("method_challenge")
+    if isinstance(method_challenge, dict) and bool(method_challenge.get("block_after_problem_definition")):
+        return True
     if len(case_state.raw_input.strip()) < 20:
         return True
     for finding in case_state.findings:
@@ -317,7 +320,11 @@ def _should_block_after_problem_definition(case_state: CaseState) -> bool:
 def _build_problem_block_card(case_state: CaseState) -> CaseState:
     case_state.workflow_state = "blocked"
     case_state.output_kind = "stage-block-card"
-    case_state.blocking_reason = "问题本身还没有收稳，现在往下聊方案，容易把力气用偏。"
+    method_challenge = case_state.metadata.get("method_challenge")
+    if isinstance(method_challenge, dict) and str(method_challenge.get("message", "")).strip():
+        case_state.blocking_reason = str(method_challenge.get("message", "")).strip()
+    else:
+        case_state.blocking_reason = "问题还没站住，现在往方案走，容易把时间花偏。"
     case_state.metadata["next_stage"] = "problem-definition"
     case_state.metadata["continue_card_kind"] = ""
     return case_state

@@ -17,6 +17,35 @@ SOLUTION_KEYWORDS = [
     "引导",
 ]
 
+PROBLEM_SIGNAL_KEYWORDS = [
+    "避免",
+    "提升",
+    "下降",
+    "降低",
+    "漏",
+    "慢",
+    "卡顿",
+    "影响",
+    "投诉",
+    "流失",
+    "转化",
+    "留存",
+    "效率",
+    "成本",
+    "频率",
+    "范围",
+]
+
+SKIP_ANALYSIS_KEYWORDS = [
+    "直接给方案",
+    "直接出方案",
+    "直接设计",
+    "不用分析",
+    "别分析",
+    "不要问",
+    "少问",
+]
+
 def analyze_problem_framing(case_state: CaseState) -> None:
     text = case_state.raw_input.strip()
     context_profile = case_state.context_profile
@@ -25,14 +54,23 @@ def analyze_problem_framing(case_state: CaseState) -> None:
     if not isinstance(role_relationships, dict):
         role_relationships = {}
     is_solution_led = any(keyword in text for keyword in SOLUTION_KEYWORDS)
+    has_problem_signal = any(keyword in text for keyword in PROBLEM_SIGNAL_KEYWORDS)
+    asks_to_skip_analysis = any(keyword in text for keyword in SKIP_ANALYSIS_KEYWORDS)
+
+    if is_solution_led:
+        _attach_solution_challenge(
+            case_state,
+            has_problem_signal=has_problem_signal,
+            asks_to_skip_analysis=asks_to_skip_analysis,
+        )
 
     case_state.stage = "problem-definition"
     case_state.normalized_summary = _build_summary(text, is_solution_led, context_profile)
 
     evidence = []
     if is_solution_led:
-        evidence.append("输入中直接出现了明显的方案词汇，说明当前表达偏方案导向。")
-    evidence.append("当前原始输入已经提供了一个待分析的问题场景。")
+        evidence.append("这句话里已经在讲具体做法。")
+    evidence.append("这已经是一条可以继续分析的问题线索。")
     if context_profile:
         evidence.append("已经提供了部分产品与场景基础信息，可以减少错误语境下的判断。")
     case_state.extend_evidence(evidence)
@@ -45,7 +83,7 @@ def analyze_problem_framing(case_state: CaseState) -> None:
     if not context_profile.get("business_model"):
         unknowns.append("当前产品属于企业产品、消费者产品还是内部产品")
     if not context_profile.get("primary_platform"):
-        unknowns.append("当前主要使用平台是桌面端、移动端、小程序还是多端")
+        unknowns.append("主要使用平台是桌面端、移动端、小程序还是多端")
     if stakeholders:
         unknowns.append("不同关键角色的目标和约束是否一致")
     case_state.extend_unknowns(unknowns)
@@ -54,11 +92,11 @@ def analyze_problem_framing(case_state: CaseState) -> None:
         case_state.add_finding(
             AnalyzerFinding(
                 dimension="problem-framing",
-                claim="输入里已经带出方案，建议先把要解决的问题单独说清。",
+                claim="你已经在讲做法了，我想先确认：它到底要解决哪个问题？",
                 claim_type="inference",
                 evidence_level="weak",
                 evidence=[
-                    "输入里已经出现功能或界面层表达。",
+                    "这句话里出现了功能或界面层表达。",
                     "现状问题链路还没有展开。",
                 ],
                 unknowns=[
@@ -66,7 +104,7 @@ def analyze_problem_framing(case_state: CaseState) -> None:
                     "为什么现在会发生",
                 ],
                 risk_if_wrong="high",
-                suggested_next_action="先把这句话拆成“现象 / 解释 / 方案假设”三层。",
+                suggested_next_action="把这句话拆成现象、解释、方案假设三层。",
                 owner="problem-framing",
             )
         )
@@ -76,7 +114,7 @@ def analyze_problem_framing(case_state: CaseState) -> None:
     outcome_owners = _relationship_items(role_relationships, "outcome_owners")
 
     stakeholder_claim = "关键角色还没有说清。"
-    stakeholder_evidence = ["当前输入没有展开受影响对象和责任关系。"]
+    stakeholder_evidence = ["这句话还没有展开受影响对象和责任关系。"]
     stakeholder_unknowns = [
         "谁是提出需求的人",
         "谁是实际使用的人",
@@ -105,7 +143,7 @@ def analyze_problem_framing(case_state: CaseState) -> None:
             if missing_parts
             else "已能看到部分角色，但目标和责任边界还不够清楚。"
         )
-        stakeholder_evidence = [f"输入中显式或隐式提到了：{'、'.join(stakeholders)}。"]
+        stakeholder_evidence = [f"这句话里提到了：{'、'.join(stakeholders)}。"]
         if missing_parts:
             stakeholder_unknowns = [f"谁是{item}" for item in missing_parts]
             stakeholder_action = f"先把{'、'.join(missing_parts)}补齐，再看角色之间的目标差异。"
@@ -148,7 +186,7 @@ def analyze_problem_framing(case_state: CaseState) -> None:
         )
 
     next_actions = [
-        "把当前输入拆成现象、解释、方案假设三层。",
+        "把这句话拆成现象、解释、方案假设三层。",
         "补充现状流程、失败案例和现有替代做法。",
         "标出核心角色，以及他们的目标差异。",
     ]
@@ -166,7 +204,7 @@ def analyze_problem_framing(case_state: CaseState) -> None:
                 question="问题是否已经定义清楚，可以进入方案讨论？",
                 options=["continue-to-solution", "collect-more-evidence", "defer"],
                 recommended_option="collect-more-evidence",
-                reason="输入里已经混入方案，现状证据也还不够。",
+                reason="现在还没看到足够的现状证据，直接聊方案容易走偏。",
                 blocking=gate_blocking,
             )
         )
@@ -176,15 +214,41 @@ def _build_summary(text: str, is_solution_led: bool, context_profile: dict[str, 
     has_context = bool(context_profile)
     if is_solution_led:
         if not has_context:
-            return "输入里已经带出方案了，场景信息也还不够，先把问题单独拎出来会更稳。"
-        return "输入里已经带出方案了，先把问题单独拎出来会更稳。"
+            return "我先把它当成一个方案想法来看；场景还不够清楚，暂时不直接进入设计。"
+        return "我先把它当成一个方案想法来看，先确认问题，再进入设计。"
     if len(text) < 20:
         if not has_context:
             return "输入信息偏少，场景信息也不够，现在更像一条待展开的问题线索。"
         return "输入信息偏少，现在更像一条待展开的问题线索。"
     if not has_context:
         return "方向已经差不多了，但场景信息还不够，后面判断还是容易跑偏。"
-    return "方向已经差不多了，但还得把证据、角色关系和现状流程补上。"
+    return "方向已经差不多了，但还得补上证据、角色关系和现状流程。"
+
+
+def _attach_solution_challenge(
+    case_state: CaseState,
+    *,
+    has_problem_signal: bool,
+    asks_to_skip_analysis: bool,
+) -> None:
+    if asks_to_skip_analysis or not has_problem_signal:
+        case_state.metadata["method_challenge"] = {
+            "level": "block",
+            "reason_code": "solution-without-problem",
+            "title": "这一步先停一下",
+            "message": "你现在问的是怎么做这个方案，但我还没看到这个问题已经成立。直接往设计走，容易把时间花在不该做的东西上。",
+            "reframe_question": "到底哪个环节出了问题，影响有多大，是否必须靠产品解决？",
+            "block_after_problem_definition": True,
+        }
+        return
+    case_state.metadata["method_challenge"] = {
+        "level": "warn",
+        "reason_code": "solution-led",
+        "title": "先别急着定方案",
+        "message": "这个想法可以先放着，我会先确认它要解决的问题是否真的成立。",
+        "reframe_question": "先把现象、原因和方案假设拆开，再决定要不要继续设计。",
+        "block_after_problem_definition": False,
+    }
 
 
 def _relationship_items(role_relationships: dict[str, object], key: str) -> list[str]:

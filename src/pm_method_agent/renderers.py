@@ -95,10 +95,10 @@ RESUME_ACTION_CONTRACT = {
 }
 
 DIMENSION_LABELS = {
-    "problem-framing": "先把问题定义说清",
+    "problem-framing": "先看问题定义",
     "root-cause-and-alternatives": "再看根因和替代路径",
-    "decision-challenge": "再看现在值不值得做",
-    "validation-design": "再看后面怎么验证",
+    "decision-challenge": "再看投入是否值得",
+    "validation-design": "最后看怎么验证",
 }
 
 EVIDENCE_LEVEL_LABELS = {
@@ -988,9 +988,9 @@ def _summarize_runtime_event(item: dict) -> dict:
             "event_id": event_id,
             "event_type": event_type,
             "query_id": query_id,
-            "kind": "历史已收拢",
+            "kind": "历史已整理",
             "stage": "上下文预算",
-            "text": f"已把更早的 {payload.get('compressed_turns', 0)} 轮收进摘要，保留最近工作记忆。",
+            "text": f"已把更早的 {payload.get('compressed_turns', 0)} 轮整理成摘要，最近的讨论会继续保留。",
             "severity": "info",
             "actionable": False,
             "metadata": {"compressed_turns": int(payload.get("compressed_turns", 0) or 0)},
@@ -1351,8 +1351,9 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append(case_state.raw_input)
     lines.append("")
     lines.append("## 我先这么看")
-    lines.append(case_state.normalized_summary or "暂无")
+    lines.append(_polish_display_text(case_state.normalized_summary or "暂无"))
     lines.append("")
+    _append_method_challenge(lines, case_state)
     lines.append("## 我主要卡在")
     for finding in _collect_render_findings(case_state):
         _append_finding(lines, finding)
@@ -1360,10 +1361,8 @@ def _render_markdown(case_state: CaseState) -> str:
     lines.append("## 先别急着往下")
     _append_gate_items(lines, case_state)
     lines.append("")
-    follow_up_focus = _display_follow_up_focus(case_state)
-    follow_up_reason = _display_follow_up_reason(case_state)
-    lines.append("## 建议先补")
-    intro_line = _render_follow_up_intro(follow_up_focus, follow_up_reason)
+    lines.append("## 接下来先补")
+    intro_line = _render_action_intro(case_state)
     if intro_line:
         lines.append(intro_line)
     for item in _collect_primary_follow_ups(case_state):
@@ -1621,27 +1620,27 @@ def _build_llm_understanding_payload(
     if runtime_mode == "local-only":
         mode = "local-only"
         label = "本地规则"
-        description = "未启用模型，本轮由本地规则和方法运行时完成。"
+        description = "这轮主要按内置方法判断，没有调用外部模型。"
     elif has_llm_success and has_fallback:
         mode = "partial-fallback"
-        label = "模型部分辅助，部分回退"
-        description = "本轮有些语义增强已生效，也有部分增强失败后回到本地规则。"
+        label = "部分内容用了模型辅助"
+        description = "有些理解或表达由模型辅助完成，没稳定完成的部分已按内置方法接住。"
     elif has_fallback and has_contract_fallback:
         mode = "contract-fallback"
-        label = "模型输出未通过校验，已回到本地判断"
-        description = "模型返回内容不满足当前契约，本轮关键判断仍由本地规则接住。"
+        label = "模型结果没有采用"
+        description = "模型返回的内容不够稳定，这轮关键判断仍按内置方法完成。"
     elif has_fallback:
         mode = "llm-fallback"
-        label = "模型不可用，已回到本地判断"
-        description = "模型增强没有稳定完成，本轮先按本地规则继续。"
+        label = "模型暂时没接上"
+        description = "这轮先按内置方法继续，不影响你看当前判断。"
     elif has_llm_success:
         mode = "llm-assisted"
-        label = "模型辅助"
-        description = "模型参与了语义理解或文案增强，阶段推进和关口仍由方法运行时控制。"
+        label = "已用模型辅助理解"
+        description = "模型参与了理解或表达，但阶段推进仍由方法流程控制。"
     else:
         mode = "llm-configured"
-        label = "模型已配置，当前轮未触发增强"
-        description = "环境中已配置模型，但这一轮没有需要模型增强的组件。"
+        label = "本轮未调用模型"
+        description = "模型已经可用，但这轮没有必要调用。"
 
     return {
         "mode": mode,
@@ -1679,8 +1678,9 @@ def _render_context_question_card(case_state: CaseState) -> str:
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先这么看")
-    lines.append(case_state.normalized_summary or "信息还不够，先补几项基础信息。")
+    lines.append(_polish_display_text(case_state.normalized_summary or "信息还不够，先补几项基础信息。"))
     lines.append("")
+    _append_method_challenge(lines, case_state)
     lines.append("## 先补原因")
     lines.append(_polish_display_text(_display_follow_up_reason(case_state)))
     lines.append("")
@@ -1710,17 +1710,19 @@ def _render_block_card(case_state: CaseState) -> str:
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先这么看")
-    lines.append(case_state.normalized_summary or "当前阶段暂不建议继续推进。")
+    lines.append(_polish_display_text(case_state.normalized_summary or "当前阶段暂不建议继续推进。"))
     lines.append("")
-    lines.append("## 先停原因")
-    lines.append(
-        _polish_display_text(
-            str(case_state.metadata.get("follow_up_reason", "")).strip()
-            or case_state.blocking_reason
-            or "当前条件还不够，先别急着往下走。"
+    _append_method_challenge(lines, case_state)
+    if not _has_method_challenge(case_state):
+        lines.append("## 先停原因")
+        lines.append(
+            _polish_display_text(
+                str(case_state.metadata.get("follow_up_reason", "")).strip()
+                or case_state.blocking_reason
+                or "当前条件还不够，先别急着往下走。"
+            )
         )
-    )
-    lines.append("")
+        lines.append("")
     if case_state.findings:
         lines.append("## 我主要卡在")
         for finding in case_state.findings:
@@ -1731,8 +1733,8 @@ def _render_block_card(case_state: CaseState) -> str:
         lines.append("## 先定这件事")
         _append_gate_items(lines, case_state, empty_message="当前没有需要立刻拍板的决策点。")
         lines.append("")
-    lines.append("## 建议先补")
-    intro_line = _render_follow_up_intro(_display_follow_up_focus(case_state), _display_follow_up_reason(case_state))
+    lines.append("## 接下来先补")
+    intro_line = _render_action_intro(case_state)
     if intro_line:
         lines.append(intro_line)
     for item in _collect_primary_follow_ups(case_state):
@@ -1756,8 +1758,9 @@ def _render_continue_guidance_card(case_state: CaseState) -> str:
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 现在先看到这")
-    lines.append(case_state.normalized_summary or "基础背景已经补上，可以开始往问题本身收拢了。")
+    lines.append(_polish_display_text(case_state.normalized_summary or "基础背景已经补上，可以把真实问题说得更具体一点。"))
     lines.append("")
+    _append_method_challenge(lines, case_state)
     lines.append("## 这轮先收")
     lines.append(_polish_display_text(_display_follow_up_focus(case_state)))
     lines.append("")
@@ -1791,8 +1794,9 @@ def _render_pre_framing_card(case_state: CaseState) -> str:
     _append_runtime_summary_line(lines, case_state)
     lines.append("")
     lines.append("## 我先这么看")
-    lines.append(case_state.normalized_summary or "先把这句话收一收，再继续推进。")
+    lines.append(_polish_display_text(case_state.normalized_summary or "先把这句话收一收，再继续推进。"))
     lines.append("")
+    _append_method_challenge(lines, case_state)
     lines.append("## 我先这样理解")
     for index, direction in enumerate(result.candidate_directions):
         prefix = "更像" if direction.direction_id == result.recommended_direction_id else "也可能是"
@@ -1825,7 +1829,7 @@ def _render_pre_framing_follow_up(next_stage: str) -> str:
     if next_stage == "context-alignment":
         return "这轮补完后，我先把场景对齐，再继续往下走。"
     if next_stage == "problem-definition":
-        return "这轮补完后，我再把问题收稳。"
+        return "这轮补完后，我再把问题说清楚。"
     return f"这轮补完后，我再往`{_label_for(STAGE_LABELS, next_stage)}`走。"
 
 
@@ -1848,11 +1852,11 @@ def _append_finding(lines: List[str], finding) -> None:
     detail_parts: List[str] = []
     if finding.evidence and not compact:
         evidence = _join_limited([_strip_tail_punctuation(_polish_display_text(item)) for item in finding.evidence], limit=1)
-        detail_parts.append(f"看到：{evidence}")
+        detail_parts.append(f"我看到的是：{evidence}")
     if finding.unknowns:
         unknown_limit = 1 if compact else 2
         unknowns = _join_limited([_strip_tail_punctuation(_polish_display_text(item)) for item in finding.unknowns], limit=unknown_limit)
-        detail_parts.append(f"{'补' if compact else '还缺'}：{unknowns}")
+        detail_parts.append(f"{'还要补' if compact else '现在还缺'}：{unknowns}")
     if detail_parts:
         lines.append(f"  {'；'.join(detail_parts)}")
 
@@ -1982,6 +1986,30 @@ def _append_role_relationships(lines: List[str], case_state: CaseState) -> None:
             lines.append(f"- {template.format(roles='，'.join(str(item) for item in items))}")
 
 
+def _append_method_challenge(lines: List[str], case_state: CaseState) -> None:
+    challenge = case_state.metadata.get("method_challenge")
+    if not isinstance(challenge, dict):
+        return
+    message = _polish_display_text(str(challenge.get("message", "")).strip())
+    reframe_question = _polish_display_text(str(challenge.get("reframe_question", "")).strip())
+    if not message and not reframe_question:
+        return
+    title = str(challenge.get("title", "先停一下")).strip() or "先停一下"
+    lines.append(f"## {title}")
+    if message:
+        lines.append(message)
+    if reframe_question:
+        lines.append(f"换个问法会更稳：{reframe_question}")
+    lines.append("")
+
+
+def _has_method_challenge(case_state: CaseState) -> bool:
+    challenge = case_state.metadata.get("method_challenge")
+    if not isinstance(challenge, dict):
+        return False
+    return bool(str(challenge.get("message", "")).strip() or str(challenge.get("reframe_question", "")).strip())
+
+
 def _append_gate_items(lines: List[str], case_state: CaseState, empty_message: str = "这一步先不用拍板。") -> None:
     visible_gates = _select_visible_gates(case_state.decision_gates)
     if not visible_gates:
@@ -1991,9 +2019,9 @@ def _append_gate_items(lines: List[str], case_state: CaseState, empty_message: s
         recommended_option = OPTION_LABELS.get(gate.recommended_option, gate.recommended_option)
         option_labels = [OPTION_LABELS.get(option, option) for option in gate.options]
         lines.append(f"- {_polish_gate_question(gate.question)}")
-        lines.append(f"  我更偏向：{recommended_option}{'（这一步先别急着定）' if gate.blocking else ''}")
-        lines.append(f"  你可以直接选：{' / '.join(option_labels)}")
-        lines.append(f"  我这么看：{_polish_gate_reason(gate.reason)}")
+        lines.append(f"  我会先选：{recommended_option}{'。这一步先别急着定。' if gate.blocking else '。'}")
+        lines.append(f"  如果你想继续，也可以直接说：{' / '.join(option_labels)}。")
+        lines.append(f"  原因是：{_polish_gate_reason(gate.reason)}")
 
 
 def _select_visible_gates(gates: List) -> List:
@@ -2046,6 +2074,12 @@ def _render_follow_up_intro(focus: str, reason: str) -> str:
     return ""
 
 
+def _render_action_intro(case_state: CaseState) -> str:
+    if _has_method_challenge(case_state):
+        return "先把问题重新问清楚，再决定要不要继续方案设计。"
+    return _render_follow_up_intro(_display_follow_up_focus(case_state), _display_follow_up_reason(case_state))
+
+
 def _strip_tail_punctuation(text: str) -> str:
     return text.rstrip("。；， ")
 
@@ -2056,7 +2090,7 @@ def _collect_next_actions(case_state: CaseState, limit: int = 5) -> List[str]:
         normalized = _polish_display_text(candidate.strip())
         if not normalized:
             continue
-        if any(normalized in existing or existing in normalized for existing in actions):
+        if any(normalized in existing or existing in normalized or _is_similar_action(existing, normalized) for existing in actions):
             continue
         actions.append(normalized)
         if len(actions) >= limit:
@@ -2066,7 +2100,7 @@ def _collect_next_actions(case_state: CaseState, limit: int = 5) -> List[str]:
         normalized = _polish_display_text(finding.suggested_next_action.strip())
         if not normalized:
             continue
-        if any(normalized in existing or existing in normalized for existing in actions):
+        if any(normalized in existing or existing in normalized or _is_similar_action(existing, normalized) for existing in actions):
             continue
         actions.append(normalized)
         if len(actions) >= limit:
@@ -2143,15 +2177,44 @@ def _semantic_compact_text(text: str) -> str:
     return compact
 
 
+def _is_similar_action(existing: str, candidate: str) -> bool:
+    compact_existing = _semantic_compact_text(existing)
+    compact_candidate = _semantic_compact_text(candidate)
+    if compact_existing and compact_candidate and (
+        compact_existing in compact_candidate or compact_candidate in compact_existing
+    ):
+        return True
+    action_pairs = [
+        (["当前输入", "这句话", "现象", "解释", "方案假设"], ["当前输入", "这句话", "现象", "解释", "方案假设"]),
+    ]
+    for left_markers, right_markers in action_pairs:
+        if all(marker in existing for marker in left_markers[:3]) and all(marker in candidate for marker in right_markers[:3]):
+            return True
+    return False
+
+
 def _polish_display_text(text: str) -> str:
     polished = text.strip()
     if not polished:
         return ""
 
     replacements = [
+        ("先把这句话拆成“现象 / 解释 / 方案假设”三层来看来看", "先把这句话拆成“现象 / 解释 / 方案假设”三层来看"),
         ("输入已经接近问题描述了", "方向已经差不多了"),
         ("输入接近问题描述", "方向已经差不多了"),
         ("问题描述已初步成型", "方向已经差不多了"),
+        ("输入已经带出方案，先把问题本身收拢", "你已经在讲做法了，我想先确认它到底解决哪个问题"),
+        ("输入里已经带出方案，建议先把要解决的问题单独说清", "你已经在讲做法了，我想先确认它到底解决哪个问题"),
+        ("输入里已经带出方案，先把要解决的问题单独说清", "你已经在讲做法了，我想先确认它到底解决哪个问题"),
+        ("输入里已经带出方案了，先把问题单独拎出来会更稳", "你已经在讲做法了，我想先确认它到底解决哪个问题"),
+        ("输入里已经带出方案了，场景信息也还不够，先把问题单独拎出来会更稳", "你已经在讲做法了，但场景还不够清楚，我想先确认它到底解决哪个问题"),
+        ("问题本身", "真实问题"),
+        ("把问题收稳", "把问题说清楚"),
+        ("把问题收住", "把问题说清楚"),
+        ("问题收稳", "问题说清楚"),
+        ("问题收住", "问题说清楚"),
+        ("收拢成摘要", "整理成摘要"),
+        ("已收拢", "已整理"),
         ("建议先把", "先把"),
         ("建议先", "先"),
         ("建议后面", "后面"),
@@ -2167,6 +2230,7 @@ def _polish_display_text(text: str) -> str:
         ("补充现状流程、失败案例和现有替代做法", "补上现状流程、失败案例和现有替代做法"),
         ("补充为什么现在做，以及延后会损失什么", "补上为什么现在做，以及延后会损失什么"),
         ("补充角色关系，并区分提出者、使用者和结果责任人", "补上角色关系，并区分提出者、使用者和结果责任人"),
+        ("先把这句话拆成“现象 / 解释 / 方案假设”三层。", "先把这句话拆成“现象 / 解释 / 方案假设”三层来看。"),
         ("先把这句话拆成“现象 / 解释 / 方案假设”三层", "先把这句话拆成“现象 / 解释 / 方案假设”三层来看"),
         ("补看", "再看"),
     ]
@@ -2175,6 +2239,10 @@ def _polish_display_text(text: str) -> str:
 
     while "  " in polished:
         polished = polished.replace("  ", " ")
+    while "来看来看" in polished:
+        polished = polished.replace("来看来看", "来看")
+    while "说清楚说清楚" in polished:
+        polished = polished.replace("说清楚说清楚", "说清楚")
     return polished
 
 
@@ -2192,7 +2260,7 @@ def _polish_gate_question(question: str) -> str:
 def _polish_gate_reason(reason: str) -> str:
     polished = _polish_display_text(reason.strip())
     replacements = [
-        ("输入里已经混入方案，现状证据也还不够。", "输入里已经混进方案了，现状证据也还不够。"),
+        ("输入里已经混入方案，现状证据也还不够。", "这句话已经在讲方案了，但现状证据还不够。"),
         ("基础场景信息已经具备，当前也没有更优的非产品路径信号，可以继续做验证。", "基础场景信息已经够用了，也没看到更优的非产品路径，可以继续往验证走。"),
         ("当前更像组织流程类问题，先看非产品路径会更稳一些。", "这轮更像组织流程类问题，先看非产品路径会更稳。"),
         ("当前紧迫性不足，而且资源也偏紧，先暂缓会更稳妥。", "现在紧迫性还不够，资源也偏紧，先暂缓会更稳。"),
@@ -2491,10 +2559,13 @@ def _append_runtime_summary_line(lines: List[str], case_state: CaseState) -> Non
         return
     label = str(understanding.get("label", "") or "").strip()
     description = str(understanding.get("description", "") or "").strip()
+    mode = str(understanding.get("mode", "") or "").strip()
+    if mode in {"local-only", "llm-configured", "llm-fallback"}:
+        return
     if not label:
         return
-    lines.append(f"- 理解方式：`{label}`")
-    if description and label != "本地规则":
+    lines.append(f"- 辅助方式：`{label}`")
+    if description:
         lines.append(f"- 说明：{description}")
 
 

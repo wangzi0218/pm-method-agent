@@ -517,9 +517,9 @@ def _build_reason(text: str, context_profile: Dict[str, object]) -> str:
     method_directions = _build_method_uncertainty_directions(text)
     if method_directions:
         lead_label = method_directions[0].label
-        return f"现在最大的卡点其实是「{lead_label}」，先把这层不确定性收住会更稳。"
+        return f"现在最大的卡点其实是「{lead_label}」，先把这层不确定性说清楚会更稳。"
     if _has_solution_signal(text) and _has_ambiguity_signal(text, text.lower()):
-        return "你这句话里既带了想法，也还没完全收稳问题本身，先收一收会更稳。"
+        return "你这句话里已经有想法了，但真实问题还没说清楚，先别急着往方案走。"
     if not context_profile.get("business_model") or not context_profile.get("primary_platform"):
         return "现在还有几种都说得通的理解，场景信息也没补齐，先别急着往下推。"
     return "现在还有几种都说得通的理解，先把方向收一收会更稳。"
@@ -532,7 +532,7 @@ def _build_priority_questions(
 ) -> List[str]:
     questions: List[str] = []
     direction_labels = {item.label for item in (method_directions or [])}
-    if "核心问题还没收住" in direction_labels:
+    if "核心问题还没说清" in direction_labels:
         questions.extend(
             [
                 "这次最先要收敛的到底是哪一个问题？不要把几个问题揉在一起说。",
@@ -604,9 +604,9 @@ def _build_method_uncertainty_directions(text: str) -> List[PreFramingDirection]
     directions: List[PreFramingDirection] = []
     category_specs = [
         (
-            "核心问题还没收住",
+            "核心问题还没说清",
             CORE_PROBLEM_HINTS,
-            "这轮更大的问题不是做法，而是到底在解决哪一个问题，先把问题定义收住会更稳。",
+            "现在更大的问题不是做法，而是到底在解决哪一个问题。先把问题定义说清楚，后面才不容易走偏。",
             ["当前把几个相近但不同的问题揉在一起说了", "如果不先拆开，后面很容易选错产品方向"],
         ),
         (
@@ -618,7 +618,7 @@ def _build_method_uncertainty_directions(text: str) -> List[PreFramingDirection]
         (
             "目标与价值还没钉住",
             GOAL_VALUE_HINTS,
-            "这轮最大的卡点是目标函数还没定，先把价值锚点收住，优先级才站得住。",
+            "现在最大的卡点是目标函数还没定。先把价值锚点说清楚，优先级才站得住。",
             ["当前成功标准还不明确", "如果目标没钉住，后面就很难判断值不值得做"],
         ),
         (
@@ -659,7 +659,7 @@ def _matches_method_uncertainty(label: str, text: str, hints: List[str]) -> bool
         return _looks_like_scope_boundary_uncertainty(text)
     if label == "条件与约束还没摸清":
         return _looks_like_constraint_uncertainty(text)
-    if label == "核心问题还没收住":
+    if label == "核心问题还没说清":
         return _looks_like_competing_problem_frames(text)
     return False
 

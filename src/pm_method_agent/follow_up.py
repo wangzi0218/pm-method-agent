@@ -233,7 +233,7 @@ def _follow_up_focus(case_state: CaseState) -> str:
     if _active_partial_questions(case_state):
         return "先把刚补到一半的点说完整"
     if case_state.stage == "problem-definition":
-        return "先把问题收稳"
+        return "先把问题说清楚"
     if case_state.stage == "decision-challenge":
         return "先把值不值得做看清"
     if case_state.stage == "validation-design":
@@ -394,7 +394,7 @@ def _resolve_follow_up_strategy(case_state: CaseState) -> str:
 
 def _resolve_settled_stop_reason(case_state: CaseState) -> str:
     if case_state.workflow_state == "deferred":
-        return "这轮已经按暂缓收住，不继续追问。"
+        return "这轮已经按暂缓处理，不继续追问。"
     if case_state.workflow_state == "blocked":
         return "这轮更需要先停在关口或阻塞点上，不继续补外围问题。"
     return "当前阶段已经足够先给结论，这一轮不再为了完整性继续追问。"

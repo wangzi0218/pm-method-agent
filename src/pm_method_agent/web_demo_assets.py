@@ -19,7 +19,7 @@ WEB_DEMO_HTML = """<!doctype html>
           <p class="eyebrow">PM Method Agent</p>
           <h1>问题定义，不从长文档开始。</h1>
           <p class="lede">
-            这里不是通用聊天页。把一句还没想透的草稿丢进来，它会先帮你收拢问题，再决定要不要继续往下走。
+            这里不是通用聊天页。把一句还没想透的草稿丢进来，它会先帮你确认真实问题，再决定要不要继续往下走。
           </p>
         </div>
 
@@ -107,12 +107,17 @@ WEB_DEMO_HTML = """<!doctype html>
           </div>
           <p class="section-kicker">先看这个</p>
           <div id="cardDigest" class="card-digest empty-list">
-            <p>当前阶段最值得先看的内容，会先收在这里。</p>
+            <p>最值得先看的内容，会放在这里。</p>
           </div>
-          <p class="section-kicker">完整内容</p>
-          <div id="cardContent" class="render-surface empty-surface">
-            <p>这里会显示当前案例的主卡片。</p>
-          </div>
+          <details id="cardDetails" class="card-details">
+            <summary>
+              <span>完整内容</span>
+              <small>需要查细节时再展开</small>
+            </summary>
+            <div id="cardContent" class="render-surface empty-surface">
+              <p>这里会显示当前案例的主卡片。</p>
+            </div>
+          </details>
         </section>
       </main>
 
@@ -167,7 +172,7 @@ WEB_DEMO_HTML = """<!doctype html>
           </div>
           <p class="section-kicker">上下文怎么被接住</p>
           <div id="runtimeMemory" class="render-surface empty-surface">
-            <p>这里会显示最近在接的话题，以及已经收拢过的旧上下文。</p>
+            <p>这里会显示最近在接的话题，以及已经整理过的旧上下文。</p>
           </div>
         </section>
       </aside>
@@ -751,7 +756,8 @@ button:disabled {
     linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(250, 246, 239, 0.9));
   padding: 18px 18px 20px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52);
-  line-height: 1.8;
+  line-height: 1.68;
+  overflow-wrap: break-word;
 }
 
 .render-surface-secondary {
@@ -765,6 +771,10 @@ button:disabled {
   scrollbar-color: rgba(179, 77, 47, 0.24) transparent;
 }
 
+.render-surface-secondary > * {
+  max-width: none;
+}
+
 .render-surface-secondary::-webkit-scrollbar {
   width: 8px;
 }
@@ -775,21 +785,27 @@ button:disabled {
 }
 
 .render-surface-secondary h1 {
-  font-size: 24px;
+  font-size: 18px;
+  line-height: 1.34;
 }
 
 .render-surface-secondary h2 {
-  font-size: 19px;
+  margin-top: 18px;
+  padding-top: 10px;
+  font-size: 16px;
+  line-height: 1.38;
 }
 
 .render-surface-secondary h3 {
-  font-size: 16px;
+  margin-top: 14px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .render-surface-secondary p,
 .render-surface-secondary li {
-  font-size: 14px;
-  line-height: 1.72;
+  font-size: 13px;
+  line-height: 1.62;
 }
 
 .card-outline,
@@ -945,7 +961,7 @@ button:disabled {
 }
 
 .render-surface > * {
-  max-width: 72ch;
+  max-width: none;
 }
 
 .render-surface h1,
@@ -982,7 +998,12 @@ button:disabled {
 .render-surface p,
 .render-surface ul,
 .render-surface ol {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
+}
+
+.render-surface p,
+.render-surface li {
+  line-height: 1.66;
 }
 
 .render-surface ul,
@@ -1014,6 +1035,257 @@ button:disabled {
 
 .render-surface > ul:first-of-type > li code {
   margin-left: 4px;
+}
+
+.card-details {
+  margin-top: 18px;
+}
+
+.card-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(61, 52, 41, 0.08);
+  border-radius: 18px;
+  background: rgba(250, 246, 239, 0.72);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.card-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card-details > summary::after {
+  content: "展开";
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.card-details[open] > summary {
+  margin-bottom: 12px;
+}
+
+.card-details[open] > summary::after {
+  content: "收起";
+}
+
+.card-details small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.card-details[open] .render-surface {
+  max-height: min(68vh, 760px);
+  overflow: auto;
+  padding: clamp(20px, 3vw, 30px);
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(250, 246, 239, 0.94));
+  color: rgba(61, 52, 41, 0.78);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(179, 77, 47, 0.24) transparent;
+}
+
+.card-details[open] .render-surface::-webkit-scrollbar {
+  width: 8px;
+}
+
+.card-details[open] .render-surface::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.22);
+}
+
+.card-details[open] .render-surface > * {
+  max-width: none;
+}
+
+.card-details[open] .render-surface h1,
+.card-details[open] .render-surface h2,
+.card-details[open] .render-surface h3 {
+  color: var(--text);
+}
+
+.card-details[open] .render-surface h1 {
+  margin-bottom: 18px;
+  font-size: 24px;
+}
+
+.card-details[open] .render-surface h2 {
+  margin-top: 42px;
+  margin-bottom: 14px;
+  padding-top: 22px;
+}
+
+.card-details[open] .render-surface p,
+.card-details[open] .render-surface li {
+  font-size: 15px;
+  line-height: 1.86;
+}
+
+.card-details[open] .render-surface li + li {
+  margin-top: 8px;
+}
+
+.section-stack {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.section-details {
+  border-top: 1px solid rgba(61, 52, 41, 0.08);
+}
+
+.section-details.is-judgment {
+  border-top-color: rgba(179, 77, 47, 0.16);
+}
+
+.section-details.is-action {
+  border-top-color: rgba(79, 124, 115, 0.16);
+}
+
+.section-details.is-missing {
+  border-top-color: rgba(151, 105, 54, 0.16);
+}
+
+.section-details:first-child {
+  border-top: 0;
+}
+
+.section-details summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px 2px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  scroll-margin-top: 18px;
+}
+
+.section-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.section-summary-text {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.section-summary-hint {
+  border: 1px solid rgba(61, 52, 41, 0.08);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.section-details[open] .section-summary-hint {
+  color: var(--accent);
+  background: rgba(179, 77, 47, 0.08);
+}
+
+.section-details[open] .section-summary-hint::before {
+  content: "正在看 · ";
+}
+
+.section-body {
+  padding: 2px 0 16px;
+  color: rgba(61, 52, 41, 0.74);
+}
+
+.section-body p {
+  color: rgba(61, 52, 41, 0.78);
+}
+
+.section-body ul,
+.section-body ol {
+  display: grid;
+  gap: 8px;
+  padding-left: 0;
+  list-style: none;
+}
+
+.section-body li {
+  position: relative;
+  padding-left: 18px;
+  color: rgba(61, 52, 41, 0.76);
+}
+
+.section-body li::before {
+  content: "";
+  position: absolute;
+  top: 0.82em;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(179, 77, 47, 0.28);
+}
+
+.section-body li.is-action-item::before {
+  background: rgba(79, 124, 115, 0.42);
+}
+
+.section-body li.is-missing-item::before {
+  background: rgba(151, 105, 54, 0.38);
+}
+
+.section-body li.is-risk-item::before {
+  background: rgba(179, 77, 47, 0.48);
+}
+
+.markdown-chip,
+.markdown-meta {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 5px;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+
+.markdown-chip {
+  padding: 2px 8px;
+  background: rgba(179, 77, 47, 0.1);
+  color: rgba(142, 59, 34, 0.96);
+  font-size: 0.86em;
+  font-weight: 700;
+}
+
+.markdown-meta {
+  padding: 1px 7px;
+  background: rgba(61, 52, 41, 0.06);
+  color: rgba(61, 52, 41, 0.58);
+  font-size: 0.84em;
+}
+
+.render-surface strong {
+  color: rgba(36, 31, 26, 0.94);
+  font-weight: 750;
+}
+
+.section-body > :first-child {
+  margin-top: 0;
+}
+
+.section-body > :last-child {
+  margin-bottom: 0;
 }
 
 .render-surface code {
@@ -1543,6 +1815,13 @@ WEB_DEMO_JS = """\
     return escapeHtml(value).replace(/`([^`]+)`/g, "<code>$1</code>");
   }
 
+  function formatCardLine(value) {
+    return inlineFormat(value)
+      .replace(/\[([^\]]+)\]/g, '<span class="markdown-chip">$1</span>')
+      .replace(/\((证据|风险|建议|阻塞)=([^)]*)\)/g, '<span class="markdown-meta">$1=$2</span>')
+      .replace(/(信号|要补|原因|倾向|可选)：/g, '<strong>$1：</strong>');
+  }
+
   function shortText(value, limit = 88) {
     const normalized = String(value || "").replace(/\\s+/g, " ").trim();
     if (!normalized) {
@@ -1603,11 +1882,11 @@ WEB_DEMO_JS = """\
       const compressedTurns = Number(payload.compressed_turns || 0);
       return {
         key: "context-compressed",
-        kind: "历史已收拢",
+        kind: "历史已整理",
         stage: payload.summary_id || "摘要记忆",
         text: compressedTurns > 0
           ? `较早的 ${compressedTurns} 轮内容已经压成摘要，后续会优先带着摘要继续。`
-          : "较早的内容已经收拢成摘要，后续会带着摘要继续。",
+          : "较早的内容已经整理成摘要，后续会带着摘要继续。",
       };
     }
 
@@ -1767,7 +2046,7 @@ WEB_DEMO_JS = """\
           listType = "ul";
           parts.push("<ul>");
         }
-        parts.push(`<li>${inlineFormat(bulletMatch[1])}</li>`);
+        parts.push(`<li class="${markdownListItemClass(bulletMatch[1])}">${formatCardLine(bulletMatch[1])}</li>`);
         return;
       }
 
@@ -1778,12 +2057,12 @@ WEB_DEMO_JS = """\
           listType = "ol";
           parts.push("<ol>");
         }
-        parts.push(`<li>${inlineFormat(orderMatch[1])}</li>`);
+        parts.push(`<li class="${markdownListItemClass(orderMatch[1])}">${formatCardLine(orderMatch[1])}</li>`);
         return;
       }
 
       closeList();
-      parts.push(`<p>${inlineFormat(trimmed)}</p>`);
+      parts.push(`<p>${formatCardLine(trimmed)}</p>`);
     });
 
     closeList();
@@ -1797,10 +2076,104 @@ WEB_DEMO_JS = """\
     return buildMarkdownSections(text, sectionPrefix).html;
   }
 
+  function markdownSectionClass(title) {
+    const text = String(title || "");
+    if (/判断|确认|卡点|原因/.test(text)) {
+      return "is-judgment";
+    }
+    if (/建议|下一步|先做|补完/.test(text)) {
+      return "is-action";
+    }
+    if (/待补|补充|还值得补/.test(text)) {
+      return "is-missing";
+    }
+    return "";
+  }
+
+  function markdownListItemClass(text) {
+    const value = String(text || "");
+    if (/要补|待补|补充|还想补|还值得补/.test(value)) {
+      return "is-missing-item";
+    }
+    if (/建议|先做|下一步|可以直接|继续前/.test(value)) {
+      return "is-action-item";
+    }
+    if (/风险|卡住|卡点|阻塞|跑偏/.test(value)) {
+      return "is-risk-item";
+    }
+    return "";
+  }
+
+  function renderCollapsibleMarkdownSections(text, sectionPrefix = "card") {
+    const source = String(text || "").trim();
+    if (!source) {
+      return "<p>暂无内容。</p>";
+    }
+
+    const lines = source.split(/\\r?\\n/);
+    const introLines = [];
+    const sections = [];
+    let currentSection = null;
+    let headingIndex = 0;
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      const headingMatch = trimmed.match(/^(#{1,3})\\s+(.*)$/);
+      if (headingMatch) {
+        const level = Math.min(headingMatch[1].length, 3);
+        headingIndex += 1;
+        const headingId = `${sectionPrefix}-heading-${headingIndex}`;
+        if (level === 2) {
+          currentSection = {
+            id: headingId,
+            title: headingMatch[2],
+            lines: [],
+          };
+          sections.push(currentSection);
+          return;
+        }
+      }
+
+      if (currentSection) {
+        currentSection.lines.push(line);
+      } else {
+        introLines.push(line);
+      }
+    });
+
+    if (!sections.length) {
+      return buildMarkdownSections(source, sectionPrefix).html;
+    }
+
+    const introHtml = introLines.join("\\n").trim()
+      ? buildMarkdownSections(introLines.join("\\n"), `${sectionPrefix}-intro`).html
+      : "";
+    const sectionsHtml = sections
+      .map((section, index) => {
+        const bodyText = section.lines.join("\\n").trim();
+        const bodyHtml = bodyText
+          ? buildMarkdownSections(bodyText, `${sectionPrefix}-section-${index + 1}`).html
+          : "<p>这一节暂时没有更多内容。</p>";
+        const sectionClass = markdownSectionClass(section.title);
+        return `
+          <details class="section-details${sectionClass ? ` ${sectionClass}` : ""}"${index === 0 ? " open" : ""}>
+            <summary id="${escapeHtml(section.id)}">
+              <span class="section-summary-text">${inlineFormat(section.title)}</span>
+              <span class="section-summary-hint">${index === 0 ? "先看这里" : "展开"}</span>
+            </summary>
+            <div class="section-body">${bodyHtml}</div>
+          </details>
+        `;
+      })
+      .join("");
+
+    return `${introHtml}<div class="section-stack">${sectionsHtml}</div>`;
+  }
+
   function renderCardOutline(headings) {
     if (!headings || !headings.length) {
       els.cardOutline.className = "card-outline empty-list";
-      els.cardOutline.innerHTML = "<p>卡片展开后，这里会列出重点章节。</p>";
+      els.cardOutline.innerHTML = "<p>完整内容展开后，这里会列出重点章节。</p>";
       return;
     }
 
@@ -1828,6 +2201,8 @@ WEB_DEMO_JS = """\
         const targetId = button.getAttribute("data-scroll-target");
         const target = targetId ? document.getElementById(targetId) : null;
         if (target) {
+          document.getElementById("cardDetails")?.setAttribute("open", "");
+          target.closest("details")?.setAttribute("open", "");
           target.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       });
@@ -2243,16 +2618,26 @@ WEB_DEMO_JS = """\
     }
     if (caseRuntime && caseRuntime.fallback_active) {
       return {
-        label: "模型不可用，已回到本地判断",
-        description: "模型增强没有稳定完成，本轮先按本地规则继续。",
+        mode: "llm-fallback",
+        label: "模型暂时没接上",
+        description: "这轮先按内置方法继续，不影响你看当前判断。",
         fallback_used: true,
       };
     }
     return {
+      mode: "local-only",
       label: "本地规则",
-      description: "未启用模型，本轮由本地规则和方法运行时完成。",
+      description: "这轮主要按内置方法判断，没有调用外部模型。",
       fallback_used: false,
     };
+  }
+
+  function shouldShowUnderstanding(understanding) {
+    if (!understanding || !understanding.label) {
+      return false;
+    }
+    const mode = String(understanding.mode || "");
+    return !["local-only", "llm-configured"].includes(mode);
   }
 
   function memoryReferenceSummary(caseRuntime) {
@@ -2297,7 +2682,7 @@ WEB_DEMO_JS = """\
   function renderCardDigest(casePayload, caseRuntime) {
     if (!casePayload) {
       els.cardDigest.className = "card-digest empty-list";
-      els.cardDigest.innerHTML = "<p>当前阶段最值得先看的内容，会先收在这里。</p>";
+      els.cardDigest.innerHTML = "<p>最值得先看的内容，会放在这里。</p>";
       return;
     }
 
@@ -2378,7 +2763,7 @@ WEB_DEMO_JS = """\
         <article class="digest-card">
           <span class="digest-label">这轮先收</span>
           <span class="digest-value">
-            ${inlineFormat(shortText(followUpFocus || "继续把当前判断收稳", 44))}
+            ${inlineFormat(shortText(followUpFocus || "继续把这轮判断说清楚", 44))}
             ${primaryReason ? `：${inlineFormat(shortText(primaryReason, 84))}` : ""}
           </span>
         </article>
@@ -2395,10 +2780,10 @@ WEB_DEMO_JS = """\
     }
 
     const understanding = understandingPayload(caseRuntime);
-    if (understanding && understanding.label) {
+    if (shouldShowUnderstanding(understanding)) {
       cards.push(`
         <article class="digest-card">
-          <span class="digest-label">理解方式</span>
+          <span class="digest-label">辅助方式</span>
           <span class="digest-value">
             ${inlineFormat(understanding.label)}${understanding.description ? `：${inlineFormat(shortText(understanding.description, 88))}` : ""}
           </span>
@@ -2542,7 +2927,7 @@ WEB_DEMO_JS = """\
       els.runtimeTimeline.className = "history-timeline empty-list";
       els.runtimeTimeline.innerHTML = "<p>这里会收最近值得关注的运行提醒。</p>";
       els.runtimeMemory.className = "render-surface empty-surface";
-      els.runtimeMemory.innerHTML = "<p>这里会显示最近在接的话题，以及已经收拢过的旧上下文。</p>";
+      els.runtimeMemory.innerHTML = "<p>这里会显示最近在接的话题，以及已经整理过的旧上下文。</p>";
       return;
     }
 
@@ -2703,18 +3088,18 @@ WEB_DEMO_JS = """\
       <p>${inlineFormat(memoryHeadline)}</p>
       <p>当前案例：<code>${inlineFormat(runtimeSession.active_case_id || "未设置")}</code>。最近保留 ${inlineFormat(
         String(workingCount)
-      )} 条近程线索，已收拢 ${inlineFormat(String(summaryCount))} 段旧上下文。</p>
+      )} 条近程线索，已整理 ${inlineFormat(String(summaryCount))} 段旧上下文。</p>
       <h3>眼下正带着哪些线索</h3>
       ${
         workingItems
           ? `<ul class="runtime-memory-list">${workingItems}</ul>`
           : "<p>当前还没有近程线索。</p>"
       }
-      <h3>更早的内容怎么被收住</h3>
+      <h3>更早的内容怎么被整理</h3>
       ${
         summaryItems
           ? `<ul class="runtime-memory-list">${summaryItems}</ul>`
-          : "<p>当前还没有需要收拢的旧上下文。</p>"
+          : "<p>还没有需要整理的旧上下文。</p>"
       }
     `;
   }
@@ -2856,8 +3241,8 @@ WEB_DEMO_JS = """\
       pills.push(`<span class="pill">${inlineFormat(direction.label)}</span>`);
     }
     const understanding = understandingPayload(caseRuntime);
-    if (understanding && understanding.label) {
-      pills.push(`<span class="pill">理解方式：${inlineFormat(understanding.label)}</span>`);
+    if (shouldShowUnderstanding(understanding)) {
+      pills.push(`<span class="pill">辅助方式：${inlineFormat(understanding.label)}</span>`);
     }
     els.cardMeta.innerHTML = pills.join("");
   }
@@ -2909,8 +3294,9 @@ WEB_DEMO_JS = """\
     renderCardDigest(response.case, response.case_runtime || null);
     const renderedCard = buildMarkdownSections(response.rendered_card || "", "card");
     renderCardOutline(renderedCard.headings);
+    document.getElementById("cardDetails")?.removeAttribute("open");
     els.cardContent.className = "render-surface";
-    els.cardContent.innerHTML = renderedCard.html;
+    els.cardContent.innerHTML = renderCollapsibleMarkdownSections(response.rendered_card || "", "card");
 
     const statusBits = [];
     const direction = response.case ? describeCaseDirection(response.case) : null;
@@ -2927,8 +3313,8 @@ WEB_DEMO_JS = """\
       statusBits.push('<span class="pill">这轮先往后放一放</span>');
     }
     const understanding = understandingPayload(response.case_runtime || null);
-    if (understanding && understanding.label && understanding.label !== "本地规则") {
-      statusBits.push(`<span class="pill">理解方式：${inlineFormat(understanding.label)}</span>`);
+    if (shouldShowUnderstanding(understanding)) {
+      statusBits.push(`<span class="pill">辅助方式：${inlineFormat(understanding.label)}</span>`);
     }
     els.statusPills.innerHTML = statusBits.join("");
   }
