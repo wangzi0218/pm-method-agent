@@ -441,6 +441,64 @@ class HumanLikeFlowTest(unittest.TestCase):
         self.assertIn("问题", second_response.rendered_card)
         self.assertNotIn("证据=", second_response.rendered_card)
 
+    def test_v02_regression_reused_project_background_can_be_overridden_by_new_context(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            profile_response = shell.handle_message(
+                "这个项目是 ToB 的 HIS 产品，主要在网页端使用，前台和店长都很关键。",
+                workspace_id="v02-memory-override-regression",
+            )
+            case_response = shell.handle_message(
+                "还有一个问题，这是一个 ToC 支付 App，用户最近总说账单入口不好找，我想看看是不是该处理。",
+                workspace_id="v02-memory-override-regression",
+            )
+
+        self.assertEqual(profile_response.action, "project-profile-updated")
+        self.assertEqual(case_response.action, "create-case")
+        self.assertEqual(case_response.case_state.context_profile["business_model"], "toc")
+        self.assertEqual(case_response.case_state.context_profile["primary_platform"], "native-app")
+        self.assertIn("新说到的背景会优先采用", case_response.rendered_card)
+        self.assertNotIn("企业产品场景", case_response.rendered_card)
+
+    def test_v02_regression_cross_industry_roles_can_continue_same_case(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToB 供应链系统，主要在 PC 端使用。仓库员觉得入库复核太慢，财务担心放松复核会影响账实一致，采购负责人又想尽快入库，我还没想好该怎么处理。",
+                workspace_id="v02-cross-industry-role-regression",
+            )
+            second_response = shell.handle_message(
+                "现在是因为月末入库积压，仓库员每天要多花一两个小时补单；财务对账实一致负责，采购负责人盯入库时效。",
+                workspace_id="v02-cross-industry-role-regression",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertEqual(first_response.case_state.case_id, second_response.case_state.case_id)
+        self.assertIn("仓库员", second_response.case_state.context_profile["target_user_roles"])
+        self.assertIn("财务", second_response.case_state.context_profile["target_user_roles"])
+        self.assertIn("采购负责人", second_response.case_state.context_profile["target_user_roles"])
+        self.assertNotIn("先把场景说清", second_response.rendered_card)
+
+    def test_v02_regression_low_priority_request_can_defer_without_productizing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            shell = PMMethodAgentShell(base_dir=tmpdir)
+            first_response = shell.handle_message(
+                "这是一个 ToC 电商 App，有用户希望收藏夹能导出成表格，运营觉得可以做，但反馈不多。",
+                workspace_id="v02-low-priority-defer-regression",
+            )
+            second_response = shell.handle_message(
+                "我觉得这个需求不急，最近资源也紧，晚三个月应该没什么明显损失，可以先暂缓。",
+                workspace_id="v02-low-priority-defer-regression",
+            )
+
+        self.assertEqual(first_response.action, "create-case")
+        self.assertEqual(second_response.action, "reply-case")
+        self.assertEqual(second_response.case_state.output_kind, "stage-block-card")
+        self.assertEqual(second_response.case_state.workflow_state, "deferred")
+        self.assertIn("这轮先记为暂缓", second_response.rendered_card)
+        self.assertNotIn("证据=", second_response.rendered_card)
+
 
 if __name__ == "__main__":
     unittest.main()

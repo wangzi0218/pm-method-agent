@@ -107,6 +107,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 发布说明见 [v0.2.0](releases/v0.2.0.md)。
 
+## 回归记录
+
+真实问题回归记录见 [v0.2 真实问题回归记录](v0-2-regression-record.md)。
+
 ## 下一步
 
 `v0.2` 之后更适合继续：

@@ -1024,6 +1024,13 @@ def _message_keywords(message: str) -> list[str]:
         "运营",
         "内容社区",
         "诊所",
+        "仓库",
+        "财务",
+        "采购",
+        "供应链",
+        "入库",
+        "复核",
+        "账实",
     ]:
         if token in message and token not in keywords:
             keywords.append(token)
