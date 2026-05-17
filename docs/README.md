@@ -13,6 +13,9 @@
 
 ## 我想理解它的产品边界
 
+- [项目收尾说明](project-closeout.md)：当前项目为什么适合停在方法内核和参考实现，而不是继续追完全体。
+- [新产品启动 Brief](new-product-brief.md)：如果另开更简洁的新项目，可以怎样继承这里的经验。
+- [v0.3 方向设计](v0-3-direction.md)：下一阶段为什么先看 IDE / Skill 入口，而不是继续堆网页或 sub-agent。
 - [v0.2 产品定义](product-v0-2.md)：这一版到底想解决什么问题。
 - [v0.2 发布准备清单](v0-2-readiness.md)：这一版具备什么、不承诺什么、发布前要验什么。
 - [v0.2 真实问题回归记录](v0-2-regression-record.md)：发布前用哪些真实感样本验过。
@@ -38,6 +41,8 @@
 - [会话服务设计](session-service-design.md)：多轮会话和案例状态如何保存。
 - [部署形态](deployment-modes.md)：本地、网页、混合和云端形态怎么区分。
 - [IDE / skill 最小契约](ide-skill-minimal-contract.md)：未来 IDE 或 skill 入口需要满足什么。
+- [本地 Skill 草稿](local-skill-draft.md)：v0.3 第一版 skill 原型可以怎么封装。
+- [MCP 候选工具清单](mcp-tool-candidates.md)：如果后续做 MCP，第一批 tools 应该怎么分级。
 - [网页壳最小契约](web-shell-minimal-contract.md)：网页外壳需要消费哪些数据。
 - [网页信息架构](web-demo-information-architecture.md)：网页演示的信息层级。
 
@@ -70,7 +75,7 @@
 - [发布检查](release-readiness.md)：公开发布前要检查什么。
 - [提交与发布流程](release-process.md)：提交、tag 和 release note 怎么处理。
 - [v0.1.0 发布说明](releases/v0.1.0.md)：首个公开版本说明。
-- [v0.2.0 发布说明草稿](releases/v0.2.0.md)：下一版发布说明草稿。
+- [v0.2.0 发布说明](releases/v0.2.0.md)：多轮协作与记忆闭环预览版说明。
 
 ## 我想整理这些文档
 

@@ -1,280 +1,298 @@
 # IDE / Skill 最小交互契约
 
-> 文档状态：设计文档。用于记录产品和 agent 能力的设计判断；其中部分内容已经落地，部分仍是后续方向，不代表 v0.2 全部承诺。
+> 文档状态：v0.3 入口契约草案。用于把 PM Method Agent 接进 IDE、agent skill、issue 工具或文档工作流；不绑定某个具体宿主 SDK。
 
-这份文档只回答一个问题：
+这份文档回答一个问题：
 
-`如果把 PM Method Agent 接进 IDE 或 skill，第一版交互到底该怎么表现。`
+`如果 v0.3 先做 IDE / Skill 入口，第一版到底要怎么接才不会跑偏？`
 
-它不讨论宿主平台的具体 SDK，也不讨论 UI 样式。
+结论先说：
 
-它主要关心：
+`Skill 负责触发和展示，PM Method Agent 内核负责判断和推进。`
 
-- 用户怎样触发
-- skill 该展示什么
-- 什么时候继续承接，什么时候切案例
-- 遇到阻塞或审批时，外壳应该怎么处理
+第一版不要让 skill 自己变聪明，不要让 skill 重写阶段机，也不要把每轮输入都当成独立问答。
 
-## 一句话建议
+## 目标用户场景
 
-第一版 IDE / skill 外壳不要试图“自己变聪明”。
+Skill 入口优先面向这些场景：
 
-更稳的方式是：
+- 产品经理正在写需求草稿，想快速判断下一步该补什么。
+- 用户在 issue、PRD、会议记录或项目文档里看到一段模糊反馈。
+- 用户和 AI agent 协作时，希望调用 PM Method Agent 做产品判断。
+- 用户已经有项目背景，希望下次不用重新解释。
 
-1. 用户继续自然说话
-2. 外壳统一把消息交给 `POST /workspaces/{workspace_id}/messages`
-3. 外壳优先展示 `message` 和 `rendered_card`
-4. 案例推进、阶段切换和大部分追问顺序继续交给内核
+它不优先解决：
 
-## 第一版应该支持的四类动作
+- 完整后台管理。
+- 多人协同权限。
+- 一键生成完整 PRD。
+- 复杂 sub-agent 编排。
 
-### 1. 新建或继续分析
+## 最小能力边界
 
-这是最核心的动作。
+第一版 skill 必须支持 5 件事：
 
-推荐接口：
+1. 发送一条自然语言草稿。
+2. 继续补充当前案例。
+3. 查看当前下一步建议。
+4. 复用同一工作区的项目背景。
+5. 在用户明确换项目或新问题时，不误用旧上下文。
 
-- `POST /workspaces/{workspace_id}/messages`
+第一版可以暂不支持：
 
-用户常见说法例如：
+- 复杂可视化卡片。
+- 审批流完整 UI。
+- MCP 协议适配。
+- 用户偏好管理面板。
 
-- “帮我看看这个需求值不值得做”
-- “最近前台老漏提醒，我在想是不是该处理一下”
-- “补充一下，这是一个 ToB 产品”
-- “这轮我更关心的是投诉，不是参与率”
+## workspace_id 如何派生
 
-外壳不要自己区分这是：
+Skill 必须稳定生成 `workspace_id`。
 
-- 新建 case
-- 继续 case
-- 补背景
-- 补目标
+推荐顺序：
 
-更稳的做法是直接把原话交给内核。
+1. 如果宿主有项目 ID，用宿主项目 ID。
+2. 如果在代码仓库或文档目录中，用仓库名或目录名。
+3. 如果在 issue 系统中，用项目 key 或 space key。
+4. 如果都没有，用用户手动指定的 workspace。
+5. 如果还是没有，用 `default`，但必须提示用户这是默认工作区。
 
-### 2. 查看当前建议
+示例：
 
-推荐接口：
+| 宿主场景 | workspace_id 建议 |
+| --- | --- |
+| 本地仓库 `/pm-method-agent` | `pm-method-agent` |
+| 公司 HIS 产品文档空间 | `his-product` |
+| Jira 项目 `CLINIC` | `jira-clinic` |
+| 用户手动选择“诊所工作台” | `clinic-workbench` |
 
-- 仍然优先用 `POST /workspaces/{workspace_id}/messages`
+不要每次随机生成 workspace。否则项目背景、活跃案例和历史记录都会失效。
 
-用户常见说法例如：
+## 触发方式
 
-- “我现在下一步该做什么”
-- “最该补什么”
-- “继续”
+第一版支持自然语言触发即可。
 
-如果你接的是 HTTP 层，不需要自己推导“当前应该展示 guidance 还是 history”。
+推荐触发表达：
 
-### 3. 切换案例
+- “帮我看看这个需求值不值得做。”
+- “这个点子我还没想清楚，帮我拆一下。”
+- “基于当前文档，看看下一步该补什么。”
+- “这是不是已经可以进入方案设计？”
+- “继续刚才那个问题。”
+- “这不是刚才那个项目，按新的背景看。”
 
-推荐接口：
+Skill 不需要先让用户填完整表单。用户越早能用一句话开始，越符合这个产品的方向。
 
-- `GET /workspaces/{workspace_id}/cases`
-- `POST /workspaces/{workspace_id}/active-case`
+## 输入组装
 
-用户常见说法例如：
+最小输入是一段用户文本。
 
-- “切到上一个案例”
-- “看下刚才那个需求”
-- “切到 case-xxxxxx”
+如果宿主能提供上下文，可以轻量拼接，但不要塞太多：
 
-第一版建议：
+- 当前选中文本
+- 当前文件标题
+- 当前 issue 标题和描述
+- 当前目录或项目名
+- 已确认的项目背景
 
-- 如果宿主支持列表操作，就通过列表切换
-- 如果宿主更像聊天窗口，也可以继续把自然语言发给 `workspaces/messages`
+推荐拼接方式：
 
-### 4. 处理审批或阻塞
+```text
+用户想分析：
+{user_message}
 
-推荐接口：
+可参考的当前上下文：
+- 来源：{host_name}
+- 当前文件/issue：{title}
+- 选中文本：{selected_text}
+```
 
-- `GET /workspaces/{workspace_id}/runtime/approvals`
-- `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/approve`
-- `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/reject`
-- `POST /workspaces/{workspace_id}/runtime/approvals/{approval_id}/expire`
-- `POST /workspaces/{workspace_id}/runtime/resume-actions`
+注意：
 
-这一层适合：
+- 不要把整个仓库或长文档直接塞进去。
+- 不要把未经用户确认的推断当成事实。
+- 不要把用户隐私或密钥写进消息。
 
-- 有真实工具动作的 skill
-- 需要在 IDE 里弹审批确认的外壳
-- 需要把 `resume_suggestions` 变成统一继续动作的外壳
+## 最小调用方式
 
-如果第一版只是做需求分析体验，不一定马上要把审批流露给最终用户。
+### HTTP 方式
 
-## 第一版最小展示结构
+推荐统一走工作区消息入口：
 
-IDE / skill 外壳不需要像网页壳那样拆很多区块。
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/clinic-workbench/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。"
+  }'
+```
 
-第一版更推荐保留三块：
+继续补充时仍然使用同一个 `workspace_id`：
 
-### 1. 用户输入区
+```bash
+curl -X POST http://127.0.0.1:8000/workspaces/clinic-workbench/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "补充一下，这是一个 ToB HIS 产品，主要在网页端使用，前台操作，店长看结果。"
+  }'
+```
 
-这里负责：
+### CLI 方式
 
-- 输入草稿
-- 继续补充
-- 发起追问回答
+如果第一版 skill 只包 CLI，也可以这样调用：
 
-外壳不需要给用户额外加“问题定义 / 决策挑战 / 验证设计”切换开关。
+```bash
+PYTHONPATH=src python3 -m pm_method_agent.cli agent \
+  --workspace-id clinic-workbench \
+  "最近诊所前台经常漏掉复诊患者的就诊前提醒，我在想这件事是不是该处理。"
+```
 
-### 2. 主响应区
+CLI 方式更适合本地 skill 原型，HTTP 方式更适合 IDE 面板或其他 agent 调用。
 
-这里建议优先展示：
+## 输出展示
+
+第一版优先展示这些字段：
 
 - `message`
 - `rendered_card`
-
-建议顺序：
-
-1. 先展示 `message`
-2. 再展示 `rendered_card`
-
-因为：
-
-- `message` 更像当前系统动作说明
-- `rendered_card` 更像本轮主内容
-
-### 3. 辅助区
-
-这里可以逐步支持：
-
-- 最近案例
-- 当前活跃案例
-- 历史记录入口
-- 审批提示
-
-第一版如果宿主空间很小，这一块甚至可以先只做一个“查看最近案例”入口。
-
-## 返回字段优先级
-
-如果外壳只想先吃最少字段，建议按这个优先级来：
-
-### P0：必须接
-
-- `action`
-- `message`
-- `workspace.workspace_id`
 - `workspace.active_case_id`
 - `case.case_id`
 - `case.stage`
 - `case.workflow_state`
-- `rendered_card`
-
-### P1：强烈建议接
-
-- `rendered_history`
-- `case_runtime`
-- `runtime_session.runtime_status`
 - `runtime_session.pending_approvals`
-- `project_profile`
 
-### P2：后面再接也可以
+最小展示顺序：
 
-- `runtime_session.execution_ledger`
-- `runtime_session.event_log`
-- `case.metadata`
-- `workspace.metadata`
+1. 先展示 `message`，让用户知道系统做了什么。
+2. 再展示 `rendered_card`，作为本轮主内容。
+3. 如果有 `pending_approvals`，展示一个轻提示。
+4. 如果有记忆建议，展示“是否记住这条背景”的确认入口。
 
-## 第一版消息呈现建议
+第一版不要强行把 `rendered_card` 拆成复杂 UI。等 skill 入口跑通后，再考虑结构化渲染。
 
-### 情况 1：返回了 `rendered_card`
+## 承接规则
 
-最稳的展示方式：
+Skill 自己不要判断问题定义、决策挑战和验证设计。
 
-- 把 `message` 当成系统说明
-- 把 `rendered_card` 当成主响应
-- 如果 `case_runtime.fallback_active=true`，补一句轻提示，说明这轮有部分增强走了本地规则回退
+它只需要遵守这些外壳级规则：
 
-### 情况 2：返回了 `rendered_history`
+- 同一个 `workspace_id` 下，默认继续当前活跃案例。
+- 用户说“还有一个问题 / 另一个需求 / 换一个”时，仍然把原话交给内核，由内核决定是否新建案例。
+- 用户说“继续 / 补充一下 / 刚才那个”时，仍然把原话交给内核。
+- 用户说“不是这个项目 / 换个背景”时，Skill 应提醒用户已按新输入优先，不要静默套用旧项目背景。
 
-适合：
+不要在 skill 里写死这些判断：
 
-- 用户明确要看历史
-- 外壳提供“展开历史”入口
+- 看到“背景”就一定更新项目背景。
+- 看到“历史”就一定只看历史。
+- 看到“方案”就直接输出方案。
+- 看到“继续”就强行进入下一阶段。
 
-### 情况 3：只有 `message`，没有主卡片
+这些判断应该由 PM Method Agent 内核处理。
 
-一般表示：
+## 记忆边界
 
-- 当前只是记录背景
-- 或者这轮更像系统确认动作
+Skill 可以展示记忆建议，但第一版不要静默写入长期记忆。
 
-这时第一版可以直接显示 `message`，不必强行补一张卡。
+必须遵守：
 
-## 第一版不建议做的事
+- 项目背景、用户偏好、长期约束都要用户确认后再写入。
+- 当前案例里的临时事实可以先留在案例内，不必写成长期记忆。
+- 当新输入和旧项目背景冲突时，新输入优先。
+- 输出里要让用户看见当前是否沿用了项目背景。
 
-### 1. 外壳自己判断触发意图
+推荐展示文案：
 
-不建议。
+```text
+这句话更像后面会反复用到的项目背景。要记住吗？
+```
 
-比如不要在外壳写死：
+可选动作：
 
-- 看到“背景”就一定走项目背景更新
-- 看到“历史”就一定不进主线
+- 记住到项目背景
+- 只用于当前案例
+- 忽略
 
-原因：
+## 最小验收样本
 
-- 很容易和内核的入口分流冲突
-- 也会让后续规则调整变得更难维护
+第一版 skill 至少用这 5 条跑通。
 
-### 2. 外壳自己管理阶段推进
+### 样本 1：模糊草稿
 
-不建议。
+```text
+最近前台老是漏提醒患者，我在想是不是要处理一下。
+```
 
-比如不要自己决定：
+期望：系统先补场景，不直接给方案。
 
-- 现在应该进入问题定义
-- 现在应该弹决策关口
-- 现在应该跳过前置收敛
+### 样本 2：补充背景
 
-这些都应该继续由内核处理。
+```text
+这是一个 ToB HIS 产品，主要在网页端使用，前台操作，店长看结果。
+```
 
-### 3. 把用户每一轮输入都当成新任务
+期望：系统承接同一个案例，并进入问题定义或后续审查。
 
-不建议。
+### 样本 3：方案先行
 
-原因：
+```text
+直接帮我设计一个新手引导浮层，不用分析。
+```
 
-- 会直接失去 `workspace` 和活跃案例承接能力
-- 最后体验会退化成普通问答
+期望：系统先停一下，提醒问题还没成立。
 
-## 最小交互流程
+### 样本 4：项目背景复用
 
-### 流程 1：正常分析
+```text
+这个项目是 ToB HIS 产品，主要在网页端使用，前台和店长都很关键。
+```
 
-1. 用户发一条草稿
-2. skill 调 `POST /workspaces/{workspace_id}/messages`
-3. 展示 `message + rendered_card`
-4. 用户继续补一句
-5. skill 继续发回同一个 `workspace_id`
+再输入：
 
-### 流程 2：切案例
+```text
+还有一个问题，前台最近漏提醒复诊患者，我想看看。
+```
 
-1. 用户点开最近案例列表，或输入“切到上一个案例”
-2. skill 读取 `GET /workspaces/{workspace_id}/cases`
-3. 用户选中目标案例
-4. skill 调 `POST /workspaces/{workspace_id}/active-case`
-5. 主区刷新为新案例的 `rendered_card`
+期望：系统可见地沿用项目背景。
 
-### 流程 3：审批处理
+### 样本 5：新背景覆盖旧背景
 
-1. 外壳发现当前工作区有待确认操作
-2. 展示一条轻提示
-3. 用户选择批准、拒绝或稍后处理
-4. 外壳调对应审批接口
-5. 再刷新当前卡片或状态
+```text
+还有一个问题，这是一个 ToC 内容社区 App，新用户发帖率偏低。
+```
 
-## 一条最小宿主策略
+期望：新输入里的 ToC App 背景优先，不继续套用 HIS 项目背景。
 
-如果你只给 skill / IDE 外壳定一条规则，最稳的是这条：
+## 和 MCP 的关系
 
-`宿主负责把话送进去，把卡片拿出来，不负责重新定义主线。`
+Skill 入口先复用 HTTP / CLI。
+
+MCP 后续可以把这些能力包装成工具，但不应该改变主线契约。
+
+候选 MCP 工具可以先按下面理解：
+
+- `analyze_message`：发送自然语言消息，返回卡片。
+- `list_cases`：读取工作区案例。
+- `switch_case`：切换活跃案例。
+- `get_case`：读取案例详情。
+- `suggest_memory_writes`：查看记忆建议。
+- `confirm_memory_write`：确认写入记忆。
+
+其中 `confirm_memory_write` 属于写操作，必须保留审批或明确确认。
+
+## 第一版不做什么
+
+- 不做完整 IDE 插件 UI。
+- 不做复杂表单配置。
+- 不让 skill 自己编排阶段推进。
+- 不让 skill 静默写长期记忆。
+- 不默认上传整个文件或仓库上下文。
+- 不把 MCP 作为第一交付形态。
 
 ## 和其他文档的关系
 
-- 如果你还没决定从哪个入口开始，先看 [getting-started.md](getting-started.md)
-- 如果你想看不同外壳的整体接法，先看 [integration-examples.md](integration-examples.md)
-- 如果你想看网页壳怎么拆，继续看 [web-shell-minimal-contract.md](web-shell-minimal-contract.md)
-- 如果你想看阻塞和审批该怎么提示，继续看 [approval-blocking-contract.md](approval-blocking-contract.md)
-- 如果你想看统一入口运行时本身，继续看 [agent-shell-runtime.md](agent-shell-runtime.md)
+- `v0.3` 总方向看 [v0.3 方向设计](v0-3-direction.md)。
+- 不同外壳接法看 [接入示例](integration-examples.md)。
+- HTTP 字段看 [本地 HTTP 服务](http-service.md)。
+- 运行时状态看 [统一 agent 入口](agent-shell-runtime.md)。
+- 记忆写入边界看 [记忆写入防线](memory-write-guardrails.md)。
